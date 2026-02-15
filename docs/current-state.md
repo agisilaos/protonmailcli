@@ -22,7 +22,7 @@ Status date: 2026-02-15
   - `draft create|get|list|update|delete` (IMAP `Drafts`)
   - `message get` (IMAP `INBOX`)
   - `message send` (IMAP draft read + SMTP send)
-  - `search messages|drafts` (IMAP SEARCH)
+  - `search messages|drafts` (IMAP SEARCH with `query/from/to/after/before` + pagination)
   - `tag list|add|remove` (IMAP flags/keywords)
 - Filter operations (local engine):
   - `filter list|create|delete|test|apply`
@@ -49,6 +49,7 @@ Automated tests currently cover:
 - auth login/status/logout
 - doctor unreachable bridge behavior (`exit 4`)
 - completion generation
+- executable contract fixtures (`tests/contracts/*.json`) via `TestContractFixtures`
 
 Run:
 

@@ -33,6 +33,8 @@ Method:
 
 - golden fixtures in `tests/contracts/*.json`
 - compare normalized JSON output to fixture snapshots
+- executed by `TestContractFixtures` in `internal/app/contracts_test.go`
+- fixture command strings are normalized for CLI global flag placement
 
 ### 3) Integration tests (Bridge mocked)
 
@@ -105,3 +107,17 @@ tests/
 - all required gates green
 - no breaking change to JSON contract fixtures
 - exit code table matches `docs/cli-spec.md`
+
+## Running contract tests locally
+
+```bash
+go test ./internal/app -run TestContractFixtures -v
+```
+
+## Agent contract workflow
+
+For agent-safe releases:
+
+1. Add/update fixture(s) in `tests/contracts/*.json` for the scenario.
+2. Run `go test ./internal/app -run TestContractFixtures -v`.
+3. Treat fixture failures as contract breaks unless intentionally migrated.

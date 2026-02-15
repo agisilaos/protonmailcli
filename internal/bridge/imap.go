@@ -4,8 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"os"
@@ -126,7 +130,7 @@ func (c *IMAPClient) ListMessages(mailbox, criteria string) ([]DraftMessage, err
 		}
 		msgs = append(msgs, m)
 	}
-	sort.Slice(msgs, func(i, j int) bool { return msgs[i].UID < msgs[j].UID })
+	sort.Slice(msgs, func(i, j int) bool { return uidInt(msgs[i].UID) < uidInt(msgs[j].UID) })
 	return msgs, nil
 }
 
@@ -313,12 +317,13 @@ func parseRawMessage(raw []byte) (DraftMessage, error) {
 		}
 	}
 	bodyBytes, _ := io.ReadAll(m.Body)
+	body := decodeBestBody(m.Header, bodyBytes)
 	date, _ := mail.ParseDate(m.Header.Get("Date"))
 	return DraftMessage{
 		From:    m.Header.Get("From"),
 		To:      to,
 		Subject: m.Header.Get("Subject"),
-		Body:    string(bodyBytes),
+		Body:    body,
 		Date:    date,
 	}, nil
 }
@@ -391,4 +396,86 @@ func (c *IMAPClient) debugf(format string, args ...interface{}) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "imap-debug: "+format+"\n", args...)
+}
+
+func uidInt(uid string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(uid))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func decodeBestBody(h mail.Header, body []byte) string {
+	decoded := decodeByTransferEncoding(h.Get("Content-Transfer-Encoding"), body)
+	ct := h.Get("Content-Type")
+	if ct == "" {
+		return strings.TrimSpace(string(decoded))
+	}
+	mediaType, params, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return strings.TrimSpace(string(decoded))
+	}
+	if strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
+		boundary := params["boundary"]
+		if boundary == "" {
+			return strings.TrimSpace(string(decoded))
+		}
+		return extractMultipartBody(boundary, decoded)
+	}
+	return strings.TrimSpace(string(decoded))
+}
+
+func extractMultipartBody(boundary string, raw []byte) string {
+	r := multipart.NewReader(bytes.NewReader(raw), boundary)
+	var htmlFallback string
+	for {
+		p, err := r.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		pb, _ := io.ReadAll(p)
+		sub := decodeByTransferEncoding(p.Header.Get("Content-Transfer-Encoding"), pb)
+		ct := p.Header.Get("Content-Type")
+		mt, sp, err := mime.ParseMediaType(ct)
+		if err != nil {
+			mt = "text/plain"
+		}
+		if strings.HasPrefix(strings.ToLower(mt), "multipart/") {
+			if b := sp["boundary"]; b != "" {
+				nested := extractMultipartBody(b, sub)
+				if nested != "" {
+					return nested
+				}
+			}
+			continue
+		}
+		if strings.EqualFold(mt, "text/plain") {
+			return strings.TrimSpace(string(sub))
+		}
+		if strings.EqualFold(mt, "text/html") && htmlFallback == "" {
+			htmlFallback = strings.TrimSpace(string(sub))
+		}
+	}
+	return htmlFallback
+}
+
+func decodeByTransferEncoding(encoding string, data []byte) []byte {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "quoted-printable":
+		r := quotedprintable.NewReader(bytes.NewReader(data))
+		out, err := io.ReadAll(r)
+		if err == nil {
+			return out
+		}
+	case "base64":
+		out, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, bytes.NewReader(data)))
+		if err == nil {
+			return out
+		}
+	}
+	return data
 }

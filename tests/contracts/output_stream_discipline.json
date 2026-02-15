@@ -6,7 +6,9 @@
     "stdoutJson": {
       "ok": true,
       "data": {
-        "id": "d_123"
+        "draft": {
+          "id": "d_123"
+        }
       }
     },
     "stderrNotContains": [

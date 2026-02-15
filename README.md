@@ -126,6 +126,8 @@ Search:
 ```bash
 ./protonmailcli --json search drafts --query sync
 ./protonmailcli --json search messages --query invoice
+./protonmailcli --json search messages --from billing@example.com --after 2026-01-01 --limit 25
+./protonmailcli --json search messages --query invoice --limit 50 --cursor 50
 ```
 
 Mailboxes:
@@ -201,6 +203,28 @@ Exit codes:
 
 ```bash
 go test ./...
+```
+
+Run executable contract fixtures only:
+
+```bash
+go test ./internal/app -run TestContractFixtures -v
+```
+
+## Agent usage pattern
+
+The CLI is designed for deterministic agent loops:
+
+1. Start with `--json --no-input`.
+2. Read `nextCursor` and continue until it is empty.
+3. Use returned IDs directly (`imap:Drafts:<uid>`, `imap:INBOX:<uid>`).
+4. Use `--dry-run` before mutating commands in planning phases.
+
+Example pagination loop:
+
+```bash
+./protonmailcli --json --no-input search messages --query invoice --limit 100 --cursor 0
+# parse .data.nextCursor, then call again with --cursor <nextCursor> until empty
 ```
 
 Current automated tests cover:

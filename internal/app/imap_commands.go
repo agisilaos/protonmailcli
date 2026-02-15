@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,22 +43,40 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 
 	switch action {
 	case "list":
-		drafts, err := c.ListDrafts()
+		fs := flag.NewFlagSet("draft list", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		query := fs.String("query", "", "text query")
+		from := fs.String("from", "", "from filter")
+		to := fs.String("to", "", "to filter")
+		after := fs.String("after", "", "date filter YYYY-MM-DD")
+		before := fs.String("before", "", "date filter YYYY-MM-DD")
+		limit := fs.Int("limit", 50, "max results")
+		cursor := fs.String("cursor", "", "offset cursor")
+		if err := fs.Parse(args); err != nil {
+			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		}
+		criteria := buildIMAPCriteria(*query, *from, *to, *after, *before)
+		drafts, err := c.ListMessages("Drafts", criteria)
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_list_failed", msg: err.Error()}
 		}
+		sortByUIDDesc(drafts)
+		start, lim := parsePage(*cursor, *limit)
+		paged, next := paginateMessages(drafts, start, lim)
 		out := make([]map[string]any, 0, len(drafts))
-		for _, d := range drafts {
+		for _, d := range paged {
 			out = append(out, map[string]any{
 				"id":      imapDraftID(d.UID),
 				"uid":     d.UID,
 				"to":      d.To,
+				"from":    d.From,
 				"subject": d.Subject,
 				"body":    d.Body,
+				"date":    d.Date.UTC().Format(time.RFC3339),
 				"flags":   d.Flags,
 			})
 		}
-		return map[string]any{"drafts": out, "count": len(out), "source": "imap"}, false, nil
+		return map[string]any{"drafts": out, "count": len(out), "total": len(drafts), "nextCursor": next, "source": "imap"}, false, nil
 	case "get":
 		fs := flag.NewFlagSet("draft get", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -232,6 +252,12 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	query := fs.String("query", "", "query")
+	from := fs.String("from", "", "from filter")
+	to := fs.String("to", "", "to filter")
+	after := fs.String("after", "", "date filter YYYY-MM-DD")
+	before := fs.String("before", "", "date filter YYYY-MM-DD")
+	limit := fs.Int("limit", 50, "max results")
+	cursor := fs.String("cursor", "", "offset cursor")
 	if err := fs.Parse(args); err != nil {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 	}
@@ -240,20 +266,20 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 		return nil, false, err
 	}
 	defer c.Close()
-	criteria := "ALL"
-	if strings.TrimSpace(*query) != "" {
-		criteria = fmt.Sprintf(`TEXT "%s"`, strings.ReplaceAll(*query, `"`, `\\"`))
-	}
+	criteria := buildIMAPCriteria(*query, *from, *to, *after, *before)
 	if action == "drafts" {
 		items, err := c.ListMessages("Drafts", criteria)
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
 		}
-		out := make([]map[string]any, 0, len(items))
-		for _, m := range items {
-			out = append(out, map[string]any{"id": imapDraftID(m.UID), "uid": m.UID, "to": m.To, "subject": m.Subject})
+		sortByUIDDesc(items)
+		start, lim := parsePage(*cursor, *limit)
+		paged, next := paginateMessages(items, start, lim)
+		out := make([]map[string]any, 0, len(paged))
+		for _, m := range paged {
+			out = append(out, map[string]any{"id": imapDraftID(m.UID), "uid": m.UID, "to": m.To, "from": m.From, "subject": m.Subject, "date": m.Date.UTC().Format(time.RFC3339)})
 		}
-		return map[string]any{"drafts": out, "count": len(out), "source": "imap"}, false, nil
+		return map[string]any{"drafts": out, "count": len(out), "total": len(items), "nextCursor": next, "source": "imap"}, false, nil
 	}
 	if action != "messages" {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "search supports messages|drafts"}
@@ -262,11 +288,14 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	if err != nil {
 		return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
 	}
-	out := make([]map[string]any, 0, len(items))
-	for _, m := range items {
-		out = append(out, map[string]any{"id": imapMessageID(m.UID), "uid": m.UID, "from": m.From, "subject": m.Subject})
+	sortByUIDDesc(items)
+	start, lim := parsePage(*cursor, *limit)
+	paged, next := paginateMessages(items, start, lim)
+	out := make([]map[string]any, 0, len(paged))
+	for _, m := range paged {
+		out = append(out, map[string]any{"id": imapMessageID(m.UID), "uid": m.UID, "from": m.From, "to": m.To, "subject": m.Subject, "date": m.Date.UTC().Format(time.RFC3339)})
 	}
-	return map[string]any{"messages": out, "count": len(out), "source": "imap"}, false, nil
+	return map[string]any{"messages": out, "count": len(out), "total": len(items), "nextCursor": next, "source": "imap"}, false, nil
 }
 
 func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State) (any, bool, error) {
@@ -328,4 +357,90 @@ func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
+}
+
+func buildIMAPCriteria(query, from, to, after, before string) string {
+	parts := []string{}
+	if strings.TrimSpace(query) != "" {
+		parts = append(parts, fmt.Sprintf(`TEXT "%s"`, escapeSearch(query)))
+	}
+	if strings.TrimSpace(from) != "" {
+		parts = append(parts, fmt.Sprintf(`FROM "%s"`, escapeSearch(from)))
+	}
+	if strings.TrimSpace(to) != "" {
+		parts = append(parts, fmt.Sprintf(`TO "%s"`, escapeSearch(to)))
+	}
+	if d, ok := parseDateArg(after); ok {
+		parts = append(parts, "SINCE "+d.Format("02-Jan-2006"))
+	}
+	if d, ok := parseDateArg(before); ok {
+		parts = append(parts, "BEFORE "+d.Format("02-Jan-2006"))
+	}
+	if len(parts) == 0 {
+		return "ALL"
+	}
+	return strings.Join(parts, " ")
+}
+
+func escapeSearch(s string) string {
+	return strings.ReplaceAll(strings.TrimSpace(s), `"`, `\"`)
+}
+
+func parseDateArg(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, true
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+func sortByUIDDesc(msgs []bridge.DraftMessage) {
+	sort.Slice(msgs, func(i, j int) bool {
+		return uidAsInt(msgs[i].UID) > uidAsInt(msgs[j].UID)
+	})
+}
+
+func uidAsInt(uid string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(uid))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func parsePage(cursor string, limit int) (int, int) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	start := 0
+	if strings.TrimSpace(cursor) != "" {
+		if n, err := strconv.Atoi(cursor); err == nil && n >= 0 {
+			start = n
+		}
+	}
+	return start, limit
+}
+
+func paginateMessages(all []bridge.DraftMessage, start, limit int) ([]bridge.DraftMessage, string) {
+	if start >= len(all) {
+		return []bridge.DraftMessage{}, ""
+	}
+	end := start + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	next := ""
+	if end < len(all) {
+		next = strconv.Itoa(end)
+	}
+	return all[start:end], next
 }
