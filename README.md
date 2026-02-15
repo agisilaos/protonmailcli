@@ -128,6 +128,7 @@ Search:
 ./protonmailcli --json search messages --query invoice
 ./protonmailcli --json search messages --from billing@example.com --after 2026-01-01 --limit 25
 ./protonmailcli --json search messages --query invoice --limit 50 --cursor 50
+./protonmailcli --json search messages --mailbox "All Mail" --to info@example.com --before 2026-03-01
 ```
 
 Mailboxes:
@@ -225,6 +226,38 @@ Example pagination loop:
 ```bash
 ./protonmailcli --json --no-input search messages --query invoice --limit 100 --cursor 0
 # parse .data.nextCursor, then call again with --cursor <nextCursor> until empty
+```
+
+## For Coding Agents
+
+If this repo is handed to an autonomous agent (Codex, Claude Code, GitHub agents), use this operating pattern:
+
+1. Bootstrap and verify:
+```bash
+go test ./...
+./protonmailcli --json doctor
+./protonmailcli --json auth status
+```
+2. Run only machine mode in automations:
+```bash
+./protonmailcli --json --no-input <command> ...
+```
+3. Read IDs from output and feed them back without transformation:
+  `imap:Drafts:<uid>` for draft operations, `imap:INBOX:<uid>` for message operations.
+4. Use safety-first execution for mutating actions:
+  run with `--dry-run` first, then execute with explicit confirmation flags.
+5. Page deterministically:
+  use `--limit` and `--cursor`; stop when `nextCursor` is empty.
+6. Validate behavior contracts before proposing changes:
+```bash
+go test ./internal/app -run TestContractFixtures -v
+```
+
+Recommended agent sequence for “find and send draft”:
+
+```bash
+./protonmailcli --json --no-input search drafts --query "KAOS" --limit 1 --cursor 0
+./protonmailcli --json --no-input message send --draft-id imap:Drafts:1 --confirm-send imap:Drafts:1
 ```
 
 Current automated tests cover:

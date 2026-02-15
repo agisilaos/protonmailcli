@@ -55,7 +55,10 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		criteria := buildIMAPCriteria(*query, *from, *to, *after, *before)
+		criteria, err := buildIMAPCriteria(*query, *from, *to, *after, *before)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
 		drafts, err := c.ListMessages("Drafts", criteria)
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_list_failed", msg: err.Error()}
@@ -252,6 +255,7 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	query := fs.String("query", "", "query")
+	mailbox := fs.String("mailbox", "", "mailbox name (messages only)")
 	from := fs.String("from", "", "from filter")
 	to := fs.String("to", "", "to filter")
 	after := fs.String("after", "", "date filter YYYY-MM-DD")
@@ -266,8 +270,14 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 		return nil, false, err
 	}
 	defer c.Close()
-	criteria := buildIMAPCriteria(*query, *from, *to, *after, *before)
+	criteria, err := buildIMAPCriteria(*query, *from, *to, *after, *before)
+	if err != nil {
+		return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+	}
 	if action == "drafts" {
+		if strings.TrimSpace(*mailbox) != "" {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--mailbox is only supported for search messages"}
+		}
 		items, err := c.ListMessages("Drafts", criteria)
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
@@ -284,7 +294,11 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	if action != "messages" {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "search supports messages|drafts"}
 	}
-	items, err := c.ListMessages("INBOX", criteria)
+	targetMailbox := "INBOX"
+	if strings.TrimSpace(*mailbox) != "" {
+		targetMailbox = strings.TrimSpace(*mailbox)
+	}
+	items, err := c.ListMessages(targetMailbox, criteria)
 	if err != nil {
 		return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
 	}
@@ -295,7 +309,7 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	for _, m := range paged {
 		out = append(out, map[string]any{"id": imapMessageID(m.UID), "uid": m.UID, "from": m.From, "to": m.To, "subject": m.Subject, "date": m.Date.UTC().Format(time.RFC3339)})
 	}
-	return map[string]any{"messages": out, "count": len(out), "total": len(items), "nextCursor": next, "source": "imap"}, false, nil
+	return map[string]any{"messages": out, "count": len(out), "total": len(items), "nextCursor": next, "mailbox": targetMailbox, "source": "imap"}, false, nil
 }
 
 func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State) (any, bool, error) {
@@ -359,7 +373,7 @@ func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State
 	}
 }
 
-func buildIMAPCriteria(query, from, to, after, before string) string {
+func buildIMAPCriteria(query, from, to, after, before string) (string, error) {
 	parts := []string{}
 	if strings.TrimSpace(query) != "" {
 		parts = append(parts, fmt.Sprintf(`TEXT "%s"`, escapeSearch(query)))
@@ -370,34 +384,38 @@ func buildIMAPCriteria(query, from, to, after, before string) string {
 	if strings.TrimSpace(to) != "" {
 		parts = append(parts, fmt.Sprintf(`TO "%s"`, escapeSearch(to)))
 	}
-	if d, ok := parseDateArg(after); ok {
+	if d, ok, err := parseDateArg(after); err != nil {
+		return "", err
+	} else if ok {
 		parts = append(parts, "SINCE "+d.Format("02-Jan-2006"))
 	}
-	if d, ok := parseDateArg(before); ok {
+	if d, ok, err := parseDateArg(before); err != nil {
+		return "", err
+	} else if ok {
 		parts = append(parts, "BEFORE "+d.Format("02-Jan-2006"))
 	}
 	if len(parts) == 0 {
-		return "ALL"
+		return "ALL", nil
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), nil
 }
 
 func escapeSearch(s string) string {
 	return strings.ReplaceAll(strings.TrimSpace(s), `"`, `\"`)
 }
 
-func parseDateArg(s string) (time.Time, bool) {
+func parseDateArg(s string) (time.Time, bool, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return time.Time{}, false
+		return time.Time{}, false, nil
 	}
 	if t, err := time.Parse("2006-01-02", s); err == nil {
-		return t, true
+		return t, true, nil
 	}
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, true
+		return t, true, nil
 	}
-	return time.Time{}, false
+	return time.Time{}, false, fmt.Errorf("invalid date %q (expected YYYY-MM-DD or RFC3339)", s)
 }
 
 func sortByUIDDesc(msgs []bridge.DraftMessage) {
