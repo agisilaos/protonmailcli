@@ -260,6 +260,100 @@ Recommended agent sequence for “find and send draft”:
 ./protonmailcli --json --no-input message send --draft-id imap:Drafts:1 --confirm-send imap:Drafts:1
 ```
 
+## Agent Playbooks
+
+Below are practical patterns an agent can run reliably.
+
+### 1. File-based draft creation (recommended)
+
+When an LLM generates long email content, write it to a file and pass it with `--body-file`.
+
+```bash
+./protonmailcli --json --no-input draft create \
+  --to info@example.com \
+  --subject "Partnership follow-up" \
+  --body-file ./drafts/partnership-followup.md
+```
+
+Why: avoids shell escaping issues and keeps prompt/content separation clean.
+
+### 2. Batch draft ingestion from a manifest
+
+Maintain a manifest (`drafts.json`) and create drafts in a loop.
+
+Example manifest shape:
+
+```json
+[
+  {"to":"a@example.com","subject":"Hello A","body_file":"./drafts/a.md"},
+  {"to":"b@example.com","subject":"Hello B","body_file":"./drafts/b.md"}
+]
+```
+
+Example execution loop:
+
+```bash
+jq -c '.[]' drafts.json | while read -r item; do
+  to=$(echo "$item" | jq -r '.to')
+  subject=$(echo "$item" | jq -r '.subject')
+  body_file=$(echo "$item" | jq -r '.body_file')
+  ./protonmailcli --json --no-input draft create --to "$to" --subject "$subject" --body-file "$body_file"
+done
+```
+
+### 3. Search with filters and pagination
+
+Use deterministic pagination for large inboxes.
+
+```bash
+./protonmailcli --json --no-input search messages \
+  --mailbox "All Mail" \
+  --from billing@example.com \
+  --after 2026-01-01 \
+  --limit 100 \
+  --cursor 0
+```
+
+Then continue with returned `nextCursor` until it is empty.
+
+### 4. Safe non-interactive send
+
+Always send with explicit confirmation token in automation.
+
+```bash
+./protonmailcli --json --no-input message send \
+  --draft-id imap:Drafts:123 \
+  --confirm-send imap:Drafts:123
+```
+
+Preflight before bulk sends:
+
+```bash
+./protonmailcli --json --no-input --dry-run message send \
+  --draft-id imap:Drafts:123 \
+  --confirm-send imap:Drafts:123
+```
+
+### 5. Tag-driven triage
+
+Attach tags to messages as an agent post-processing step.
+
+```bash
+./protonmailcli --json --no-input tag add \
+  --message-id imap:INBOX:845 \
+  --tag invoices
+```
+
+### 6. Contract-safe changes in CI
+
+Before changing behavior, run executable contract fixtures:
+
+```bash
+go test ./internal/app -run TestContractFixtures -v
+```
+
+Treat fixture breaks as API contract changes and update fixtures intentionally.
+
 Current automated tests cover:
 
 - non-interactive setup flow
