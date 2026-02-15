@@ -1,0 +1,20 @@
+{
+  "name": "send_dry_run_no_side_effect",
+  "command": "protonmailcli message send --draft-id d_123 --confirm-send d_123 --dry-run --json --no-input",
+  "expected": {
+    "exitCode": 0,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "action": "send",
+        "draftId": "d_123",
+        "dryRun": true,
+        "wouldSend": true
+      }
+    },
+    "stderrContains": [
+      "dry-run",
+      "no changes applied"
+    ]
+  }
+}

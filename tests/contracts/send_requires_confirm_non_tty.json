@@ -1,0 +1,18 @@
+{
+  "name": "send_requires_confirm_non_tty",
+  "command": "protonmailcli message send --draft-id d_123 --json --no-input",
+  "expected": {
+    "exitCode": 7,
+    "stdoutJson": {
+      "ok": false,
+      "error": {
+        "code": "confirmation_required",
+        "message": "--confirm-send is required in non-interactive mode"
+      }
+    },
+    "stderrContains": [
+      "safety policy",
+      "--confirm-send"
+    ]
+  }
+}

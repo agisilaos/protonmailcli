@@ -1,0 +1,21 @@
+{
+  "name": "output_stream_discipline",
+  "command": "protonmailcli draft get --draft-id d_123 --json",
+  "expected": {
+    "exitCode": 0,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "id": "d_123"
+      }
+    },
+    "stderrNotContains": [
+      "{\"ok\"",
+      "\"data\""
+    ],
+    "rules": [
+      "primary result payload must be emitted on stdout",
+      "diagnostics and logs must be emitted on stderr"
+    ]
+  }
+}

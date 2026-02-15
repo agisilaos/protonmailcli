@@ -1,0 +1,14 @@
+# Build artifacts
+protonmailcli
+*.exe
+*.out
+
+# Local runtime data
+*.log
+state.json
+
+# Secrets and local config
+*.pass
+*.pem
+*.key
+.protonmailcli.toml
