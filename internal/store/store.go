@@ -20,10 +20,11 @@ func New(path string) *Store {
 
 func emptyState() model.State {
 	return model.State{
-		Drafts:   map[string]model.Draft{},
-		Messages: map[string]model.Message{},
-		Tags:     map[string]string{},
-		Filters:  map[string]model.Filter{},
+		Drafts:      map[string]model.Draft{},
+		Messages:    map[string]model.Message{},
+		Tags:        map[string]string{},
+		Filters:     map[string]model.Filter{},
+		Idempotency: map[string]model.IdempotencyRecord{},
 	}
 }
 
@@ -61,6 +62,9 @@ func (s *Store) Load() (model.State, error) {
 	}
 	if st.Filters == nil {
 		st.Filters = map[string]model.Filter{}
+	}
+	if st.Idempotency == nil {
+		st.Idempotency = map[string]model.IdempotencyRecord{}
 	}
 	return st, nil
 }

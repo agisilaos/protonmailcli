@@ -39,6 +39,7 @@ auth
 
 draft
   create
+  create-many
   update
   get
   list
@@ -46,6 +47,7 @@ draft
 
 message
   send
+  send-many
   get
 
 search
@@ -111,6 +113,7 @@ Flags:
 - `--body <text>` or `--body-file <path|->` (exactly one required)
 - `--attach <path>` repeatable
 - `--tag <name>` repeatable
+- `--idempotency-key <string>` optional
 
 State change: creates draft resource.
 
@@ -188,6 +191,9 @@ Flags:
 - `--from <email>`
 - `--to <email>`
 - `--subject <text>`
+- `--has-tag <name>`
+- `--unread`
+- `--since-id <uid>`
 - `--tag <name>` repeatable
 - `--after <date>`
 - `--before <date>`
@@ -299,3 +305,25 @@ protonmailcli filter test --filter-id f_123 --sample-file sample.eml --json
 protonmailcli filter apply --filter-id f_123 --dry-run --json
 protonmailcli completion zsh
 ```
+### `draft create-many`
+
+Purpose: create multiple drafts from a JSON manifest.
+
+Flags:
+
+- `--file <path|->` required, JSON array manifest
+- `--idempotency-key <string>` optional
+
+State change: creates zero or more draft resources.
+
+### `message send-many`
+
+Purpose: send multiple drafts from a JSON manifest with explicit per-item confirmations.
+
+Flags:
+
+- `--file <path|->` required
+- `--smtp-password-file <path>` optional
+- `--idempotency-key <string>` optional
+
+State change: sends zero or more messages.

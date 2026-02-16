@@ -10,13 +10,16 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - Auth session commands (`auth login|status|logout`)
 - Bridge connectivity diagnostics (`doctor`)
 - Draft lifecycle: create, update, get, list, delete
+- Bulk draft creation: `draft create-many --file`
 - Send message from draft with non-interactive safety gate
+- Bulk send workflow: `message send-many --file`
 - Search drafts/messages
 - Mailbox listing (`mailbox list`)
 - Tag operations: list, create, add, remove
 - Filter operations: list, create, test, apply, delete
 - Shell completion output (`completion bash|zsh|fish`)
 - Stable `--json` and `--plain` output modes
+- Idempotency keys on mutating commands
 - Persistent local state store
 - IMAP + SMTP Bridge path for live mailbox operations
 
@@ -93,7 +96,8 @@ Create draft:
 ./protonmailcli --json draft create \
   --to alice@example.com \
   --subject "Weekly sync" \
-  --body "status update"
+  --body "status update" \
+  --idempotency-key draft-weekly-sync-001
 ```
 
 List live drafts from Bridge IMAP:
@@ -110,7 +114,8 @@ Send draft safely in non-interactive mode:
 export PMAIL_SMTP_PASSWORD="your-bridge-password"
 ./protonmailcli --json --no-input message send \
   --draft-id d_123 \
-  --confirm-send d_123
+  --confirm-send d_123 \
+  --idempotency-key send-d123-001
 ```
 
 Dry-run send:
@@ -129,6 +134,7 @@ Search:
 ./protonmailcli --json search messages --from billing@example.com --after 2026-01-01 --limit 25
 ./protonmailcli --json search messages --query invoice --limit 50 --cursor 50
 ./protonmailcli --json search messages --mailbox "All Mail" --to info@example.com --before 2026-03-01
+./protonmailcli --json search messages --subject "invoice" --has-tag invoices --unread --since-id 1000
 ```
 
 Mailboxes:
@@ -353,6 +359,20 @@ go test ./internal/app -run TestContractFixtures -v
 ```
 
 Treat fixture breaks as API contract changes and update fixtures intentionally.
+
+### 7. Native batch operations
+
+Create many drafts from a single manifest:
+
+```bash
+./protonmailcli --json --no-input draft create-many --file drafts.json --idempotency-key batch-drafts-001
+```
+
+Send many drafts with explicit confirmations:
+
+```bash
+./protonmailcli --json --no-input message send-many --file sends.json --idempotency-key batch-send-001
+```
 
 Current automated tests cover:
 

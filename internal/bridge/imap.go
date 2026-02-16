@@ -48,10 +48,11 @@ type IMAPClient struct {
 }
 
 var (
-	literalRe = regexp.MustCompile(`\{(\d+)\}\r?$`)
-	uidRe     = regexp.MustCompile(`UID\s+(\d+)`)
-	flagsRe   = regexp.MustCompile(`FLAGS\s+\(([^)]*)\)`)
-	nameRe    = regexp.MustCompile(`"([^"]+)"\s*$`)
+	literalRe   = regexp.MustCompile(`\{(\d+)\}\r?$`)
+	uidRe       = regexp.MustCompile(`UID\s+(\d+)`)
+	flagsRe     = regexp.MustCompile(`FLAGS\s+\(([^)]*)\)`)
+	nameRe      = regexp.MustCompile(`"([^"]+)"\s*$`)
+	listFlagsRe = regexp.MustCompile(`^\* LIST \(([^)]*)\)`)
 )
 
 func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
@@ -87,7 +88,9 @@ func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
 }
 
 func (c *IMAPClient) Close() error {
-	_ = c.simple("LOGOUT")
+	_ = c.conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
+	_, _ = c.w.WriteString("ZZZZ LOGOUT\r\n")
+	_ = c.w.Flush()
 	return c.conn.Close()
 }
 
@@ -111,7 +114,11 @@ func (c *IMAPClient) ListMailboxes() ([]string, error) {
 }
 
 func (c *IMAPClient) ListDrafts() ([]DraftMessage, error) {
-	return c.ListMessages("Drafts", "ALL")
+	mb, err := c.DraftMailboxName()
+	if err != nil {
+		return nil, err
+	}
+	return c.ListMessages(mb, "ALL")
 }
 
 func (c *IMAPClient) ListMessages(mailbox, criteria string) ([]DraftMessage, error) {
@@ -135,18 +142,27 @@ func (c *IMAPClient) ListMessages(mailbox, criteria string) ([]DraftMessage, err
 }
 
 func (c *IMAPClient) GetDraft(uid string) (DraftMessage, error) {
-	if err := c.selectMailbox("Drafts"); err != nil {
+	mb, err := c.DraftMailboxName()
+	if err != nil {
 		return DraftMessage{}, err
 	}
-	return c.fetchUID("Drafts", uid)
+	if err := c.selectMailbox(mb); err != nil {
+		return DraftMessage{}, err
+	}
+	return c.fetchUID(mb, uid)
 }
 
 func (c *IMAPClient) AppendDraft(raw string) (string, error) {
-	if err := c.selectMailbox("Drafts"); err != nil {
+	mb, err := c.DraftMailboxName()
+	if err != nil {
+		return "", err
+	}
+	if err := c.selectMailbox(mb); err != nil {
 		return "", err
 	}
 	tag := c.nextTag()
-	cmd := fmt.Sprintf(`%s APPEND "Drafts" (\\Draft) {%d}\r\n`, tag, len(raw))
+	cmd := fmt.Sprintf("%s APPEND \"%s\" () {%d}\r\n", tag, escape(mb), len(raw))
+	c.debugf("C: %s APPEND \"%s\" () {%d}", tag, mb, len(raw))
 	if _, err := c.w.WriteString(cmd); err != nil {
 		return "", err
 	}
@@ -157,9 +173,12 @@ func (c *IMAPClient) AppendDraft(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	c.debugf("S: %s", line)
 	if !strings.HasPrefix(line, "+") {
 		return "", fmt.Errorf("imap append rejected: %s", line)
 	}
+
+	c.debugf("C: [literal %d bytes]", len(raw))
 	if _, err := c.w.WriteString(raw + "\r\n"); err != nil {
 		return "", err
 	}
@@ -172,7 +191,7 @@ func (c *IMAPClient) AppendDraft(raw string) (string, error) {
 			return "", err
 		}
 		if strings.HasPrefix(line, tag+" OK") {
-			if err := c.selectMailbox("Drafts"); err != nil {
+			if err := c.selectMailbox(mb); err != nil {
 				return "", err
 			}
 			uids, err := c.searchUID("ALL")
@@ -188,7 +207,11 @@ func (c *IMAPClient) AppendDraft(raw string) (string, error) {
 }
 
 func (c *IMAPClient) DeleteDraft(uid string) error {
-	if err := c.selectMailbox("Drafts"); err != nil {
+	mb, err := c.DraftMailboxName()
+	if err != nil {
+		return err
+	}
+	if err := c.selectMailbox(mb); err != nil {
 		return err
 	}
 	if err := c.simple(fmt.Sprintf("UID STORE %s +FLAGS.SILENT (\\\\Deleted)", uid)); err != nil {
@@ -396,6 +419,52 @@ func (c *IMAPClient) debugf(format string, args ...interface{}) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "imap-debug: "+format+"\n", args...)
+}
+
+func (c *IMAPClient) DraftMailboxName() (string, error) {
+	lines, err := c.simpleLines(`LIST "" "*"`)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "* LIST") {
+			continue
+		}
+		fm := listFlagsRe.FindStringSubmatch(line)
+		if len(fm) != 2 {
+			continue
+		}
+		flags := strings.Fields(strings.TrimSpace(fm[1]))
+		isDraft := false
+		for _, f := range flags {
+			if strings.EqualFold(f, `\Drafts`) {
+				isDraft = true
+				break
+			}
+		}
+		if !isDraft {
+			continue
+		}
+		m := nameRe.FindStringSubmatch(line)
+		if len(m) == 2 {
+			return m[1], nil
+		}
+	}
+	return "Drafts", nil
+}
+
+func (c *IMAPClient) SearchUIDs(mailbox, criteria string) ([]string, error) {
+	if err := c.selectMailbox(mailbox); err != nil {
+		return nil, err
+	}
+	return c.searchUID(criteria)
+}
+
+func (c *IMAPClient) MoveUID(srcMailbox, uid, dstMailbox string) error {
+	if err := c.selectMailbox(srcMailbox); err != nil {
+		return err
+	}
+	return c.simple(fmt.Sprintf(`UID MOVE %s "%s"`, uid, escape(dstMailbox)))
 }
 
 func uidInt(uid string) int {

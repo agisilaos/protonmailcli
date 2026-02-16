@@ -82,6 +82,8 @@ Constraints:
 8. bridge timeout exits `4`.
 9. `search messages --plain` is parseable and stable field order.
 10. `tag add` on existing tag is idempotent (`changed=false`, exit `0`).
+11. IMAP draft create falls back correctly when APPEND fails.
+12. Invalid `--after/--before` or `--since-id` values fail with exit `2`.
 
 ## Suggested directory layout
 

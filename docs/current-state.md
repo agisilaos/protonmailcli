@@ -20,9 +20,11 @@ Status date: 2026-02-15
 - Mail operations (live Bridge):
   - `mailbox list` (IMAP)
   - `draft create|get|list|update|delete` (IMAP `Drafts`)
+  - `draft create-many --file` (batch)
   - `message get` (IMAP `INBOX`)
   - `message send` (IMAP draft read + SMTP send)
-  - `search messages|drafts` (IMAP SEARCH with `query/from/to/after/before` + pagination)
+  - `message send-many --file` (batch)
+  - `search messages|drafts` (IMAP SEARCH with `query/subject/from/to/has-tag/unread/since-id/after/before` + pagination)
   - `tag list|add|remove` (IMAP flags/keywords)
 - Filter operations (local engine):
   - `filter list|create|delete|test|apply`
@@ -50,6 +52,7 @@ Automated tests currently cover:
 - doctor unreachable bridge behavior (`exit 4`)
 - completion generation
 - executable contract fixtures (`tests/contracts/*.json`) via `TestContractFixtures`
+- fallback handling when IMAP APPEND fails (tested path)
 
 Run:
 
@@ -66,12 +69,10 @@ go test ./...
 ## Known gaps
 
 - Filter actions are not yet backed by server-side Proton filter APIs.
-- IMAP message parsing is basic plaintext extraction for now.
-- Contract fixture runner (`tests/contracts/*.json`) is defined but not yet executable as a test harness.
+- MIME handling is improved (`quoted-printable`, `base64`, multipart with text/plain preference) but HTML sanitization and attachments are not exposed as first-class structured parts yet.
 
 ## Recommended next steps
 
-1. Add full MIME parsing for text/plain + text/html + multipart bodies.
-2. Add paginated listing and richer search flags (`from`, `to`, date ranges) on IMAP paths.
-3. Introduce a contract-test runner for `tests/contracts/*.json`.
-4. Add CI workflow for `go test ./...` and static checks.
+1. Add structured attachment extraction and optional HTML-to-text normalization.
+2. Add CI workflow for `go test ./...`, contract fixtures, and lint/static checks.
+3. Add server-backed filter management once Proton API path is selected.

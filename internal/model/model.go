@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Draft struct {
 	ID        string    `json:"id"`
@@ -42,10 +45,18 @@ type AuthState struct {
 	LastLogoutAt time.Time `json:"lastLogoutAt,omitempty"`
 }
 
+type IdempotencyRecord struct {
+	Operation   string          `json:"operation"`
+	PayloadHash string          `json:"payloadHash"`
+	Response    json.RawMessage `json:"response"`
+	CreatedAt   time.Time       `json:"createdAt"`
+}
+
 type State struct {
-	Drafts   map[string]Draft   `json:"drafts"`
-	Messages map[string]Message `json:"messages"`
-	Tags     map[string]string  `json:"tags"`
-	Filters  map[string]Filter  `json:"filters"`
-	Auth     AuthState          `json:"auth"`
+	Drafts      map[string]Draft             `json:"drafts"`
+	Messages    map[string]Message           `json:"messages"`
+	Tags        map[string]string            `json:"tags"`
+	Filters     map[string]Filter            `json:"filters"`
+	Auth        AuthState                    `json:"auth"`
+	Idempotency map[string]IdempotencyRecord `json:"idempotency"`
 }
