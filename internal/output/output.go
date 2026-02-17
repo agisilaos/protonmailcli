@@ -58,10 +58,22 @@ func printEnvelope(w io.Writer, mode Mode, env Envelope) error {
 		return err
 	case ModePlain:
 		if env.OK {
-			_, err := fmt.Fprintln(w, "ok\ttrue")
+			if env.Data == nil {
+				_, err := fmt.Fprintln(w, "ok\ttrue")
+				return err
+			}
+			b, err := json.Marshal(env.Data)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(w, "ok\ttrue\tdata\t%s\n", string(b))
 			return err
 		}
-		_, err := fmt.Fprintf(w, "ok\tfalse\terror\t%s\tmessage\t%s\n", env.Error.Code, strings.ReplaceAll(env.Error.Message, "\t", " "))
+		hint := ""
+		if env.Error != nil {
+			hint = strings.ReplaceAll(env.Error.Hint, "\t", " ")
+		}
+		_, err := fmt.Fprintf(w, "ok\tfalse\terror\t%s\tmessage\t%s\thint\t%s\n", env.Error.Code, strings.ReplaceAll(env.Error.Message, "\t", " "), hint)
 		return err
 	default:
 		if env.OK {
