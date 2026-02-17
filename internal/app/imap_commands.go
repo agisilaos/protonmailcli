@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -163,10 +164,13 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		return resp, true, nil
 	case "create-many":
 		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
+		fs.SetOutput(os.Stdout)
 		file := fs.String("file", "", "manifest json path or -")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
 		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return map[string]any{"help": "draft create-many"}, false, nil
+			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
 		if strings.TrimSpace(*file) == "" {
@@ -399,11 +403,14 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		return resp, true, nil
 	case "send-many":
 		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
+		fs.SetOutput(os.Stdout)
 		file := fs.String("file", "", "manifest json path or -")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
 		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return map[string]any{"help": "message send-many"}, false, nil
+			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
 		if strings.TrimSpace(*file) == "" {
