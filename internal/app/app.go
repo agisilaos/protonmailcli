@@ -209,8 +209,8 @@ Usage:
 Resources:
   setup
   auth       login|status|logout
-  draft      create|update|get|list|delete
-  message    send|get
+  draft      create|create-many|update|get|list|delete
+  message    send|send-many|get
   search     messages|drafts
   mailbox    list
   tag        list|create|add|remove
