@@ -208,6 +208,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			success++
 		}
 		resp := map[string]any{"results": results, "count": len(results), "success": success, "failed": len(results) - success, "source": "imap"}
+		if success > 0 && (len(results)-success) > 0 {
+			resp["_exitCode"] = 10
+		}
 		_ = idempotencyStore(st, *idempotencyKey, "draft.create-many", items, resp)
 		return resp, success > 0, nil
 	case "update":
@@ -463,6 +466,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			success++
 		}
 		resp := map[string]any{"results": results, "count": len(results), "success": success, "failed": len(results) - success, "source": "imap"}
+		if success > 0 && (len(results)-success) > 0 {
+			resp["_exitCode"] = 10
+		}
 		_ = idempotencyStore(st, *idempotencyKey, "message.send-many", items, resp)
 		return resp, success > 0, nil
 	default:

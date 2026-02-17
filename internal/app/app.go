@@ -118,6 +118,7 @@ func (a App) run(args []string) int {
 	if err != nil {
 		return a.exitWithError(err, g.mode, g.profile, requestID, start)
 	}
+	exitCode := normalizeExitCode(data)
 	if changed && !g.dryRun {
 		if err := st.Save(state); err != nil {
 			return a.exitWithError(cliError{exit: 1, code: "state_save_failed", msg: err.Error()}, g.mode, g.profile, requestID, start)
@@ -127,7 +128,7 @@ func (a App) run(args []string) int {
 		fmt.Fprintln(a.Stderr, "dry-run: no changes applied")
 	}
 	_ = output.PrintSuccess(a.Stdout, g.mode, data, g.profile, requestID, start)
-	return 0
+	return exitCode
 }
 
 func fallbackMode(m output.Mode) output.Mode {
@@ -135,6 +136,29 @@ func fallbackMode(m output.Mode) output.Mode {
 		return output.ModeHuman
 	}
 	return m
+}
+
+func normalizeExitCode(data any) int {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return 0
+	}
+	raw, exists := m["_exitCode"]
+	if !exists {
+		return 0
+	}
+	delete(m, "_exitCode")
+	switch v := raw.(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case float64:
+		if v > 0 {
+			return int(v)
+		}
+	}
+	return 0
 }
 
 func (a App) exitWithError(err error, mode output.Mode, profile, requestID string, start time.Time) int {
