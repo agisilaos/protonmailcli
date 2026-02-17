@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/protonmailcli/message-send-many.schema.json",
+  "title": "protonmailcli message send-many manifest",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["draft_id", "confirm_send"],
+    "properties": {
+      "draft_id": { "type": "string", "minLength": 1 },
+      "confirm_send": { "type": "string", "minLength": 1 },
+      "idempotency_key": { "type": "string", "minLength": 1 }
+    },
+    "additionalProperties": false
+  }
+}

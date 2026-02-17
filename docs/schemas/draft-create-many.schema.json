@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/protonmailcli/draft-create-many.schema.json",
+  "title": "protonmailcli draft create-many manifest",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["to", "subject"],
+    "properties": {
+      "to": {
+        "type": "array",
+        "minItems": 1,
+        "items": { "type": "string", "format": "email" }
+      },
+      "subject": { "type": "string", "minLength": 1 },
+      "body": { "type": "string" },
+      "body_file": { "type": "string", "minLength": 1 },
+      "idempotency_key": { "type": "string", "minLength": 1 }
+    },
+    "allOf": [
+      {
+        "anyOf": [
+          { "required": ["body"] },
+          { "required": ["body_file"] }
+        ]
+      }
+    ],
+    "additionalProperties": false
+  }
+}

@@ -218,6 +218,12 @@ Run executable contract fixtures only:
 go test ./internal/app -run TestContractFixtures -v
 ```
 
+Batch manifest schemas:
+
+- `docs/schemas/draft-create-many.schema.json`
+- `docs/schemas/message-send-many.schema.json`
+- `docs/agent-manifest-schemas.md`
+
 ## Agent usage pattern
 
 The CLI is designed for deterministic agent loops:
