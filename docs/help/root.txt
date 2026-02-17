@@ -1,0 +1,21 @@
+protonmailcli - Proton Mail Bridge CLI
+
+Usage:
+  protonmailcli [global flags] <resource> <action> [args]
+  protonmailcli setup [flags]
+  protonmailcli doctor
+  protonmailcli completion <bash|zsh|fish>
+
+Resources:
+  setup
+  auth       login|status|logout
+  draft      create|create-many|update|get|list|delete
+  message    send|send-many|get
+  search     messages|drafts
+  mailbox    list
+  tag        list|create|add|remove
+  filter     list|create|delete|test|apply
+
+Global flags:
+  --json --plain --no-input --dry-run --profile <name> --config <path> --state <path>
+  -h, --help  --version

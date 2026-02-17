@@ -2,6 +2,7 @@
 protonmailcli
 *.exe
 *.out
+.tmp/
 
 # Local runtime data
 *.log

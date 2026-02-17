@@ -1,0 +1,6 @@
+Usage of draft create-many:
+  -file string
+    	manifest json path or -
+  -idempotency-key string
+    	idempotency key
+ok

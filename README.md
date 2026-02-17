@@ -218,6 +218,18 @@ Run executable contract fixtures only:
 go test ./internal/app -run TestContractFixtures -v
 ```
 
+Validate CLI help contracts (recommended before release):
+
+```bash
+scripts/check-help.sh
+```
+
+If help output changed intentionally, refresh snapshots:
+
+```bash
+scripts/update-help.sh
+```
+
 Batch manifest schemas:
 
 - `docs/schemas/draft-create-many.schema.json`
