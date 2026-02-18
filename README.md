@@ -34,6 +34,7 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - `mailbox list`: Bridge IMAP (`LIST`)
 - `tag add/remove/list`: Bridge IMAP flags/keywords
 - `filter`: local state engine (not yet IMAP-server-side rules)
+- local-state mode parity: supports `draft create-many` and `message send-many` for offline/agent contract testing
 
 ## Build
 

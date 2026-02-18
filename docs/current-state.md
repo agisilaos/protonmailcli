@@ -40,6 +40,7 @@ Status date: 2026-02-15
   - auth session metadata
 - Optional local-only mode for tests:
   - `PMAIL_USE_LOCAL_STATE=1`
+  - now includes batch parity for `draft create-many` and `message send-many`
 
 ## Command architecture notes
 

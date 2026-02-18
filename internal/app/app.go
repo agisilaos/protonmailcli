@@ -635,6 +635,52 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 			delete(st.Drafts, uid)
 		}
 		return map[string]any{"deleted": true, "draftId": uid}, true, nil
+	case "create-many":
+		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		file := fs.String("file", "", "manifest json path or -")
+		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
+		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				usage := usageForFlagSet(fs)
+				fmt.Fprintln(os.Stdout, usage)
+				return map[string]any{"help": "draft create-many"}, false, nil
+			}
+			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		}
+		manifestPath, err := resolveManifestInput(*file, *fromStdin)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		items, err := loadDraftCreateManifest(manifestPath, *fromStdin)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		results := make([]batchItemResponse, 0, len(items))
+		success := 0
+		for i, it := range items {
+			b, err := loadBody(it.Body, it.BodyFile, false)
+			if err != nil {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
+				continue
+			}
+			if g.dryRun {
+				results = append(results, batchItemResponse{Index: i, OK: true, DryRun: true, To: it.To, Subject: it.Subject})
+				success++
+				continue
+			}
+			now := time.Now().UTC()
+			id := fmt.Sprintf("d_%d", now.UnixNano())
+			d := model.Draft{ID: id, To: it.To, Subject: it.Subject, Body: b, CreatedAt: now, UpdatedAt: now}
+			st.Drafts[id] = d
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: id})
+			success++
+		}
+		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}
+		if success > 0 && (len(results)-success) > 0 {
+			resp.exitCode = 10
+		}
+		return resp, success > 0, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown draft action: " + action}
 	}
@@ -708,6 +754,67 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		st.Messages[msgID] = m
 		st.Drafts[d.ID] = d
 		return map[string]any{"sent": true, "message": m}, true, nil
+	case "send-many":
+		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		file := fs.String("file", "", "manifest json path or -")
+		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
+		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				usage := usageForFlagSet(fs)
+				fmt.Fprintln(os.Stdout, usage)
+				return map[string]any{"help": "message send-many"}, false, nil
+			}
+			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		}
+		manifestPath, err := resolveManifestInput(*file, *fromStdin)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		items, err := loadSendManyManifest(manifestPath, *fromStdin)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		results := make([]batchItemResponse, 0, len(items))
+		success := 0
+		for i, it := range items {
+			uid, err := parseRequiredUID(it.DraftID, "--draft-id")
+			if err != nil {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "invalid draft_id"})
+				continue
+			}
+			d, ok := st.Drafts[uid]
+			if !ok {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "not_found", Error: "draft not found", DraftID: it.DraftID})
+				continue
+			}
+			if err := validateSendSafety(cfg, g.noInput || !isTTY(os.Stdin), it.ConfirmSend, it.DraftID, uid, false); err != nil {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "confirmation_required", Error: "confirmation_required", DraftID: it.DraftID})
+				continue
+			}
+			if g.dryRun {
+				results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, DryRun: true})
+				success++
+				continue
+			}
+			now := time.Now().UTC()
+			d.SentAt = &now
+			msgID := fmt.Sprintf("m_%d", now.UnixNano())
+			from := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username)
+			if from == "" {
+				from = "local@example.com"
+			}
+			m := model.Message{ID: msgID, DraftID: d.ID, From: from, To: d.To, Subject: d.Subject, Body: d.Body, Tags: d.Tags, SentAt: now}
+			st.Messages[msgID] = m
+			st.Drafts[d.ID] = d
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SentAt: now.Format(time.RFC3339)})
+			success++
+		}
+		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}
+		if success > 0 && (len(results)-success) > 0 {
+			resp.exitCode = 10
+		}
+		return resp, success > 0, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown message action: " + action}
 	}

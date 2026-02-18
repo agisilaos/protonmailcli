@@ -224,3 +224,50 @@ func TestBatchHelpDoesNotRequireBridgeAuth(t *testing.T) {
 		t.Fatalf("help path should not require auth: stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
 }
+
+func TestLocalBatchDraftCreateAndSendManyParity(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+
+	manifest := filepath.Join(tmp, "drafts.json")
+	if err := os.WriteFile(manifest, []byte(`[
+{"to":["a@example.com"],"subject":"ok","body":"hello"},
+{"to":["b@example.com"],"subject":"bad","body_file":"./missing.txt"}
+]`), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--no-input", "--config", cfg, "--state", state, "draft", "create-many", "--file", manifest}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 10 {
+		t.Fatalf("expected partial success exit 10, got %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"success":1`) || !strings.Contains(stdout.String(), `"failed":1`) {
+		t.Fatalf("unexpected batch draft response: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"errorCode":"validation_error"`) {
+		t.Fatalf("expected validation errorCode: %s", stdout.String())
+	}
+
+	draftID := latestDraftID(t, state)
+	sendManifest := filepath.Join(tmp, "sends.json")
+	if err := os.WriteFile(sendManifest, []byte(`[{"draft_id":"`+draftID+`","confirm_send":"`+draftID+`"}]`), 0o600); err != nil {
+		t.Fatalf("write send manifest: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	exit = Run([]string{"--json", "--no-input", "--dry-run", "--config", cfg, "--state", state, "message", "send-many", "--file", sendManifest}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"dryRun":true`) || !strings.Contains(stdout.String(), `"success":1`) {
+		t.Fatalf("unexpected send-many dry-run response: %s", stdout.String())
+	}
+}
