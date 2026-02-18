@@ -129,3 +129,4 @@ For agent-safe releases:
 1. Add/update fixture(s) in `tests/contracts/*.json` for the scenario.
 2. Run `go test ./internal/app -run TestContractFixtures -v`.
 3. Treat fixture failures as contract breaks unless intentionally migrated.
+4. Run `scripts/release-check.sh` before tagging a release.

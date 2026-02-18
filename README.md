@@ -256,6 +256,12 @@ Run agent smoke checks (no real sends):
 scripts/smoke-agent.sh
 ```
 
+Run full pre-release checks:
+
+```bash
+scripts/release-check.sh
+```
+
 Batch manifest schemas:
 
 - `docs/schemas/draft-create-many.schema.json`
