@@ -11,6 +11,8 @@ Use these schema files to validate batch manifests before executing CLI commands
 
 - `protonmailcli draft create-many --file <manifest.json>`
 - `protonmailcli message send-many --file <manifest.json>`
+- `cat manifest.json | protonmailcli draft create-many --stdin`
+- `cat manifest.json | protonmailcli message send-many --stdin`
 
 ## Recommended agent workflow
 

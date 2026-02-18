@@ -133,6 +133,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		subject := fs.String("subject", "", "subject")
 		body := fs.String("body", "", "body")
 		bodyFile := fs.String("body-file", "", "body from file or -")
+		stdinBody := fs.Bool("stdin", false, "read body from stdin")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
 		fs.Var(&to, "to", "recipient (repeat)")
 		if err := fs.Parse(args); err != nil {
@@ -141,7 +142,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if len(to) == 0 {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "at least one --to is required"}
 		}
-		b, err := loadBody(*body, *bodyFile)
+		b, err := loadBody(*body, *bodyFile, *stdinBody)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -166,6 +167,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
 		fs.SetOutput(os.Stdout)
 		file := fs.String("file", "", "manifest json path or -")
+		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
 		if err := fs.Parse(args); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
@@ -173,10 +175,13 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		if strings.TrimSpace(*file) == "" {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--file is required"}
+		if strings.TrimSpace(*file) == "" && !*fromStdin {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "one of --file or --stdin is required"}
 		}
-		items, err := loadDraftCreateManifest(*file)
+		if strings.TrimSpace(*file) != "" && *fromStdin {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "provide only one of --file or --stdin"}
+		}
+		items, err := loadDraftCreateManifest(*file, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -188,9 +193,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		results := make([]map[string]any, 0, len(items))
 		success := 0
 		for i, it := range items {
-			b, err := loadBody(it.Body, it.BodyFile)
+			b, err := loadBody(it.Body, it.BodyFile, false)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "error": err.Error()})
+				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "validation_error", "error": err.Error()})
 				continue
 			}
 			raw := bridge.BuildRawMessage(username, it.To, it.Subject, b)
@@ -201,7 +206,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			}
 			uid, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "error": err.Error()})
+				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "imap_draft_create_failed", "error": err.Error()})
 				continue
 			}
 			results = append(results, map[string]any{"index": i, "ok": true, "draftId": imapDraftID(uid), "uid": uid})
@@ -219,6 +224,8 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		id := fs.String("draft-id", "", "draft id")
 		subject := fs.String("subject", "", "subject")
 		body := fs.String("body", "", "body")
+		bodyFile := fs.String("body-file", "", "body from file or -")
+		stdinBody := fs.Bool("stdin", false, "read body from stdin")
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
@@ -233,8 +240,12 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if *subject != "" {
 			d.Subject = *subject
 		}
-		if *body != "" {
-			d.Body = *body
+		if *body != "" || *bodyFile != "" || *stdinBody {
+			nextBody, err := loadBody(*body, *bodyFile, *stdinBody)
+			if err != nil {
+				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+			}
+			d.Body = nextBody
 		}
 		if g.dryRun {
 			return map[string]any{"action": "draft.update", "draftId": imapDraftID(uid), "wouldUpdate": true, "source": "imap"}, true, nil
@@ -408,6 +419,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
 		fs.SetOutput(os.Stdout)
 		file := fs.String("file", "", "manifest json path or -")
+		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
 		if err := fs.Parse(args); err != nil {
@@ -416,10 +428,13 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		if strings.TrimSpace(*file) == "" {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--file is required"}
+		if strings.TrimSpace(*file) == "" && !*fromStdin {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "one of --file or --stdin is required"}
 		}
-		items, err := loadSendManyManifest(*file)
+		if strings.TrimSpace(*file) != "" && *fromStdin {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "provide only one of --file or --stdin"}
+		}
+		items, err := loadSendManyManifest(*file, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -441,16 +456,16 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		for i, it := range items {
 			uid, err := parseUID(it.DraftID)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "error": "invalid draft_id"})
+				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "validation_error", "error": "invalid draft_id"})
 				continue
 			}
 			d, err := c.GetDraft(uid)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "error": "draft not found", "draftId": it.DraftID})
+				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "not_found", "error": "draft not found", "draftId": it.DraftID})
 				continue
 			}
 			if cfg.Safety.RequireConfirmSendNonTTY && g.noInput && it.ConfirmSend != it.DraftID && it.ConfirmSend != uid {
-				results = append(results, map[string]any{"index": i, "ok": false, "error": "confirmation_required", "draftId": it.DraftID})
+				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "confirmation_required", "error": "confirmation_required", "draftId": it.DraftID})
 				continue
 			}
 			if g.dryRun {
@@ -459,7 +474,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				continue
 			}
 			if err := smtpSendFn(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: pass}, bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body}); err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "error": err.Error(), "draftId": it.DraftID})
+				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "send_failed", "error": err.Error(), "draftId": it.DraftID})
 				continue
 			}
 			results = append(results, map[string]any{"index": i, "ok": true, "draftId": it.DraftID, "sentAt": time.Now().UTC().Format(time.RFC3339)})
@@ -708,8 +723,8 @@ func paginateMessages(all []bridge.DraftMessage, start, limit int) ([]bridge.Dra
 	return all[start:end], next
 }
 
-func loadDraftCreateManifest(path string) ([]draftCreateItem, error) {
-	b, err := readManifest(path)
+func loadDraftCreateManifest(path string, fromStdin bool) ([]draftCreateItem, error) {
+	b, err := readManifest(path, fromStdin)
 	if err != nil {
 		return nil, err
 	}
@@ -728,8 +743,8 @@ func loadDraftCreateManifest(path string) ([]draftCreateItem, error) {
 	return items, nil
 }
 
-func loadSendManyManifest(path string) ([]sendManyItem, error) {
-	b, err := readManifest(path)
+func loadSendManyManifest(path string, fromStdin bool) ([]sendManyItem, error) {
+	b, err := readManifest(path, fromStdin)
 	if err != nil {
 		return nil, err
 	}
@@ -748,9 +763,9 @@ func loadSendManyManifest(path string) ([]sendManyItem, error) {
 	return items, nil
 }
 
-func readManifest(path string) ([]byte, error) {
-	if path == "-" {
-		return io.ReadAll(os.Stdin)
+func readManifest(path string, fromStdin bool) ([]byte, error) {
+	if fromStdin || path == "-" {
+		return readAllStdinFn()
 	}
 	return os.ReadFile(path)
 }

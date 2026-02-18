@@ -110,7 +110,10 @@ Flags:
 - `--cc <email>` repeatable
 - `--bcc <email>` repeatable
 - `--subject <text>` optional
-- `--body <text>` or `--body-file <path|->` (exactly one required)
+- exactly one of:
+  - `--body <text>`
+  - `--body-file <path|->`
+  - `--stdin` (read body from stdin)
 - `--attach <path>` repeatable
 - `--tag <name>` repeatable
 - `--idempotency-key <string>` optional
@@ -311,7 +314,9 @@ Purpose: create multiple drafts from a JSON manifest.
 
 Flags:
 
-- `--file <path|->` required, JSON array manifest
+- exactly one of:
+  - `--file <path|->`
+  - `--stdin` (read manifest JSON from stdin)
 - `--idempotency-key <string>` optional
 
 State change: creates zero or more draft resources.
@@ -322,7 +327,9 @@ Purpose: send multiple drafts from a JSON manifest with explicit per-item confir
 
 Flags:
 
-- `--file <path|->` required
+- exactly one of:
+  - `--file <path|->`
+  - `--stdin` (read manifest JSON from stdin)
 - `--smtp-password-file <path>` optional
 - `--idempotency-key <string>` optional
 

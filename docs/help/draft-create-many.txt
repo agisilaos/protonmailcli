@@ -3,4 +3,6 @@ Usage of draft create-many:
     	manifest json path or -
   -idempotency-key string
     	idempotency key
+  -stdin
+    	read manifest json from stdin
 ok

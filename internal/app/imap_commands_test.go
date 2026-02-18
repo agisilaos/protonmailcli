@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -33,6 +35,73 @@ func TestBuildIMAPCriteriaInvalidSinceID(t *testing.T) {
 	_, err := buildIMAPCriteria("", "", "", "", "", false, "abc", "", "")
 	if err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestLoadBodyFromStdinFlag(t *testing.T) {
+	prev := readAllStdinFn
+	defer func() { readAllStdinFn = prev }()
+	readAllStdinFn = func() ([]byte, error) { return []byte("stdin body"), nil }
+
+	body, err := loadBody("", "", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if body != "stdin body" {
+		t.Fatalf("unexpected body: %q", body)
+	}
+}
+
+func TestLoadBodyRejectsMultipleBodyInputs(t *testing.T) {
+	_, err := loadBody("inline", "", true)
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestLoadDraftCreateManifestFromStdin(t *testing.T) {
+	prev := readAllStdinFn
+	defer func() { readAllStdinFn = prev }()
+	readAllStdinFn = func() ([]byte, error) {
+		return []byte(`[{"to":["a@example.com"],"subject":"s","body":"b"}]`), nil
+	}
+
+	items, err := loadDraftCreateManifest("", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 || items[0].Subject != "s" {
+		t.Fatalf("unexpected items: %#v", items)
+	}
+}
+
+func TestLoadSendManyManifestFromStdin(t *testing.T) {
+	prev := readAllStdinFn
+	defer func() { readAllStdinFn = prev }()
+	readAllStdinFn = func() ([]byte, error) {
+		return []byte(`[{"draft_id":"imap:Drafts:1","confirm_send":"imap:Drafts:1"}]`), nil
+	}
+
+	items, err := loadSendManyManifest("", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 || items[0].DraftID != "imap:Drafts:1" {
+		t.Fatalf("unexpected items: %#v", items)
+	}
+}
+
+func TestReadManifestFromDashUsesStdin(t *testing.T) {
+	prev := readAllStdinFn
+	defer func() { readAllStdinFn = prev }()
+	readAllStdinFn = func() ([]byte, error) { return []byte(`[]`), nil }
+
+	b, err := readManifest("-", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(b) != "[]" {
+		t.Fatalf("unexpected body: %q", string(b))
 	}
 }
 
@@ -68,6 +137,31 @@ func TestSaveDraftWithFallbackWhenAppendFails(t *testing.T) {
 	}
 	if !smtpCalled {
 		t.Fatalf("expected smtp fallback to be used")
+	}
+}
+
+func TestJSONErrorEnvelopeHasCodeAndRetryable(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := config.Default()
+	cfg.Bridge.Username = "me@example.com"
+	cfgPath := tmp + "/config.toml"
+	statePath := tmp + "/state.json"
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	exit := Run([]string{"--json", "--config", cfgPath, "--state", statePath, "message", "send", "--draft-id", "missing"}, bytes.NewBuffer(nil), &stdout, io.Discard)
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit")
+	}
+	out := stdout.String()
+	if !strings.Contains(out, `"code":"not_found"`) {
+		t.Fatalf("expected error code in json: %s", out)
+	}
+	if !strings.Contains(out, `"retryable":false`) {
+		t.Fatalf("expected retryable marker in json: %s", out)
 	}
 }
 

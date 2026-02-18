@@ -10,9 +10,9 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - Auth session commands (`auth login|status|logout`)
 - Bridge connectivity diagnostics (`doctor`)
 - Draft lifecycle: create, update, get, list, delete
-- Bulk draft creation: `draft create-many --file`
+- Bulk draft creation: `draft create-many --file|--stdin`
 - Send message from draft with non-interactive safety gate
-- Bulk send workflow: `message send-many --file`
+- Bulk send workflow: `message send-many --file|--stdin`
 - Search drafts/messages
 - Mailbox listing (`mailbox list`)
 - Tag operations: list, create, add, remove
@@ -98,6 +98,15 @@ Create draft:
   --subject "Weekly sync" \
   --body "status update" \
   --idempotency-key draft-weekly-sync-001
+```
+
+Create draft from stdin (agent-safe piping):
+
+```bash
+cat ./drafts/weekly-sync.md | ./protonmailcli --json --no-input draft create \
+  --to alice@example.com \
+  --subject "Weekly sync" \
+  --stdin
 ```
 
 List live drafts from Bridge IMAP:
@@ -218,6 +227,15 @@ Run executable contract fixtures only:
 go test ./internal/app -run TestContractFixtures -v
 ```
 
+Run optional real-Bridge integration test (manual/gated):
+
+```bash
+PMAIL_E2E_BRIDGE=1 \
+PMAIL_E2E_USERNAME=you@proton.me \
+PMAIL_E2E_PASSWORD='bridge-password' \
+go test -tags integration ./internal/app -run TestBridgeE2EDraftCreateSearchSend -v
+```
+
 Validate CLI help contracts (recommended before release):
 
 ```bash
@@ -309,8 +327,8 @@ Example manifest shape:
 
 ```json
 [
-  {"to":"a@example.com","subject":"Hello A","body_file":"./drafts/a.md"},
-  {"to":"b@example.com","subject":"Hello B","body_file":"./drafts/b.md"}
+  {"to":["a@example.com"],"subject":"Hello A","body_file":"./drafts/a.md"},
+  {"to":["b@example.com"],"subject":"Hello B","body_file":"./drafts/b.md"}
 ]
 ```
 
@@ -386,11 +404,30 @@ Create many drafts from a single manifest:
 ./protonmailcli --json --no-input draft create-many --file drafts.json --idempotency-key batch-drafts-001
 ```
 
+Or pass manifest via stdin:
+
+```bash
+cat drafts.json | ./protonmailcli --json --no-input draft create-many --stdin --idempotency-key batch-drafts-001
+```
+
 Send many drafts with explicit confirmations:
 
 ```bash
 ./protonmailcli --json --no-input message send-many --file sends.json --idempotency-key batch-send-001
 ```
+
+Or pass send manifest via stdin:
+
+```bash
+cat sends.json | ./protonmailcli --json --no-input message send-many --stdin --idempotency-key batch-send-001
+```
+
+### 8. Retry-aware errors for agents
+
+In `--json` mode, all failures include machine-readable error fields:
+
+- `error.code` (stable programmatic code)
+- `error.retryable` (`true` for transient/network-class failures)
 
 Current automated tests cover:
 

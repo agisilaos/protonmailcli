@@ -45,6 +45,10 @@ type cliError struct {
 
 func (e cliError) Error() string { return e.msg }
 
+var readAllStdinFn = func() ([]byte, error) {
+	return io.ReadAll(os.Stdin)
+}
+
 func Run(args []string, in io.Reader, out io.Writer, errw io.Writer) int {
 	a := App{Stdout: out, Stderr: errw, Stdin: in}
 	return a.run(args)
@@ -59,7 +63,7 @@ func (a App) run(args []string) int {
 		if mode == "" {
 			mode = output.ModeHuman
 		}
-		_ = output.PrintError(a.Stdout, mode, "usage_error", err.Error(), "Use --help for usage", g.profile, requestID, start)
+		_ = output.PrintError(a.Stdout, mode, "usage_error", err.Error(), "Use --help for usage", false, g.profile, requestID, start)
 		return 2
 	}
 	if g.showVer {
@@ -167,11 +171,23 @@ func (a App) exitWithError(err error, mode output.Mode, profile, requestID strin
 		if ce.hint != "" {
 			fmt.Fprintln(a.Stderr, ce.hint)
 		}
-		_ = output.PrintError(a.Stdout, mode, ce.code, ce.msg, ce.hint, profile, requestID, start)
+		_ = output.PrintError(a.Stdout, mode, ce.code, ce.msg, ce.hint, isRetryableError(ce.code, ce.exit), profile, requestID, start)
 		return ce.exit
 	}
-	_ = output.PrintError(a.Stdout, mode, "runtime_error", err.Error(), "", profile, requestID, start)
+	_ = output.PrintError(a.Stdout, mode, "runtime_error", err.Error(), "", false, profile, requestID, start)
 	return 1
+}
+
+func isRetryableError(code string, exit int) bool {
+	if exit == 4 || exit == 8 {
+		return true
+	}
+	switch code {
+	case "send_failed", "imap_connect_failed", "imap_search_failed", "imap_list_failed", "imap_tag_update_failed", "imap_draft_create_failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseGlobal(args []string) (globalOptions, []string, error) {
@@ -490,6 +506,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		subject := fs.String("subject", "", "subject")
 		body := fs.String("body", "", "body")
 		bodyFile := fs.String("body-file", "", "body from file or -")
+		stdinBody := fs.Bool("stdin", false, "read body from stdin")
 		fs.Var(&to, "to", "recipient (repeat)")
 		fs.Var(&tags, "tag", "tag (repeat)")
 		if err := fs.Parse(args); err != nil {
@@ -498,7 +515,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if len(to) == 0 {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "at least one --to is required"}
 		}
-		b, err := loadBody(*body, *bodyFile)
+		b, err := loadBody(*body, *bodyFile, *stdinBody)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -515,6 +532,8 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		id := fs.String("draft-id", "", "draft id")
 		subject := fs.String("subject", "", "subject")
 		body := fs.String("body", "", "body")
+		bodyFile := fs.String("body-file", "", "body from file or -")
+		stdinBody := fs.Bool("stdin", false, "read body from stdin")
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
@@ -525,8 +544,12 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if *subject != "" {
 			d.Subject = *subject
 		}
-		if *body != "" {
-			d.Body = *body
+		if *body != "" || *bodyFile != "" || *stdinBody {
+			nextBody, err := loadBody(*body, *bodyFile, *stdinBody)
+			if err != nil {
+				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+			}
+			d.Body = nextBody
 		}
 		d.UpdatedAt = time.Now().UTC()
 		if !g.dryRun {
@@ -811,18 +834,25 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 	}
 }
 
-func loadBody(body, bodyFile string) (string, error) {
+func loadBody(body, bodyFile string, stdinBody bool) (string, error) {
+	if stdinBody {
+		if strings.TrimSpace(body) != "" || strings.TrimSpace(bodyFile) != "" {
+			return "", fmt.Errorf("provide only one of --body, --body-file, or --stdin")
+		}
+		b, err := readAllStdinFn()
+		return string(b), err
+	}
 	if body != "" && bodyFile != "" {
-		return "", fmt.Errorf("provide one of --body or --body-file")
+		return "", fmt.Errorf("provide only one of --body, --body-file, or --stdin")
 	}
 	if body != "" {
 		return body, nil
 	}
 	if bodyFile == "" {
-		return "", fmt.Errorf("one of --body or --body-file is required")
+		return "", fmt.Errorf("one of --body, --body-file, or --stdin is required")
 	}
 	if bodyFile == "-" {
-		b, err := io.ReadAll(os.Stdin)
+		b, err := readAllStdinFn()
 		return string(b), err
 	}
 	b, err := os.ReadFile(filepath.Clean(bodyFile))
