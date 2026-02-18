@@ -67,11 +67,25 @@ func cmdMailboxIMAP(action string, _ []string, cfg config.Config, st *model.Stat
 }
 
 func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
-	c, username, _, err := bridgeClient(cfg, st, "")
-	if err != nil {
-		return nil, false, err
+	var c *bridge.IMAPClient
+	var username string
+	ensureClient := func() error {
+		if c != nil {
+			return nil
+		}
+		client, user, _, err := bridgeClient(cfg, st, "")
+		if err != nil {
+			return err
+		}
+		c = client
+		username = user
+		return nil
 	}
-	defer c.Close()
+	defer func() {
+		if c != nil {
+			_ = c.Close()
+		}
+	}()
 
 	switch action {
 	case "list":
@@ -90,6 +104,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		criteria, err := buildIMAPCriteria(*query, "", *from, *to, "", false, "", *after, *before)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		drafts, err := c.ListMessages("Drafts", criteria)
 		if err != nil {
@@ -122,6 +139,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		uid, err := parseRequiredUID(*id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
@@ -156,6 +176,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		raw := bridge.BuildRawMessage(username, to, *subject, b)
 		if g.dryRun {
@@ -201,6 +224,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		} else if found {
 			return cached, false, nil
 		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
+		}
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
 		for i, it := range items {
@@ -244,6 +270,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
+		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
@@ -282,6 +311,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		uid, err := parseRequiredUID(*id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		if g.dryRun {
 			return map[string]any{"action": "draft.delete", "draftId": imapDraftID(uid), "wouldDelete": true, "source": "imap"}, true, nil
@@ -359,11 +391,27 @@ func createDraftViaMoveFallback(cfg config.Config, st *model.State, username str
 }
 
 func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
-	c, username, password, err := bridgeClient(cfg, st, "")
-	if err != nil {
-		return nil, false, err
+	var c *bridge.IMAPClient
+	var username string
+	var password string
+	ensureClient := func() error {
+		if c != nil {
+			return nil
+		}
+		client, user, pass, err := bridgeClient(cfg, st, "")
+		if err != nil {
+			return err
+		}
+		c = client
+		username = user
+		password = pass
+		return nil
 	}
-	defer c.Close()
+	defer func() {
+		if c != nil {
+			_ = c.Close()
+		}
+	}()
 
 	switch action {
 	case "get":
@@ -376,6 +424,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		uid, err := parseRequiredUID(*id, "--message-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		msgs, err := c.ListMessages("INBOX", "UID "+uid)
 		if err != nil || len(msgs) == 0 {
@@ -408,6 +459,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		uid, err := parseRequiredUID(*draftID, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
@@ -475,6 +529,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		pass := strings.TrimSpace(password)
 		if *passwordFile != "" {

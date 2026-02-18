@@ -48,6 +48,7 @@ Status date: 2026-02-15
 - IMAP-heavy command responses now use typed response structs instead of ad-hoc `map[string]any`, preserving JSON contract fields while reducing key drift risk.
 - Manifest source, required-ID, and date parsing validations are centralized in shared helpers to keep flag behavior consistent across commands.
 - Agent smoke workflow is available via `scripts/smoke-agent.sh` (local-state and dry-run only).
+- IMAP subcommand help is parsed before Bridge auth/connect, so `--help` works even on un-authenticated environments.
 
 ## Tests
 
