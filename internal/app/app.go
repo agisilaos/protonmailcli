@@ -67,7 +67,7 @@ func (a App) run(args []string) int {
 		return 2
 	}
 	if g.showVer {
-		fmt.Fprintln(a.Stdout, "protonmailcli v0.2.0")
+		fmt.Fprintln(a.Stdout, "protonmailcli v0.2.1")
 		return 0
 	}
 	if g.showHelp || len(rest) == 0 {
