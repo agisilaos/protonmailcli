@@ -62,6 +62,12 @@ Constraints:
 - replay-safe idempotency keys
 - cleanup job after each run
 
+Current gated E2E entrypoint:
+
+- `go test -tags integration ./internal/app -run TestBridgeE2EDraftCreateSearchSend -v`
+- requires: `PMAIL_E2E_BRIDGE=1`, `PMAIL_E2E_USERNAME`, `PMAIL_E2E_PASSWORD`
+- optional: `PMAIL_E2E_HOST`, `PMAIL_E2E_IMAP_PORT`, `PMAIL_E2E_SMTP_PORT`, `PMAIL_E2E_REAL_SEND=1`
+
 ## Required invariants
 
 - stdout contains only result payload.
