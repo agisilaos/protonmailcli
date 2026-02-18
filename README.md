@@ -458,3 +458,7 @@ Current automated tests cover:
 - Config/security: `docs/config-and-security.md`
 - Test strategy: `docs/testing-strategy.md`
 - Current implementation status: `docs/current-state.md`
+
+## License
+
+MIT (`LICENSE`)
