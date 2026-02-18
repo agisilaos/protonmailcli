@@ -45,6 +45,7 @@ Status date: 2026-02-15
 
 - Resource dispatch (`mailbox`, `draft`, `message`, `search`, `tag`) now uses shared backend-router helpers so local-state and IMAP routing stays consistent.
 - Send safety checks (confirm token and force policy) are centralized in one validator used by both local and IMAP send paths.
+- IMAP-heavy command responses now use typed response structs instead of ad-hoc `map[string]any`, preserving JSON contract fields while reducing key drift risk.
 
 ## Tests
 

@@ -143,6 +143,14 @@ func fallbackMode(m output.Mode) output.Mode {
 }
 
 func normalizeExitCode(data any) int {
+	type exitCoder interface {
+		ExitCode() int
+	}
+	if withExit, ok := data.(exitCoder); ok {
+		if code := withExit.ExitCode(); code > 0 {
+			return code
+		}
+	}
 	m, ok := data.(map[string]any)
 	if !ok {
 		return 0

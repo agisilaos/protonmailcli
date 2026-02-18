@@ -57,11 +57,11 @@ func cmdMailboxIMAP(action string, _ []string, cfg config.Config, st *model.Stat
 	if err != nil {
 		return nil, false, cliError{exit: 4, code: "imap_list_failed", msg: err.Error()}
 	}
-	res := make([]map[string]any, 0, len(boxes))
+	res := make([]mailboxInfo, 0, len(boxes))
 	for _, b := range boxes {
-		res = append(res, map[string]any{"name": b})
+		res = append(res, mailboxInfo{Name: b})
 	}
-	return map[string]any{"mailboxes": res, "count": len(res)}, false, nil
+	return mailboxListResponse{Mailboxes: res, Count: len(res)}, false, nil
 }
 
 func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
@@ -96,20 +96,20 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		sortByUIDDesc(drafts)
 		start, lim := parsePage(*cursor, *limit)
 		paged, next := paginateMessages(drafts, start, lim)
-		out := make([]map[string]any, 0, len(drafts))
+		out := make([]draftRecord, 0, len(drafts))
 		for _, d := range paged {
-			out = append(out, map[string]any{
-				"id":      imapDraftID(d.UID),
-				"uid":     d.UID,
-				"to":      d.To,
-				"from":    d.From,
-				"subject": d.Subject,
-				"body":    d.Body,
-				"date":    d.Date.UTC().Format(time.RFC3339),
-				"flags":   d.Flags,
+			out = append(out, draftRecord{
+				ID:      imapDraftID(d.UID),
+				UID:     d.UID,
+				To:      d.To,
+				From:    d.From,
+				Subject: d.Subject,
+				Body:    d.Body,
+				Date:    d.Date.UTC().Format(time.RFC3339),
+				Flags:   d.Flags,
 			})
 		}
-		return map[string]any{"drafts": out, "count": len(out), "total": len(drafts), "nextCursor": next, "source": "imap"}, false, nil
+		return draftListResponse{Drafts: out, Count: len(out), Total: len(drafts), NextCursor: next, Source: "imap"}, false, nil
 	case "get":
 		fs := flag.NewFlagSet("draft get", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -125,7 +125,10 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err != nil {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
 		}
-		return map[string]any{"draft": map[string]any{"id": imapDraftID(d.UID), "uid": d.UID, "to": d.To, "subject": d.Subject, "body": d.Body, "flags": d.Flags}, "source": "imap"}, false, nil
+		return draftResponse{
+			Draft:  draftRecord{ID: imapDraftID(d.UID), UID: d.UID, To: d.To, Subject: d.Subject, Body: d.Body, Flags: d.Flags},
+			Source: "imap",
+		}, false, nil
 	case "create":
 		fs := flag.NewFlagSet("draft create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -160,7 +163,10 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_create_failed", msg: err.Error()}
 		}
-		resp := map[string]any{"draft": map[string]any{"id": imapDraftID(uid), "uid": uid, "to": to, "subject": *subject, "body": b}, "source": "imap"}
+		resp := draftResponse{
+			Draft:  draftRecord{ID: imapDraftID(uid), UID: uid, To: to, Subject: *subject, Body: b},
+			Source: "imap",
+		}
 		_ = idempotencyStore(st, *idempotencyKey, "draft.create", payload, resp)
 		return resp, true, nil
 	case "create-many":
@@ -190,31 +196,31 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		} else if found {
 			return cached, false, nil
 		}
-		results := make([]map[string]any, 0, len(items))
+		results := make([]batchItemResponse, 0, len(items))
 		success := 0
 		for i, it := range items {
 			b, err := loadBody(it.Body, it.BodyFile, false)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "validation_error", "error": err.Error()})
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
 				continue
 			}
 			raw := bridge.BuildRawMessage(username, it.To, it.Subject, b)
 			if g.dryRun {
-				results = append(results, map[string]any{"index": i, "ok": true, "dryRun": true, "to": it.To, "subject": it.Subject})
+				results = append(results, batchItemResponse{Index: i, OK: true, DryRun: true, To: it.To, Subject: it.Subject})
 				success++
 				continue
 			}
 			uid, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "imap_draft_create_failed", "error": err.Error()})
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "imap_draft_create_failed", Error: err.Error()})
 				continue
 			}
-			results = append(results, map[string]any{"index": i, "ok": true, "draftId": imapDraftID(uid), "uid": uid})
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid})
 			success++
 		}
-		resp := map[string]any{"results": results, "count": len(results), "success": success, "failed": len(results) - success, "source": "imap"}
+		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
 		if success > 0 && (len(results)-success) > 0 {
-			resp["_exitCode"] = 10
+			resp.exitCode = 10
 		}
 		_ = idempotencyStore(st, *idempotencyKey, "draft.create-many", items, resp)
 		return resp, success > 0, nil
@@ -257,7 +263,10 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_update_failed", msg: err.Error()}
 		}
-		return map[string]any{"draft": map[string]any{"id": imapDraftID(newUID), "uid": newUID, "to": d.To, "subject": d.Subject, "body": d.Body}, "source": "imap"}, true, nil
+		return draftResponse{
+			Draft:  draftRecord{ID: imapDraftID(newUID), UID: newUID, To: d.To, Subject: d.Subject, Body: d.Body},
+			Source: "imap",
+		}, true, nil
 	case "delete":
 		fs := flag.NewFlagSet("draft delete", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -275,7 +284,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := c.DeleteDraft(uid); err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_delete_failed", msg: err.Error()}
 		}
-		return map[string]any{"deleted": true, "draftId": imapDraftID(uid), "source": "imap"}, true, nil
+		return struct {
+			Deleted bool   `json:"deleted"`
+			DraftID string `json:"draftId"`
+			Source  string `json:"source"`
+		}{Deleted: true, DraftID: imapDraftID(uid), Source: "imap"}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown draft action: " + action}
 	}
@@ -364,7 +377,18 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
 		m := msgs[0]
-		return map[string]any{"message": map[string]any{"id": imapMessageID(m.UID), "uid": m.UID, "from": m.From, "to": m.To, "subject": m.Subject, "body": m.Body, "flags": m.Flags}, "source": "imap"}, false, nil
+		return messageGetResponse{
+			Message: messageRecord{
+				ID:      imapMessageID(m.UID),
+				UID:     m.UID,
+				From:    m.From,
+				To:      m.To,
+				Subject: m.Subject,
+				Body:    m.Body,
+				Flags:   m.Flags,
+			},
+			Source: "imap",
+		}, false, nil
 	case "send":
 		fs := flag.NewFlagSet("message send", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -408,7 +432,12 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "send_failed", msg: err.Error()}
 		}
-		resp := map[string]any{"sent": true, "draftId": imapDraftID(uid), "source": "imap", "sentAt": time.Now().UTC().Format(time.RFC3339)}
+		resp := struct {
+			Sent    bool   `json:"sent"`
+			DraftID string `json:"draftId"`
+			Source  string `json:"source"`
+			SentAt  string `json:"sentAt"`
+		}{Sent: true, DraftID: imapDraftID(uid), Source: "imap", SentAt: time.Now().UTC().Format(time.RFC3339)}
 		_ = idempotencyStore(st, *idempotencyKey, "message.send", payload, resp)
 		return resp, true, nil
 	case "send-many":
@@ -447,38 +476,38 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			}
 			pass = p
 		}
-		results := make([]map[string]any, 0, len(items))
+		results := make([]batchItemResponse, 0, len(items))
 		success := 0
 		for i, it := range items {
 			uid, err := parseUID(it.DraftID)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "validation_error", "error": "invalid draft_id"})
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "invalid draft_id"})
 				continue
 			}
 			d, err := c.GetDraft(uid)
 			if err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "not_found", "error": "draft not found", "draftId": it.DraftID})
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "not_found", Error: "draft not found", DraftID: it.DraftID})
 				continue
 			}
 			if err := validateSendSafety(cfg, g.noInput, it.ConfirmSend, it.DraftID, uid, false); err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "confirmation_required", "error": "confirmation_required", "draftId": it.DraftID})
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "confirmation_required", Error: "confirmation_required", DraftID: it.DraftID})
 				continue
 			}
 			if g.dryRun {
-				results = append(results, map[string]any{"index": i, "ok": true, "draftId": it.DraftID, "dryRun": true})
+				results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, DryRun: true})
 				success++
 				continue
 			}
 			if err := smtpSendFn(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: pass}, bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body}); err != nil {
-				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "send_failed", "error": err.Error(), "draftId": it.DraftID})
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "send_failed", Error: err.Error(), DraftID: it.DraftID})
 				continue
 			}
-			results = append(results, map[string]any{"index": i, "ok": true, "draftId": it.DraftID, "sentAt": time.Now().UTC().Format(time.RFC3339)})
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SentAt: time.Now().UTC().Format(time.RFC3339)})
 			success++
 		}
-		resp := map[string]any{"results": results, "count": len(results), "success": success, "failed": len(results) - success, "source": "imap"}
+		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
 		if success > 0 && (len(results)-success) > 0 {
-			resp["_exitCode"] = 10
+			resp.exitCode = 10
 		}
 		_ = idempotencyStore(st, *idempotencyKey, "message.send-many", items, resp)
 		return resp, success > 0, nil
@@ -525,11 +554,11 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 		sortByUIDDesc(items)
 		start, lim := parsePage(*cursor, *limit)
 		paged, next := paginateMessages(items, start, lim)
-		out := make([]map[string]any, 0, len(paged))
+		out := make([]draftRecord, 0, len(paged))
 		for _, m := range paged {
-			out = append(out, map[string]any{"id": imapDraftID(m.UID), "uid": m.UID, "to": m.To, "from": m.From, "subject": m.Subject, "date": m.Date.UTC().Format(time.RFC3339)})
+			out = append(out, draftRecord{ID: imapDraftID(m.UID), UID: m.UID, To: m.To, From: m.From, Subject: m.Subject, Date: m.Date.UTC().Format(time.RFC3339)})
 		}
-		return map[string]any{"drafts": out, "count": len(out), "total": len(items), "nextCursor": next, "source": "imap"}, false, nil
+		return draftListResponse{Drafts: out, Count: len(out), Total: len(items), NextCursor: next, Source: "imap"}, false, nil
 	}
 	if action != "messages" {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "search supports messages|drafts"}
@@ -545,11 +574,11 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	sortByUIDDesc(items)
 	start, lim := parsePage(*cursor, *limit)
 	paged, next := paginateMessages(items, start, lim)
-	out := make([]map[string]any, 0, len(paged))
+	out := make([]messageRecord, 0, len(paged))
 	for _, m := range paged {
-		out = append(out, map[string]any{"id": imapMessageID(m.UID), "uid": m.UID, "from": m.From, "to": m.To, "subject": m.Subject, "date": m.Date.UTC().Format(time.RFC3339)})
+		out = append(out, messageRecord{ID: imapMessageID(m.UID), UID: m.UID, From: m.From, To: m.To, Subject: m.Subject, Date: m.Date.UTC().Format(time.RFC3339)})
 	}
-	return map[string]any{"messages": out, "count": len(out), "total": len(items), "nextCursor": next, "mailbox": targetMailbox, "source": "imap"}, false, nil
+	return messageListResponse{Messages: out, Count: len(out), Total: len(items), NextCursor: next, Mailbox: targetMailbox, Source: "imap"}, false, nil
 }
 
 func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State) (any, bool, error) {

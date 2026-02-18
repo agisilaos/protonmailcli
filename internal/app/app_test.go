@@ -150,3 +150,11 @@ func latestDraftID(t *testing.T, statePath string) string {
 	t.Fatal("no draft found")
 	return ""
 }
+
+func TestNormalizeExitCodeFromTypedResponse(t *testing.T) {
+	r := batchResultResponse{Count: 2, Success: 1, Failed: 1, Source: "imap"}
+	r.exitCode = 10
+	if got := normalizeExitCode(r); got != 10 {
+		t.Fatalf("expected 10 got %d", got)
+	}
+}
