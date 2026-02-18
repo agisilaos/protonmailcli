@@ -17,6 +17,7 @@ import (
 type contractFixture struct {
 	Name     string `json:"name"`
 	Command  string `json:"command"`
+	Stdin    string `json:"stdin,omitempty"`
 	Expected struct {
 		ExitCode          int             `json:"exitCode"`
 		StdoutJSON        json.RawMessage `json:"stdoutJson"`
@@ -65,7 +66,15 @@ func TestContractFixtures(t *testing.T) {
 
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			exit := Run(args, bytes.NewBuffer(nil), stdout, stderr)
+			prevReadAllStdin := readAllStdinFn
+			readAllStdinFn = func() ([]byte, error) {
+				return []byte(fx.Stdin), nil
+			}
+			defer func() {
+				readAllStdinFn = prevReadAllStdin
+			}()
+			input := bytes.NewBufferString(fx.Stdin)
+			exit := Run(args, input, stdout, stderr)
 			if exit != fx.Expected.ExitCode {
 				t.Fatalf("exit mismatch: got=%d want=%d stdout=%s stderr=%s", exit, fx.Expected.ExitCode, stdout.String(), stderr.String())
 			}

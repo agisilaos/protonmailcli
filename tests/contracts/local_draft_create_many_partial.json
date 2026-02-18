@@ -1,0 +1,25 @@
+{
+  "name": "local_draft_create_many_partial",
+  "command": "protonmailcli draft create-many --stdin --json --no-input",
+  "stdin": "[{\"to\":[\"ok@example.com\"],\"subject\":\"ok\",\"body\":\"hello\"},{\"to\":[\"bad@example.com\"],\"subject\":\"bad\",\"body_file\":\"./missing.txt\"}]",
+  "expected": {
+    "exitCode": 10,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "success": 1,
+        "failed": 1,
+        "source": "local",
+        "results": [
+          {
+            "ok": true
+          },
+          {
+            "ok": false,
+            "errorCode": "validation_error"
+          }
+        ]
+      }
+    }
+  }
+}
