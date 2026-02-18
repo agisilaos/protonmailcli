@@ -331,3 +331,47 @@ func TestLocalSendManyAllFailedReturnsNonZero(t *testing.T) {
 		t.Fatalf("unexpected response: %s", stdout.String())
 	}
 }
+
+func TestLateGlobalFlagFailsFast(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"draft", "list", "--json", "--config", cfg, "--state", state}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 2 {
+		t.Fatalf("expected usage exit 2, got %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "global flag --json must appear before the resource") {
+		t.Fatalf("unexpected error message: %s", stdout.String())
+	}
+}
+
+func TestLocalDraftCreateManyPerItemValidation(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	manifest := filepath.Join(tmp, "drafts.json")
+	if err := os.WriteFile(manifest, []byte(`[
+{"to":["a@example.com"],"subject":"ok","body":"hello"},
+{"subject":"bad","body":"missing to"}
+]`), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--no-input", "--config", cfg, "--state", state, "draft", "create-many", "--file", manifest}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})
+	if exit != 10 {
+		t.Fatalf("expected partial exit 10, got %d stdout=%s", exit, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"errorCode":"validation_error"`) || !strings.Contains(stdout.String(), `"success":1`) {
+		t.Fatalf("unexpected output: %s", stdout.String())
+	}
+}

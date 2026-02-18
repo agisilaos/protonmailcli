@@ -119,6 +119,36 @@ func TestUsageForFlagSet(t *testing.T) {
 	}
 }
 
+func TestLoadDraftCreateManifestAllowsPerItemValidation(t *testing.T) {
+	prev := readAllStdinFn
+	defer func() { readAllStdinFn = prev }()
+	readAllStdinFn = func() ([]byte, error) {
+		return []byte(`[{"subject":"s","body":"b"}]`), nil
+	}
+	items, err := loadDraftCreateManifest("", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("unexpected item count: %d", len(items))
+	}
+}
+
+func TestLoadSendManyManifestAllowsPerItemValidation(t *testing.T) {
+	prev := readAllStdinFn
+	defer func() { readAllStdinFn = prev }()
+	readAllStdinFn = func() ([]byte, error) {
+		return []byte(`[{"draft_id":"d_1"}]`), nil
+	}
+	items, err := loadSendManyManifest("", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("unexpected item count: %d", len(items))
+	}
+}
+
 func TestSaveDraftWithFallbackWhenAppendFails(t *testing.T) {
 	prevSend := smtpSendFn
 	prevOpen := openBridgeClientFn

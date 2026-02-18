@@ -51,6 +51,8 @@ Status date: 2026-02-18
 - Agent smoke workflow is available via `scripts/smoke-agent.sh` (local-state and dry-run only).
 - IMAP subcommand help is parsed before Bridge auth/connect, so `--help` works even on un-authenticated environments.
 - Batch send semantics: exit `10` on partial success, and non-zero failure (`1`) when all items fail.
+- Late global flags now fail fast with usage guidance (global flags must appear before the resource).
+- Batch manifests now use per-item validation for runtime item errors (instead of aborting whole command on the first malformed item).
 
 ## Tests
 

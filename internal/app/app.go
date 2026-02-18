@@ -74,6 +74,9 @@ func (a App) run(args []string) int {
 		printHelp(a.Stdout)
 		return 0
 	}
+	if err := validateNoLateGlobalFlags(rest); err != nil {
+		return a.exitWithError(err, fallbackMode(g.mode), g.profile, requestID, start)
+	}
 
 	cfgPath := g.config
 	if cfgPath == "" {
@@ -243,6 +246,27 @@ func parseGlobal(args []string) (globalOptions, []string, error) {
 		i++
 	}
 	return g, args[i:], nil
+}
+
+func validateNoLateGlobalFlags(rest []string) error {
+	lateGlobals := map[string]bool{
+		"--json":     true,
+		"--plain":    true,
+		"--no-input": true,
+		"--dry-run":  true,
+		"-n":         true,
+	}
+	for _, a := range rest[1:] {
+		if lateGlobals[a] {
+			return cliError{
+				exit: 2,
+				code: "usage_error",
+				msg:  fmt.Sprintf("global flag %s must appear before the resource", a),
+				hint: "Example: protonmailcli --json draft list",
+			}
+		}
+	}
+	return nil
 }
 
 func printHelp(w io.Writer) {
@@ -659,6 +683,10 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
 		for i, it := range items {
+			if len(it.To) == 0 {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "missing to"})
+				continue
+			}
 			b, err := loadBody(it.Body, it.BodyFile, false)
 			if err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
@@ -788,6 +816,10 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
 		for i, it := range items {
+			if strings.TrimSpace(it.ConfirmSend) == "" {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "missing confirm_send", DraftID: it.DraftID})
+				continue
+			}
 			uid, err := parseRequiredUID(it.DraftID, "--draft-id")
 			if err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "invalid draft_id"})

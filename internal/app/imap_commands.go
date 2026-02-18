@@ -230,6 +230,10 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
 		for i, it := range items {
+			if len(it.To) == 0 {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "missing to"})
+				continue
+			}
 			b, err := loadBody(it.Body, it.BodyFile, false)
 			if err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
@@ -552,6 +556,10 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
 		for i, it := range items {
+			if strings.TrimSpace(it.ConfirmSend) == "" {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "missing confirm_send", DraftID: it.DraftID})
+				continue
+			}
 			uid, err := parseUID(it.DraftID)
 			if err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "invalid draft_id"})
@@ -819,14 +827,6 @@ func loadDraftCreateManifest(path string, fromStdin bool) ([]draftCreateItem, er
 	if err := json.Unmarshal(b, &items); err != nil {
 		return nil, err
 	}
-	for i := range items {
-		if len(items[i].To) == 0 {
-			return nil, fmt.Errorf("manifest item %d missing to", i)
-		}
-		if items[i].Body == "" && items[i].BodyFile == "" {
-			return nil, fmt.Errorf("manifest item %d needs body or body_file", i)
-		}
-	}
 	return items, nil
 }
 
@@ -838,14 +838,6 @@ func loadSendManyManifest(path string, fromStdin bool) ([]sendManyItem, error) {
 	var items []sendManyItem
 	if err := json.Unmarshal(b, &items); err != nil {
 		return nil, err
-	}
-	for i := range items {
-		if strings.TrimSpace(items[i].DraftID) == "" {
-			return nil, fmt.Errorf("manifest item %d missing draft_id", i)
-		}
-		if strings.TrimSpace(items[i].ConfirmSend) == "" {
-			return nil, fmt.Errorf("manifest item %d missing confirm_send", i)
-		}
 	}
 	return items, nil
 }
