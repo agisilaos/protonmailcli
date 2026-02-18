@@ -563,7 +563,8 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				continue
 			}
 			if err := validateSendSafety(cfg, g.noInput, it.ConfirmSend, it.DraftID, uid, false); err != nil {
-				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "confirmation_required", Error: "confirmation_required", DraftID: it.DraftID})
+				code := errorCodeFromErr(err, "confirmation_required")
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: code, Error: code, DraftID: it.DraftID})
 				continue
 			}
 			if g.dryRun {

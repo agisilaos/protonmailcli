@@ -50,6 +50,7 @@ Status date: 2026-02-18
 - Manifest source, required-ID, and date parsing validations are centralized in shared helpers to keep flag behavior consistent across commands.
 - Agent smoke workflow is available via `scripts/smoke-agent.sh` (local-state and dry-run only).
 - IMAP subcommand help is parsed before Bridge auth/connect, so `--help` works even on un-authenticated environments.
+- Batch send semantics: exit `10` on partial success, and non-zero failure (`1`) when all items fail.
 
 ## Tests
 

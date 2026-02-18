@@ -1,6 +1,10 @@
 package app
 
-import "protonmailcli/internal/config"
+import (
+	"errors"
+
+	"protonmailcli/internal/config"
+)
 
 func validateSendSafety(cfg config.Config, nonTTY bool, confirm, canonicalID, canonicalUID string, force bool) error {
 	if cfg.Safety.RequireConfirmSendNonTTY && nonTTY && confirm != canonicalID && (canonicalUID == "" || confirm != canonicalUID) && !force {
@@ -10,4 +14,12 @@ func validateSendSafety(cfg config.Config, nonTTY bool, confirm, canonicalID, ca
 		return cliError{exit: 7, code: "safety_blocked", msg: "--force is disabled by policy"}
 	}
 	return nil
+}
+
+func errorCodeFromErr(err error, fallback string) string {
+	var ce cliError
+	if errors.As(err, &ce) && ce.code != "" {
+		return ce.code
+	}
+	return fallback
 }

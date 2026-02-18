@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"testing"
 
 	"protonmailcli/internal/config"
@@ -38,5 +39,14 @@ func TestValidateSendSafetyBlocksForceWhenPolicyDisabled(t *testing.T) {
 	ce := err.(cliError)
 	if ce.code != "safety_blocked" {
 		t.Fatalf("unexpected code: %s", ce.code)
+	}
+}
+
+func TestErrorCodeFromErr(t *testing.T) {
+	if got := errorCodeFromErr(cliError{code: "confirmation_required"}, "fallback"); got != "confirmation_required" {
+		t.Fatalf("unexpected code: %s", got)
+	}
+	if got := errorCodeFromErr(errors.New("x"), "fallback"); got != "fallback" {
+		t.Fatalf("unexpected fallback: %s", got)
 	}
 }
