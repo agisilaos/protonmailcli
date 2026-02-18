@@ -497,11 +497,13 @@ func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, s
 		if _, err := os.Stat(config.Expand(passFile)); err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "password-file not readable"}
 		}
-		st.Auth = model.AuthState{LoggedIn: true, Username: user, PasswordFile: passFile, LastLoginAt: time.Now().UTC()}
+		now := time.Now().UTC()
+		st.Auth = model.AuthState{LoggedIn: true, Username: user, PasswordFile: passFile, LastLoginAt: &now}
 		return map[string]any{"loggedIn": true, "username": user}, true, nil
 	case "logout":
 		st.Auth.LoggedIn = false
-		st.Auth.LastLogoutAt = time.Now().UTC()
+		now := time.Now().UTC()
+		st.Auth.LastLogoutAt = &now
 		return map[string]any{"loggedIn": false}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown auth action: " + action}
@@ -700,7 +702,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			return nil, false, cliError{exit: 4, code: "send_failed", msg: err.Error()}
 		}
 		now := time.Now().UTC()
-		d.SentAt = now
+		d.SentAt = &now
 		msgID := fmt.Sprintf("m_%d", now.UnixNano())
 		m := model.Message{ID: msgID, DraftID: d.ID, From: from, To: d.To, Subject: d.Subject, Body: d.Body, Tags: d.Tags, SentAt: now}
 		st.Messages[msgID] = m

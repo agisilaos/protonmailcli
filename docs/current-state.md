@@ -47,6 +47,7 @@ Status date: 2026-02-15
 - Send safety checks (confirm token and force policy) are centralized in one validator used by both local and IMAP send paths.
 - IMAP-heavy command responses now use typed response structs instead of ad-hoc `map[string]any`, preserving JSON contract fields while reducing key drift risk.
 - Manifest source, required-ID, and date parsing validations are centralized in shared helpers to keep flag behavior consistent across commands.
+- Agent smoke workflow is available via `scripts/smoke-agent.sh` (local-state and dry-run only).
 
 ## Tests
 

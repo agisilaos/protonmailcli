@@ -201,6 +201,7 @@ Selected env vars:
 - `stdout`: result payload only
 - `stderr`: hints, warnings, diagnostics
 - `--json`: single envelope object
+- Unset optional timestamps are omitted (for example unsent drafts omit `sentAt`)
 
 Exit codes:
 
@@ -246,6 +247,12 @@ If help output changed intentionally, refresh snapshots:
 
 ```bash
 scripts/update-help.sh
+```
+
+Run agent smoke checks (no real sends):
+
+```bash
+scripts/smoke-agent.sh
 ```
 
 Batch manifest schemas:

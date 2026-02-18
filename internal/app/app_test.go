@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -156,5 +157,33 @@ func TestNormalizeExitCodeFromTypedResponse(t *testing.T) {
 	r.exitCode = 10
 	if got := normalizeExitCode(r); got != 10 {
 		t.Fatalf("expected 10 got %d", got)
+	}
+}
+
+func TestDraftCreateOmitsZeroSentAt(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+
+	stdout := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--config", cfg, "--state", state, "draft", "create", "--to", "a@example.com", "--subject", "s", "--body", "b"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})
+	if exit != 0 {
+		t.Fatalf("draft create failed: %d stdout=%s", exit, stdout.String())
+	}
+	if strings.Contains(stdout.String(), `"sentAt"`) {
+		t.Fatalf("expected sentAt to be omitted from create response: %s", stdout.String())
+	}
+
+	b, err := os.ReadFile(state)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if strings.Contains(string(b), `"sentAt":"0001-01-01T00:00:00Z"`) {
+		t.Fatalf("expected zero sentAt to be omitted in state: %s", string(b))
 	}
 }

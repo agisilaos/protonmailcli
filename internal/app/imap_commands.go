@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,6 +16,7 @@ import (
 	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 	"protonmailcli/internal/model"
+	"protonmailcli/internal/output"
 )
 
 type imapDraftClient interface {
@@ -171,12 +173,17 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		return resp, true, nil
 	case "create-many":
 		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
-		fs.SetOutput(os.Stdout)
+		fs.SetOutput(io.Discard)
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
 		if err := fs.Parse(args); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
+				usage := usageForFlagSet(fs)
+				if g.mode == output.ModeJSON || g.mode == output.ModePlain {
+					return map[string]any{"help": "draft create-many", "usage": usage}, false, nil
+				}
+				fmt.Fprintln(os.Stdout, usage)
 				return map[string]any{"help": "draft create-many"}, false, nil
 			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
@@ -440,13 +447,18 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		return resp, true, nil
 	case "send-many":
 		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
-		fs.SetOutput(os.Stdout)
+		fs.SetOutput(io.Discard)
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
 		if err := fs.Parse(args); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
+				usage := usageForFlagSet(fs)
+				if g.mode == output.ModeJSON || g.mode == output.ModePlain {
+					return map[string]any{"help": "message send-many", "usage": usage}, false, nil
+				}
+				fmt.Fprintln(os.Stdout, usage)
 				return map[string]any{"help": "message send-many"}, false, nil
 			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
@@ -622,10 +634,10 @@ func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-	uid, err := parseRequiredUID(*msgID, "--message-id")
-	if err != nil {
-		return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
-	}
+		uid, err := parseRequiredUID(*msgID, "--message-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
 		if strings.TrimSpace(*tag) == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--tag required"}
 		}
@@ -775,4 +787,13 @@ func readManifest(path string, fromStdin bool) ([]byte, error) {
 		return readAllStdinFn()
 	}
 	return os.ReadFile(path)
+}
+
+func usageForFlagSet(fs *flag.FlagSet) string {
+	var b bytes.Buffer
+	prev := fs.Output()
+	fs.SetOutput(&b)
+	fs.PrintDefaults()
+	fs.SetOutput(prev)
+	return strings.TrimRight("Usage of "+fs.Name()+":\n"+b.String(), "\n")
 }

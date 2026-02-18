@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -102,6 +103,19 @@ func TestReadManifestFromDashUsesStdin(t *testing.T) {
 	}
 	if string(b) != "[]" {
 		t.Fatalf("unexpected body: %q", string(b))
+	}
+}
+
+func TestUsageForFlagSet(t *testing.T) {
+	fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
+	fs.String("file", "", "manifest json path or -")
+	fs.Bool("stdin", false, "read manifest json from stdin")
+	usage := usageForFlagSet(fs)
+	if !strings.Contains(usage, "Usage of draft create-many:") {
+		t.Fatalf("missing usage heading: %s", usage)
+	}
+	if !strings.Contains(usage, "-file") || !strings.Contains(usage, "-stdin") {
+		t.Fatalf("missing expected flags: %s", usage)
 	}
 }
 
