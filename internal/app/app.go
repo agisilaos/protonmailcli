@@ -677,7 +677,9 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}
-		if success > 0 && (len(results)-success) > 0 {
+		if success == 0 && len(results) > 0 {
+			resp.exitCode = 1
+		} else if success > 0 && (len(results)-success) > 0 {
 			resp.exitCode = 10
 		}
 		return resp, success > 0, nil
@@ -819,7 +821,9 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}
-		if success > 0 && (len(results)-success) > 0 {
+		if success == 0 && len(results) > 0 {
+			resp.exitCode = 1
+		} else if success > 0 && (len(results)-success) > 0 {
 			resp.exitCode = 10
 		}
 		return resp, success > 0, nil

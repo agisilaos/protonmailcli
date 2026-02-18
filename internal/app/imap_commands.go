@@ -579,7 +579,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
-		if success > 0 && (len(results)-success) > 0 {
+		if success == 0 && len(results) > 0 {
+			resp.exitCode = 1
+		} else if success > 0 && (len(results)-success) > 0 {
 			resp.exitCode = 10
 		}
 		_ = idempotencyStore(st, *idempotencyKey, "message.send-many", items, resp)

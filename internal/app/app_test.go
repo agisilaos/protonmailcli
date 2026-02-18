@@ -308,3 +308,26 @@ func TestLocalBatchDraftCreateAndSendManyParity(t *testing.T) {
 		t.Fatalf("unexpected send-many dry-run response: %s", stdout.String())
 	}
 }
+
+func TestLocalSendManyAllFailedReturnsNonZero(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	manifest := filepath.Join(tmp, "send-many.json")
+	if err := os.WriteFile(manifest, []byte(`[{"draft_id":"missing","confirm_send":"missing"}]`), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--no-input", "--config", cfg, "--state", state, "message", "send-many", "--file", manifest}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 1 {
+		t.Fatalf("expected exit 1 for all-failed batch, got %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"success":0`) || !strings.Contains(stdout.String(), `"failed":1`) {
+		t.Fatalf("unexpected response: %s", stdout.String())
+	}
+}
