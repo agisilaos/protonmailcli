@@ -1,6 +1,6 @@
 # Current State
 
-Status date: 2026-02-15
+Status date: 2026-02-18
 
 ## Summary
 
@@ -20,10 +20,10 @@ Status date: 2026-02-15
 - Mail operations (live Bridge):
   - `mailbox list` (IMAP)
   - `draft create|get|list|update|delete` (IMAP `Drafts`)
-  - `draft create-many --file` (batch)
+  - `draft create-many --file|--stdin` (batch)
   - `message get` (IMAP `INBOX`)
   - `message send` (IMAP draft read + SMTP send)
-  - `message send-many --file` (batch)
+  - `message send-many --file|--stdin` (batch)
   - `search messages|drafts` (IMAP SEARCH with `query/subject/from/to/has-tag/unread/since-id/after/before` + pagination)
   - `tag list|add|remove` (IMAP flags/keywords)
 - Filter operations (local engine):
@@ -86,3 +86,11 @@ go test ./...
 1. Add structured attachment extraction and optional HTML-to-text normalization.
 2. Add CI workflow for `go test ./...`, contract fixtures, and lint/static checks.
 3. Add server-backed filter management once Proton API path is selected.
+
+## Release gate
+
+Run this before cutting a tag:
+
+```bash
+scripts/release-check.sh
+```

@@ -1,4 +1,4 @@
-# protonmailcli v1 CLI Specification
+# protonmailcli CLI Specification (Current)
 
 ## 1. Name
 
@@ -8,26 +8,26 @@
 
 Bridge-first Proton Mail automation CLI for humans and agents.
 
-## 3. USAGE
+## 3. Usage
 
 ```text
 protonmailcli [global flags] <resource> <action> [args]
-protonmailcli help [resource|resource action]
+protonmailcli setup [flags]
+protonmailcli doctor
+protonmailcli completion <bash|zsh|fish>
 ```
 
 ## 4. Global flags
 
-- `-h, --help` show help and ignore other args
-- `--version` print version
-- `--json` machine-readable output
-- `--plain` stable line-oriented output
-- `-q, --quiet` reduce non-data output
-- `-v, --verbose` increase diagnostics on stderr
-- `--no-color` disable ANSI formatting
-- `--no-input` disable prompts and interactive confirmation
-- `--profile <name>` select profile
-- `--timeout <duration>` command timeout (default: `30s`)
-- `-n, --dry-run` preview mutating operations with no side effects
+- `-h, --help`
+- `--version`
+- `--json`
+- `--plain`
+- `--no-input`
+- `-n, --dry-run`
+- `--profile <name>`
+- `--config <path>`
+- `--state <path>`
 
 ## 5. Command tree
 
@@ -54,141 +54,84 @@ search
   messages
   drafts
 
+mailbox
+  list
+
 tag
   list
   create
-  rename
-  delete
   add
   remove
 
 filter
   list
   create
-  update
   delete
   test
   apply
-
-mailbox
-  list
 
 completion
   bash
   zsh
   fish
-  powershell
 ```
 
-## 6. Subcommand contracts
+## 6. Key subcommand contracts
 
-### `auth login`
+### `setup`
 
-Purpose: authenticate against Bridge-backed profile.
-
-Flags:
-
-- `--username <string>`
-- `--password-file <path|->` (required in non-interactive mode)
-- `--store <keychain|file>` default `keychain`
-
-State change: creates/updates session and credential references.
-
-### `auth status`
-
-Purpose: show profile auth/session health.
-
-State change: none.
+- `--interactive`
+- `--non-interactive`
+- `--bridge-host <host>`
+- `--bridge-smtp-port <port>`
+- `--bridge-imap-port <port>`
+- `--username <email>`
+- `--smtp-password-file <path>`
+- `--profile <name>`
 
 ### `draft create`
 
-Purpose: create draft message.
-
-Flags:
-
-- `--to <email>` repeatable, min one recipient required
-- `--cc <email>` repeatable
-- `--bcc <email>` repeatable
-- `--subject <text>` optional
+- `--to <email>` repeatable (required)
+- `--subject <text>`
 - exactly one of:
   - `--body <text>`
   - `--body-file <path|->`
-  - `--stdin` (read body from stdin)
-- `--attach <path>` repeatable
-- `--tag <name>` repeatable
-- `--idempotency-key <string>` optional
+  - `--stdin`
+- `--idempotency-key <string>`
 
-State change: creates draft resource.
+### `draft create-many`
+
+- exactly one of:
+  - `--file <path|->`
+  - `--stdin`
+- `--idempotency-key <string>`
 
 ### `draft update`
 
-Purpose: partial update of existing draft.
-
-Flags:
-
 - `--draft-id <id>` required
-- same mutation flags as `draft create`
-- `--if-match <etag>` optional optimistic concurrency
-- `--clear-cc`, `--clear-bcc`, `--clear-tags`
-
-State change: updates draft resource.
-
-### `draft get`
-
-Flags:
-
-- `--draft-id <id>` required
-
-State change: none.
-
-### `draft list`
-
-Flags:
-
-- `--mailbox <name>` optional
-- `--tag <name>` repeatable
-- `--after <date>`
-- `--before <date>`
-- `--limit <n>` default `50`
-- `--cursor <token>` optional
-
-State change: none.
-
-### `draft delete`
-
-Flags:
-
-- `--draft-id <id>` required
-- `--hard` permanent delete
-- `-f, --force` bypass confirmation
-
-State change: deletes draft (soft by default).
+- `--subject <text>`
+- optional body mutation via one of:
+  - `--body <text>`
+  - `--body-file <path|->`
+  - `--stdin`
 
 ### `message send`
 
-Purpose: send either existing draft or inline compose payload.
+- `--draft-id <id>` required
+- `--confirm-send <token>` required in non-interactive mode unless `--force`
+- `--force` (subject to safety policy)
+- `--smtp-password-file <path>`
+- `--idempotency-key <string>`
 
-Flags:
+### `message send-many`
 
-- `--draft-id <id>` OR full compose fields
-- `--schedule-at <rfc3339>` optional
-- `--idempotency-key <string>` optional, recommended for automation
-- `--confirm-send <token>` required for non-TTY or `--no-input`, unless `--force`
-- `-f, --force` bypass confirmation policy (warns on stderr)
-
-State change: sends message (irreversible).
-
-### `message get`
-
-Flags:
-
-- `--message-id <id>` required
-
-State change: none.
+- exactly one of:
+  - `--file <path|->`
+  - `--stdin`
+- `--smtp-password-file <path>`
+- `--idempotency-key <string>`
 
 ### `search messages|drafts`
-
-Flags:
 
 - `--query <text>`
 - `--from <email>`
@@ -197,51 +140,27 @@ Flags:
 - `--has-tag <name>`
 - `--unread`
 - `--since-id <uid>`
-- `--tag <name>` repeatable
-- `--after <date>`
-- `--before <date>`
-- `--limit <n>` default `50`
+- `--after <date>` (`YYYY-MM-DD` or RFC3339)
+- `--before <date>` (`YYYY-MM-DD` or RFC3339)
+- `--limit <n>`
 - `--cursor <token>`
-
-State change: none.
-
-### `tag create|rename|delete|add|remove`
-
-- `create --name <string>`
-- `rename --tag-id <id> --name <string>`
-- `delete --tag-id <id> [--force]`
-- `add --message-id <id> --tag <name>` (idempotent)
-- `remove --message-id <id> --tag <name>` (idempotent)
-
-### `filter create|update|delete|test|apply`
-
-- `create --name <string> --match-file <path|-> --action-file <path|->`
-- `update --filter-id <id> ...`
-- `delete --filter-id <id> [--force]`
-- `test --filter-id <id> --sample-file <path|->`
-- `apply --filter-id <id> [--dry-run]`
+- `--mailbox <name>` (messages only)
 
 ## 7. I/O contract
 
 ### stdout
 
-- Human mode: concise, readable summaries.
-- `--plain`: stable line output, tab-delimited where multiple fields are emitted.
-- `--json`: exactly one JSON object per invocation.
+- Human mode: concise text output.
+- `--plain`: stable tab-delimited line output.
+- `--json`: exactly one JSON envelope object.
 
 ### stderr
 
-- errors, warnings, diagnostics, retries, progress bars/spinners.
-- no diagnostics on stdout.
+- diagnostics, warnings, and hints.
 
-### TTY policy
+## 8. JSON contract
 
-- rich output only when stdout is TTY.
-- no progress animations in non-TTY mode.
-
-## 8. JSON output contract
-
-Common envelope (all commands):
+Success:
 
 ```json
 {
@@ -251,24 +170,27 @@ Common envelope (all commands):
     "requestId": "req_...",
     "profile": "default",
     "durationMs": 0,
-    "timestamp": "2026-02-15T00:00:00Z"
-  },
-  "warnings": []
+    "timestamp": "2026-02-18T00:00:00Z"
+  }
 }
 ```
 
-Error envelope:
+Error:
 
 ```json
 {
   "ok": false,
   "error": {
-    "code": "confirmation_required",
-    "message": "--confirm-send is required in non-interactive mode",
-    "hint": "Pass --confirm-send <draft-id> or rerun with --force"
+    "code": "validation_error",
+    "message": "...",
+    "hint": "...",
+    "retryable": false
   },
   "meta": {
-    "requestId": "req_..."
+    "requestId": "req_...",
+    "profile": "default",
+    "durationMs": 0,
+    "timestamp": "2026-02-18T00:00:00Z"
   }
 }
 ```
@@ -276,61 +198,12 @@ Error envelope:
 ## 9. Exit codes
 
 - `0` success
-- `1` generic runtime failure
+- `1` runtime failure
 - `2` usage/validation
-- `3` auth/session failure
-- `4` network timeout/unreachable
+- `3` auth/config/session
+- `4` network/send failure
 - `5` not found
-- `6` conflict/precondition failed
+- `6` conflict
 - `7` confirmation/safety blocked
 - `8` rate limit
 - `10` partial success
-
-## 10. Config + precedence
-
-Primary config file: `~/.config/protonmailcli/config.toml`
-
-Optional project config: `./.protonmailcli.toml`
-
-Precedence: `flags > env > project config > user config > defaults`
-
-## 11. Examples
-
-```bash
-protonmailcli auth login --profile work --username ops@example.com --password-file - < ~/.secrets/proton.pass
-protonmailcli draft create --to a@x.com --subject "Spec" --body-file - --json < body.md
-protonmailcli draft update --draft-id d_123 --tag urgent --json
-protonmailcli draft list --tag urgent --limit 20 --plain
-protonmailcli message send --draft-id d_123 --confirm-send d_123 --json --no-input
-protonmailcli search messages --query "invoice" --after 2026-01-01 --json
-protonmailcli tag add --message-id m_456 --tag finance --json
-protonmailcli filter test --filter-id f_123 --sample-file sample.eml --json
-protonmailcli filter apply --filter-id f_123 --dry-run --json
-protonmailcli completion zsh
-```
-### `draft create-many`
-
-Purpose: create multiple drafts from a JSON manifest.
-
-Flags:
-
-- exactly one of:
-  - `--file <path|->`
-  - `--stdin` (read manifest JSON from stdin)
-- `--idempotency-key <string>` optional
-
-State change: creates zero or more draft resources.
-
-### `message send-many`
-
-Purpose: send multiple drafts from a JSON manifest with explicit per-item confirmations.
-
-Flags:
-
-- exactly one of:
-  - `--file <path|->`
-  - `--stdin` (read manifest JSON from stdin)
-- `--smtp-password-file <path>` optional
-- `--idempotency-key <string>` optional
-
-State change: sends zero or more messages.

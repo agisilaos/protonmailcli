@@ -1,6 +1,6 @@
 # Testing Strategy
 
-This document defines the v1 test strategy before implementation starts.
+This document describes the current test strategy and release gates.
 
 ## Goals
 
@@ -35,6 +35,7 @@ Method:
 - compare normalized JSON output to fixture snapshots
 - executed by `TestContractFixtures` in `internal/app/contracts_test.go`
 - fixture command strings are normalized for CLI global flag placement
+- fixtures may provide `stdin` payloads for `--stdin` command coverage
 
 ### 3) Integration tests (Bridge mocked)
 
@@ -82,14 +83,15 @@ Current gated E2E entrypoint:
 2. `message send --no-input` without `--confirm-send` exits `7`.
 3. `message send --no-input --confirm-send <id>` succeeds.
 4. `message send --dry-run` does not send and returns planned action.
-5. invalid email in `--to` exits `2` with actionable hint.
+5. missing required fields in batch manifests exit `2` with `validation_error`.
 6. unknown draft id exits `5`.
-7. stale etag in `draft update --if-match` exits `6`.
+7. idempotency payload mismatch exits `6`.
 8. bridge timeout exits `4`.
 9. `search messages --plain` is parseable and stable field order.
 10. `tag add` on existing tag is idempotent (`changed=false`, exit `0`).
 11. IMAP draft create falls back correctly when APPEND fails.
 12. Invalid `--after/--before` or `--since-id` values fail with exit `2`.
+13. local batch parity contracts (`draft create-many`, `message send-many`) stay aligned with machine output expectations.
 
 ## Suggested directory layout
 
@@ -99,6 +101,7 @@ tests/
   integration/
   e2e/
   contracts/
+    local_draft_create_many_partial.json
     send_requires_confirm_non_tty.json
     send_dry_run.json
     output_stream_discipline.json

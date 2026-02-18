@@ -2,18 +2,17 @@
 
 ## Directory layout
 
-Default paths:
+Default paths used by the CLI:
 
-- `~/.config/protonmailcli/config.toml`
-- `~/.config/protonmailcli/profiles/default.toml`
-- `~/.local/share/protonmailcli/cache/`
-- `~/.local/state/protonmailcli/logs/`
+- Config: `~/.config/protonmailcli/config.toml`
+- State: `~/.local/share/protonmailcli/state.json`
 
-If `XDG_CONFIG_HOME` is set, use:
+If XDG variables are set:
 
-- `$XDG_CONFIG_HOME/protonmailcli/config.toml`
+- Config: `$XDG_CONFIG_HOME/protonmailcli/config.toml`
+- State: `$XDG_DATA_HOME/protonmailcli/state.json`
 
-## Config shape (initial)
+## Config shape
 
 ```toml
 [defaults]
@@ -26,55 +25,56 @@ host = "127.0.0.1"
 imap_port = 1143
 smtp_port = 1025
 tls = true
+username = ""
+password_file = ""
 
 [safety]
 require_confirm_send_non_tty = true
 allow_force_send = true
 ```
 
-## Environment variables
+## Runtime credential sources
 
+Bridge credentials are resolved in this order:
+
+1. `PMAIL_SMTP_PASSWORD` environment variable
+2. password file path from flag/auth/config (`--smtp-password-file`, auth state, or config)
+
+Username is resolved from auth state then config.
+
+## Environment variables in active use
+
+- `PMAIL_SMTP_PASSWORD`
 - `PMAIL_PROFILE`
 - `PMAIL_OUTPUT`
 - `PMAIL_TIMEOUT`
-- `PMAIL_BRIDGE_HOST`
-- `PMAIL_BRIDGE_IMAP_PORT`
-- `PMAIL_BRIDGE_SMTP_PORT`
-- `PMAIL_NO_COLOR`
+- `PMAIL_USE_LOCAL_STATE` (test/local backend mode)
 
 ## Secrets policy
 
-- Never accept secrets via command-line flags.
-- Accept secret input via:
-  - `--password-file <path|->`
-  - stdin (non-echo input when interactive)
-  - platform credential store for persistent credentials
-- Redact secrets from logs and error output.
+- Do not pass raw secrets directly on command lines.
+- Use password files (`--password-file`, `--smtp-password-file`) or `PMAIL_SMTP_PASSWORD` in controlled environments.
+- Never commit password files, private keys, or token material.
 
-## Logging and privacy
+## Safety policy
 
-- Diagnostics to stderr by default.
-- Optional log file in state dir with rotation.
-- Do not log message bodies unless explicit debug mode is enabled.
-- Attachment paths may be logged; attachment content must never be logged.
-
-## Confirmation policy
-
-- Interactive send: prompt with explicit summary.
-- Non-interactive send: require `--confirm-send <token>`.
-- `--force` is allowed only when policy `allow_force_send=true`.
+- Non-interactive `message send` requires `--confirm-send` unless `--force`.
+- `--force` is allowed only when `allow_force_send = true`.
+- Use `--dry-run` in automations before mutating commands.
 
 ## Idempotency
 
-Mutating commands may accept `--idempotency-key`.
+Mutating IMAP/send commands support `--idempotency-key`.
 
-Server/client behavior:
+Behavior:
 
-- Same key + same payload: return existing result.
-- Same key + different payload: return conflict (`exit 6`).
+- Same key + same payload -> returns cached response.
+- Same key + different payload -> conflict response (`exit 6`).
 
-## Failure behavior
+## Release safety
 
-- Timeouts are bounded by `--timeout`.
-- Retry only safe/idempotent operations automatically.
-- Send operation retries only with explicit idempotency key.
+Before tagging a release, run:
+
+```bash
+scripts/release-check.sh
+```
