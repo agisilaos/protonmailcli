@@ -341,42 +341,27 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "mailbox action required"}
 		}
-		if useLocalStateMode() {
-			return cmdMailbox(action, args, state)
-		}
-		return cmdMailboxIMAP(action, args, cfg, state)
+		return dispatchMailbox(action, args, cfg, state)
 	case "draft":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "draft action required"}
 		}
-		if useLocalStateMode() {
-			return cmdDraft(action, args, g, state)
-		}
-		return cmdDraftIMAP(action, args, g, cfg, state)
+		return dispatchDraft(action, args, g, cfg, state)
 	case "message":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "message action required"}
 		}
-		if useLocalStateMode() {
-			return cmdMessage(action, args, g, cfg, state)
-		}
-		return cmdMessageIMAP(action, args, g, cfg, state)
+		return dispatchMessage(action, args, g, cfg, state)
 	case "search":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "search action required"}
 		}
-		if useLocalStateMode() {
-			return cmdSearch(action, args, state)
-		}
-		return cmdSearchIMAP(action, args, cfg, state)
+		return dispatchSearch(action, args, cfg, state)
 	case "tag":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "tag action required"}
 		}
-		if useLocalStateMode() {
-			return cmdTag(action, args, state)
-		}
-		return cmdTagIMAP(action, args, cfg, state)
+		return dispatchTag(action, args, cfg, state)
 	case "filter":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "filter action required"}
@@ -385,6 +370,41 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown resource: " + resource}
 	}
+}
+
+func dispatchMailbox(action string, args []string, cfg config.Config, state *model.State) (any, bool, error) {
+	if useLocalStateMode() {
+		return cmdMailbox(action, args, state)
+	}
+	return cmdMailboxIMAP(action, args, cfg, state)
+}
+
+func dispatchDraft(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
+	if useLocalStateMode() {
+		return cmdDraft(action, args, g, state)
+	}
+	return cmdDraftIMAP(action, args, g, cfg, state)
+}
+
+func dispatchMessage(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
+	if useLocalStateMode() {
+		return cmdMessage(action, args, g, cfg, state)
+	}
+	return cmdMessageIMAP(action, args, g, cfg, state)
+}
+
+func dispatchSearch(action string, args []string, cfg config.Config, state *model.State) (any, bool, error) {
+	if useLocalStateMode() {
+		return cmdSearch(action, args, state)
+	}
+	return cmdSearchIMAP(action, args, cfg, state)
+}
+
+func dispatchTag(action string, args []string, cfg config.Config, state *model.State) (any, bool, error) {
+	if useLocalStateMode() {
+		return cmdTag(action, args, state)
+	}
+	return cmdTagIMAP(action, args, cfg, state)
 }
 
 type sliceFlag []string
@@ -626,12 +646,8 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if !ok || *draftID == "" {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		nonTTY := g.noInput || !isTTY(os.Stdin)
-		if cfg.Safety.RequireConfirmSendNonTTY && nonTTY && *confirm != d.ID && !*force {
-			return nil, false, cliError{exit: 7, code: "confirmation_required", msg: "--confirm-send is required in non-interactive mode", hint: "Pass --confirm-send <draft-id> or --force"}
-		}
-		if *force && !cfg.Safety.AllowForceSend {
-			return nil, false, cliError{exit: 7, code: "safety_blocked", msg: "--force is disabled by policy"}
+		if err := validateSendSafety(cfg, g.noInput || !isTTY(os.Stdin), *confirm, d.ID, "", *force); err != nil {
+			return nil, false, err
 		}
 		if *force {
 			fmt.Fprintln(os.Stderr, "warning: forcing send by policy override")

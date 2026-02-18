@@ -390,12 +390,8 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		} else if found {
 			return cached, false, nil
 		}
-		nonTTY := g.noInput
-		if cfg.Safety.RequireConfirmSendNonTTY && nonTTY && *confirm != *draftID && *confirm != uid && !*force {
-			return nil, false, cliError{exit: 7, code: "confirmation_required", msg: "--confirm-send is required in non-interactive mode", hint: "Pass --confirm-send <draft-id> or --force"}
-		}
-		if *force && !cfg.Safety.AllowForceSend {
-			return nil, false, cliError{exit: 7, code: "safety_blocked", msg: "--force is disabled by policy"}
+		if err := validateSendSafety(cfg, g.noInput, *confirm, *draftID, uid, *force); err != nil {
+			return nil, false, err
 		}
 		if g.dryRun {
 			return map[string]any{"action": "send", "draftId": imapDraftID(uid), "wouldSend": true, "dryRun": true, "source": "imap"}, true, nil
@@ -464,7 +460,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "not_found", "error": "draft not found", "draftId": it.DraftID})
 				continue
 			}
-			if cfg.Safety.RequireConfirmSendNonTTY && g.noInput && it.ConfirmSend != it.DraftID && it.ConfirmSend != uid {
+			if err := validateSendSafety(cfg, g.noInput, it.ConfirmSend, it.DraftID, uid, false); err != nil {
 				results = append(results, map[string]any{"index": i, "ok": false, "errorCode": "confirmation_required", "error": "confirmation_required", "draftId": it.DraftID})
 				continue
 			}
