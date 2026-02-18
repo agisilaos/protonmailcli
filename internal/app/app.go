@@ -712,6 +712,14 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		force := fs.Bool("force", false, "force send without confirm token")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				usage := usageForFlagSet(fs)
+				if g.mode == output.ModeJSON || g.mode == output.ModePlain {
+					return map[string]any{"help": "message send", "usage": usage}, false, nil
+				}
+				fmt.Fprintln(os.Stdout, usage)
+				return map[string]any{"help": "message send"}, false, nil
+			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
 		uid, err := parseRequiredUID(*draftID, "--draft-id")
