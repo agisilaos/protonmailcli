@@ -117,9 +117,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseUID(*id)
+		uid, err := parseRequiredUID(*id, "--draft-id")
 		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--draft-id required"}
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
@@ -181,13 +181,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		if strings.TrimSpace(*file) == "" && !*fromStdin {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "one of --file or --stdin is required"}
+		manifestPath, err := resolveManifestInput(*file, *fromStdin)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		if strings.TrimSpace(*file) != "" && *fromStdin {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "provide only one of --file or --stdin"}
-		}
-		items, err := loadDraftCreateManifest(*file, *fromStdin)
+		items, err := loadDraftCreateManifest(manifestPath, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -235,9 +233,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseUID(*id)
+		uid, err := parseRequiredUID(*id, "--draft-id")
 		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--draft-id required"}
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
@@ -274,9 +272,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseUID(*id)
+		uid, err := parseRequiredUID(*id, "--draft-id")
 		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--draft-id required"}
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		if g.dryRun {
 			return map[string]any{"action": "draft.delete", "draftId": imapDraftID(uid), "wouldDelete": true, "source": "imap"}, true, nil
@@ -368,9 +366,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseUID(*id)
+		uid, err := parseRequiredUID(*id, "--message-id")
 		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--message-id required"}
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		msgs, err := c.ListMessages("INBOX", "UID "+uid)
 		if err != nil || len(msgs) == 0 {
@@ -400,9 +398,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseUID(*draftID)
+		uid, err := parseRequiredUID(*draftID, "--draft-id")
 		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--draft-id required"}
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
@@ -453,13 +451,11 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			}
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		if strings.TrimSpace(*file) == "" && !*fromStdin {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "one of --file or --stdin is required"}
+		manifestPath, err := resolveManifestInput(*file, *fromStdin)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		if strings.TrimSpace(*file) != "" && *fromStdin {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "provide only one of --file or --stdin"}
-		}
-		items, err := loadSendManyManifest(*file, *fromStdin)
+		items, err := loadSendManyManifest(manifestPath, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -626,10 +622,10 @@ func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseUID(*msgID)
-		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--message-id required"}
-		}
+	uid, err := parseRequiredUID(*msgID, "--message-id")
+	if err != nil {
+		return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+	}
 		if strings.TrimSpace(*tag) == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--tag required"}
 		}
@@ -669,12 +665,12 @@ func buildIMAPCriteria(query, subject, from, to, hasTag string, unread bool, sin
 		}
 		parts = append(parts, fmt.Sprintf("UID %d:*", n))
 	}
-	if d, ok, err := parseDateArg(after); err != nil {
+	if d, ok, err := parseDateInput(after); err != nil {
 		return "", err
 	} else if ok {
 		parts = append(parts, "SINCE "+d.Format("02-Jan-2006"))
 	}
-	if d, ok, err := parseDateArg(before); err != nil {
+	if d, ok, err := parseDateInput(before); err != nil {
 		return "", err
 	} else if ok {
 		parts = append(parts, "BEFORE "+d.Format("02-Jan-2006"))
@@ -687,20 +683,6 @@ func buildIMAPCriteria(query, subject, from, to, hasTag string, unread bool, sin
 
 func escapeSearch(s string) string {
 	return strings.ReplaceAll(strings.TrimSpace(s), `"`, `\"`)
-}
-
-func parseDateArg(s string) (time.Time, bool, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}, false, nil
-	}
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		return t, true, nil
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, true, nil
-	}
-	return time.Time{}, false, fmt.Errorf("invalid date %q (expected YYYY-MM-DD or RFC3339)", s)
 }
 
 func sortByUIDDesc(msgs []bridge.DraftMessage) {

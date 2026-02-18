@@ -565,8 +565,12 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		d, ok := st.Drafts[*id]
-		if !ok || *id == "" {
+		uid, err := parseRequiredUID(*id, "--draft-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		d, ok := st.Drafts[uid]
+		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
 		if *subject != "" {
@@ -581,7 +585,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		}
 		d.UpdatedAt = time.Now().UTC()
 		if !g.dryRun {
-			st.Drafts[*id] = d
+			st.Drafts[uid] = d
 		}
 		return map[string]any{"draft": d}, true, nil
 	case "get":
@@ -591,8 +595,12 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		d, ok := st.Drafts[*id]
-		if !ok || *id == "" {
+		uid, err := parseRequiredUID(*id, "--draft-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		d, ok := st.Drafts[uid]
+		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
 		return map[string]any{"draft": d}, false, nil
@@ -614,13 +622,17 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		if _, ok := st.Drafts[*id]; !ok || *id == "" {
+		uid, err := parseRequiredUID(*id, "--draft-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		if _, ok := st.Drafts[uid]; !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
 		if !g.dryRun {
-			delete(st.Drafts, *id)
+			delete(st.Drafts, uid)
 		}
-		return map[string]any{"deleted": true, "draftId": *id}, true, nil
+		return map[string]any{"deleted": true, "draftId": uid}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown draft action: " + action}
 	}
@@ -635,8 +647,12 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		m, ok := st.Messages[*id]
-		if !ok || *id == "" {
+		uid, err := parseRequiredUID(*id, "--message-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		m, ok := st.Messages[uid]
+		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
 		return map[string]any{"message": m}, false, nil
@@ -650,8 +666,12 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		d, ok := st.Drafts[*draftID]
-		if !ok || *draftID == "" {
+		uid, err := parseRequiredUID(*draftID, "--draft-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		d, ok := st.Drafts[uid]
+		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
 		if err := validateSendSafety(cfg, g.noInput || !isTTY(os.Stdin), *confirm, d.ID, "", *force); err != nil {
@@ -676,8 +696,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if from == "" {
 			return nil, false, cliError{exit: 3, code: "config_error", msg: "bridge username is missing", hint: "Run setup or auth login and set username"}
 		}
-		err := bridge.Send(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: from, Password: password}, bridge.SendInput{From: from, To: d.To, Subject: d.Subject, Body: d.Body})
-		if err != nil {
+		if err := bridge.Send(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: from, Password: password}, bridge.SendInput{From: from, To: d.To, Subject: d.Subject, Body: d.Body}); err != nil {
 			return nil, false, cliError{exit: 4, code: "send_failed", msg: err.Error()}
 		}
 		now := time.Now().UTC()
@@ -756,7 +775,11 @@ func cmdTag(action string, args []string, st *model.State) (any, bool, error) {
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		m, ok := st.Messages[*msgID]
+		uid, err := parseRequiredUID(*msgID, "--message-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		m, ok := st.Messages[uid]
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
@@ -780,8 +803,8 @@ func cmdTag(action string, args []string, st *model.State) (any, bool, error) {
 			}
 			m.Tags = next
 		}
-		st.Messages[*msgID] = m
-		return map[string]any{"messageId": *msgID, "tag": *tag, "changed": changed}, changed, nil
+		st.Messages[uid] = m
+		return map[string]any{"messageId": uid, "tag": *tag, "changed": changed}, changed, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
