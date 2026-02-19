@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,7 +15,6 @@ import (
 	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 	"protonmailcli/internal/model"
-	"protonmailcli/internal/output"
 )
 
 type imapDraftClient interface {
@@ -202,22 +200,12 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				usage := usageForFlagSet(fs)
-				if g.mode == output.ModeJSON || g.mode == output.ModePlain {
-					return map[string]any{"help": "draft create-many", "usage": usage}, false, nil
-				}
-				fmt.Fprintln(os.Stdout, usage)
-				return map[string]any{"help": "draft create-many"}, false, nil
-			}
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
-		manifestPath, err := resolveManifestInput(*file, *fromStdin)
-		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
-		}
-		items, err := loadDraftCreateManifest(manifestPath, *fromStdin)
+		items, err := parseDraftCreateManifestInput(*file, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -463,16 +451,10 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		force := fs.Bool("force", false, "force send without confirm token")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				usage := usageForFlagSet(fs)
-				if g.mode == output.ModeJSON || g.mode == output.ModePlain {
-					return map[string]any{"help": "message send", "usage": usage}, false, nil
-				}
-				fmt.Fprintln(os.Stdout, usage)
-				return map[string]any{"help": "message send"}, false, nil
-			}
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		uid, err := parseRequiredUID(*draftID, "--draft-id")
 		if err != nil {
@@ -525,22 +507,12 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				usage := usageForFlagSet(fs)
-				if g.mode == output.ModeJSON || g.mode == output.ModePlain {
-					return map[string]any{"help": "message send-many", "usage": usage}, false, nil
-				}
-				fmt.Fprintln(os.Stdout, usage)
-				return map[string]any{"help": "message send-many"}, false, nil
-			}
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
-		manifestPath, err := resolveManifestInput(*file, *fromStdin)
-		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
-		}
-		items, err := loadSendManyManifest(manifestPath, *fromStdin)
+		items, err := parseSendManyManifestInput(*file, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}

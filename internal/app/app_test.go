@@ -398,6 +398,36 @@ func TestBatchHelpDoesNotRequireBridgeAuth(t *testing.T) {
 	}
 }
 
+func TestLocalBatchHelpIncludesUsageJSON(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--config", cfg, "--state", state, "draft", "create-many", "--help"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("draft create-many --help failed: exit=%d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\"usage\":\"Usage of draft create-many:") {
+		t.Fatalf("expected usage field in json stdout: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	exit = Run([]string{"--json", "--config", cfg, "--state", state, "message", "send-many", "--help"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("message send-many --help failed: exit=%d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\"usage\":\"Usage of message send-many:") {
+		t.Fatalf("expected usage field in json stdout: %s", stdout.String())
+	}
+}
+
 func TestMessageSendHelpJSON(t *testing.T) {
 	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
 	tmp := t.TempDir()

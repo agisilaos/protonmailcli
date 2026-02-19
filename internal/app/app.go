@@ -769,19 +769,12 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		fs.SetOutput(io.Discard)
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
-		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				usage := usageForFlagSet(fs)
-				fmt.Fprintln(os.Stdout, usage)
-				return map[string]any{"help": "draft create-many"}, false, nil
-			}
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
-		manifestPath, err := resolveManifestInput(*file, *fromStdin)
-		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
-		}
-		items, err := loadDraftCreateManifest(manifestPath, *fromStdin)
+		items, err := parseDraftCreateManifestInput(*file, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -846,16 +839,10 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		confirm := fs.String("confirm-send", "", "confirmation token")
 		force := fs.Bool("force", false, "force send without confirm token")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
-		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				usage := usageForFlagSet(fs)
-				if g.mode == output.ModeJSON || g.mode == output.ModePlain {
-					return map[string]any{"help": "message send", "usage": usage}, false, nil
-				}
-				fmt.Fprintln(os.Stdout, usage)
-				return map[string]any{"help": "message send"}, false, nil
-			}
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		uid, err := parseRequiredUID(*draftID, "--draft-id")
 		if err != nil {
@@ -902,19 +889,12 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		fs.SetOutput(io.Discard)
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
-		if err := fs.Parse(args); err != nil {
-			if errors.Is(err, flag.ErrHelp) {
-				usage := usageForFlagSet(fs)
-				fmt.Fprintln(os.Stdout, usage)
-				return map[string]any{"help": "message send-many"}, false, nil
-			}
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
-		manifestPath, err := resolveManifestInput(*file, *fromStdin)
-		if err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
-		}
-		items, err := loadSendManyManifest(manifestPath, *fromStdin)
+		items, err := parseSendManyManifestInput(*file, *fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}

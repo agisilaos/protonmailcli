@@ -280,6 +280,8 @@ Validate CLI help contracts (recommended before release):
 scripts/check-help.sh
 ```
 
+Help snapshots are driven by `scripts/help-snapshots.txt`.
+
 If help output changed intentionally, refresh snapshots:
 
 ```bash

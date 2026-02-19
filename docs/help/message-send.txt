@@ -1,0 +1,12 @@
+Usage of message send:
+  -confirm-send string
+    	confirmation token
+  -draft-id string
+    	draft id
+  -force
+    	force send without confirm token
+  -idempotency-key string
+    	idempotency key
+  -smtp-password-file string
+    	path to smtp password file
+ok
