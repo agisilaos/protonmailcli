@@ -43,7 +43,7 @@ fi
 [[ -f README.md ]] || die "README.md not found"
 [[ -f CHANGELOG.md ]] || die "CHANGELOG.md not found"
 
-if rg -q "^## \[$version\]" CHANGELOG.md; then
+if grep -Fq "## [$version]" CHANGELOG.md; then
   die "CHANGELOG.md already contains $version"
 fi
 
