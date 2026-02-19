@@ -16,6 +16,13 @@ if [[ "${1:-}" == "--out-dir" ]]; then
   OUT_DIR="${2}"
 fi
 
+cd "${ROOT_DIR}"
+
+if [[ ! -d "${ROOT_DIR}/cmd/protonmailcli" ]]; then
+  echo "error: expected command package at ${ROOT_DIR}/cmd/protonmailcli" >&2
+  exit 1
+fi
+
 mkdir -p "${OUT_DIR}" "${ROOT_DIR}/.tmp"
 go build -o "${BIN_PATH}" ./cmd/protonmailcli
 
