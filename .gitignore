@@ -1,5 +1,5 @@
 # Build artifacts
-protonmailcli
+/protonmailcli
 *.exe
 *.out
 .tmp/
