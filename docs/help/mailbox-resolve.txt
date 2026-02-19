@@ -1,0 +1,4 @@
+Usage of mailbox resolve:
+  -name string
+    	mailbox id or name
+ok

@@ -368,7 +368,7 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "mailbox action required"}
 		}
-		return dispatchMailbox(action, args, cfg, state)
+		return dispatchMailbox(action, args, g, cfg, state)
 	case "draft":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "draft action required"}
@@ -383,12 +383,12 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "search action required"}
 		}
-		return dispatchSearch(action, args, cfg, state)
+		return dispatchSearch(action, args, g, cfg, state)
 	case "tag":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "tag action required"}
 		}
-		return dispatchTag(action, args, cfg, state)
+		return dispatchTag(action, args, g, cfg, state)
 	case "filter":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "filter action required"}
@@ -399,11 +399,11 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 	}
 }
 
-func dispatchMailbox(action string, args []string, cfg config.Config, state *model.State) (any, bool, error) {
+func dispatchMailbox(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
 	if useLocalStateMode() {
-		return cmdMailbox(action, args, state)
+		return cmdMailbox(action, args, g, state)
 	}
-	return cmdMailboxIMAP(action, args, cfg, state)
+	return cmdMailboxIMAP(action, args, g, cfg, state)
 }
 
 func dispatchDraft(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
@@ -420,18 +420,18 @@ func dispatchMessage(action string, args []string, g globalOptions, cfg config.C
 	return cmdMessageIMAP(action, args, g, cfg, state)
 }
 
-func dispatchSearch(action string, args []string, cfg config.Config, state *model.State) (any, bool, error) {
+func dispatchSearch(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
 	if useLocalStateMode() {
-		return cmdSearch(action, args, state)
+		return cmdSearch(action, args, g, state)
 	}
-	return cmdSearchIMAP(action, args, cfg, state)
+	return cmdSearchIMAP(action, args, g, cfg, state)
 }
 
-func dispatchTag(action string, args []string, cfg config.Config, state *model.State) (any, bool, error) {
+func dispatchTag(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
 	if useLocalStateMode() {
-		return cmdTag(action, args, state)
+		return cmdTag(action, args, g, state)
 	}
-	return cmdTagIMAP(action, args, cfg, state)
+	return cmdTagIMAP(action, args, g, cfg, state)
 }
 
 type sliceFlag []string
@@ -642,11 +642,21 @@ func cmdBridge(action string, args []string, cfg config.Config, st *model.State)
 	}
 }
 
-func cmdMailbox(action string, args []string, st *model.State) (any, bool, error) {
+func cmdMailbox(action string, args []string, g globalOptions, st *model.State) (any, bool, error) {
 	boxes := []mailboxInfo{
 		{ID: "inbox", Name: "INBOX", Kind: "system", Count: len(st.Messages)},
 		{ID: "drafts", Name: "Drafts", Kind: "system", Count: len(st.Drafts)},
 		{ID: "sent", Name: "Sent", Kind: "system", Count: countSent(st.Messages)},
+	}
+	if action == "resolve" {
+		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		_ = fs.String("name", "", "mailbox id or name")
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
+		}
 	}
 	return mailboxAction(action, args, boxes, "local")
 }
@@ -950,15 +960,17 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 	}
 }
 
-func cmdSearch(action string, args []string, st *model.State) (any, bool, error) {
+func cmdSearch(action string, args []string, g globalOptions, st *model.State) (any, bool, error) {
 	if action != "messages" && action != "drafts" {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "search supports messages|drafts"}
 	}
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	query := fs.String("query", "", "query")
-	if err := fs.Parse(args); err != nil {
-		return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, os.Stdout); err != nil {
+		return nil, false, err
+	} else if handled {
+		return helpData, false, nil
 	}
 	q := strings.ToLower(*query)
 	if action == "drafts" {
@@ -979,7 +991,7 @@ func cmdSearch(action string, args []string, st *model.State) (any, bool, error)
 	return map[string]any{"messages": out, "count": len(out)}, false, nil
 }
 
-func cmdTag(action string, args []string, st *model.State) (any, bool, error) {
+func cmdTag(action string, args []string, g globalOptions, st *model.State) (any, bool, error) {
 	switch action {
 	case "list":
 		list := make([]string, 0, len(st.Tags))
@@ -992,8 +1004,10 @@ func cmdTag(action string, args []string, st *model.State) (any, bool, error) {
 		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		name := fs.String("name", "", "tag name")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		if *name == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name required"}
@@ -1011,8 +1025,10 @@ func cmdTag(action string, args []string, st *model.State) (any, bool, error) {
 		fs.SetOutput(io.Discard)
 		msgID := fs.String("message-id", "", "message id")
 		tag := fs.String("tag", "", "tag name")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		uid, err := parseRequiredUID(*msgID, "--message-id")
 		if err != nil {
@@ -1063,8 +1079,10 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		name := fs.String("name", "", "name")
 		containsQ := fs.String("contains", "", "subject/body contains")
 		addTag := fs.String("add-tag", "", "tag to add")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter create", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		if *name == "" || *containsQ == "" || *addTag == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name, --contains and --add-tag are required"}
@@ -1079,8 +1097,10 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		fs := flag.NewFlagSet("filter delete", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		id := fs.String("filter-id", "", "filter id")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter delete", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		if _, ok := st.Filters[*id]; !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "filter not found"}
@@ -1093,8 +1113,10 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		fs := flag.NewFlagSet("filter test/apply", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		id := fs.String("filter-id", "", "filter id")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter "+action, os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		f, ok := st.Filters[*id]
 		if !ok {

@@ -465,6 +465,41 @@ func TestMessageSendHelpIMAPWithoutAuth(t *testing.T) {
 	}
 }
 
+func TestMailboxResolveAndSearchHelpIMAPWithoutAuth(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--config", cfg, "--state", state, "mailbox", "resolve", "--help"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("mailbox resolve --help failed: exit=%d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\"help\":\"mailbox resolve\"") || !strings.Contains(stdout.String(), "\"usage\":\"Usage of mailbox resolve:") {
+		t.Fatalf("unexpected mailbox help payload: %s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "auth_missing") || strings.Contains(stderr.String(), "auth_missing") {
+		t.Fatalf("mailbox resolve help should not require auth: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	exit = Run([]string{"--json", "--config", cfg, "--state", state, "search", "messages", "--help"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("search messages --help failed: exit=%d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\"help\":\"search messages\"") || !strings.Contains(stdout.String(), "\"usage\":\"Usage of search:") {
+		t.Fatalf("unexpected search help payload: %s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "auth_missing") || strings.Contains(stderr.String(), "auth_missing") {
+		t.Fatalf("search help should not require auth: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+}
+
 func TestLocalBatchDraftCreateAndSendManyParity(t *testing.T) {
 	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
 	tmp := t.TempDir()

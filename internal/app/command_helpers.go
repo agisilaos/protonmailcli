@@ -39,4 +39,3 @@ func parseSendManyManifestInput(file string, fromStdin bool) ([]sendManyItem, er
 	}
 	return loadSendManyManifest(manifestPath, fromStdin)
 }
-

@@ -1,5 +1,7 @@
 # output_file<TAB>command args
 root.txt	--help
 draft-create-many.txt	draft create-many --help
+mailbox-resolve.txt	mailbox resolve --help
 message-send.txt	message send --help
 message-send-many.txt	message send-many --help
+search-messages.txt	search messages --help

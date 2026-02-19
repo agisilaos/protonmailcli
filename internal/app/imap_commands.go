@@ -44,9 +44,19 @@ var openBridgeClientFn = func(cfg config.Config, st *model.State, passwordFile s
 	return bridgeClient(cfg, st, passwordFile)
 }
 
-func cmdMailboxIMAP(action string, args []string, cfg config.Config, st *model.State) (any, bool, error) {
+func cmdMailboxIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
 	if action != "list" && action != "resolve" {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown mailbox action: " + action}
+	}
+	if action == "resolve" {
+		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		_ = fs.String("name", "", "mailbox id or name")
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
+		}
 	}
 	c, _, _, err := bridgeClient(cfg, st, "")
 	if err != nil {
@@ -579,7 +589,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 	}
 }
 
-func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.State) (any, bool, error) {
+func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	query := fs.String("query", "", "query")
@@ -594,8 +604,10 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	before := fs.String("before", "", "date filter YYYY-MM-DD")
 	limit := fs.Int("limit", 50, "max results")
 	cursor := fs.String("cursor", "", "offset cursor")
-	if err := fs.Parse(args); err != nil {
-		return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, os.Stdout); err != nil {
+		return nil, false, err
+	} else if handled {
+		return helpData, false, nil
 	}
 	c, _, _, err := bridgeClient(cfg, st, "")
 	if err != nil {
@@ -644,7 +656,7 @@ func cmdSearchIMAP(action string, args []string, cfg config.Config, st *model.St
 	return messageListResponse{Messages: out, Count: len(out), Total: len(items), NextCursor: next, Mailbox: targetMailbox, Source: "imap"}, false, nil
 }
 
-func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State) (any, bool, error) {
+func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
 	c, _, _, err := bridgeClient(cfg, st, "")
 	if err != nil {
 		return nil, false, err
@@ -674,8 +686,10 @@ func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State
 		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		name := fs.String("name", "", "tag name")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		if strings.TrimSpace(*name) == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name required"}
@@ -686,8 +700,10 @@ func cmdTagIMAP(action string, args []string, cfg config.Config, st *model.State
 		fs.SetOutput(io.Discard)
 		msgID := fs.String("message-id", "", "message id")
 		tag := fs.String("tag", "", "tag name")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, os.Stdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
 		}
 		uid, err := parseRequiredUID(*msgID, "--message-id")
 		if err != nil {
