@@ -657,13 +657,37 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 }
 
 func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
-	c, _, _, err := bridgeClient(cfg, st, "")
-	if err != nil {
-		return nil, false, err
+	var c *bridge.IMAPClient
+	ensureClient := func() error {
+		if c != nil {
+			return nil
+		}
+		client, _, _, err := bridgeClient(cfg, st, "")
+		if err != nil {
+			return err
+		}
+		c = client
+		return nil
 	}
-	defer c.Close()
+	defer func() {
+		if c != nil {
+			_ = c.Close()
+		}
+	}()
 	switch action {
 	case "list":
+		if len(args) > 0 {
+			fs := flag.NewFlagSet("tag list", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag list", os.Stdout); err != nil {
+				return nil, false, err
+			} else if handled {
+				return helpData, false, nil
+			}
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
+		}
 		msgs, err := c.ListMessages("INBOX", "ALL")
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_tag_list_failed", msg: err.Error()}
@@ -704,6 +728,9 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
 		}
 		uid, err := parseRequiredUID(*msgID, "--message-id")
 		if err != nil {

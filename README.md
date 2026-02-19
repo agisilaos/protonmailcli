@@ -281,6 +281,7 @@ scripts/check-help.sh
 ```
 
 Help snapshots are driven by `scripts/help-snapshots.txt`.
+Snapshot generation runs against an isolated local-state setup for deterministic output.
 
 If help output changed intentionally, refresh snapshots:
 

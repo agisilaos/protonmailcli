@@ -5,8 +5,6 @@ Usage of message send:
     	draft id
   -force
     	force send without confirm token
-  -idempotency-key string
-    	idempotency key
   -smtp-password-file string
     	path to smtp password file
 ok

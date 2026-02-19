@@ -54,6 +54,8 @@ Status date: 2026-02-18
   - `createPath`: `imap_append` or `smtp_move_fallback` (IMAP), `local_state` (local mode)
   - `sendPath`: `smtp` (IMAP), `local_state` (local mode)
   - batch variants expose the same fields per result item
+- Subcommand `--help` in JSON mode is normalized across core agent paths (mailbox/search/tag/filter/message/draft batch commands) and no longer requires Bridge auth for help-only execution.
+- Help snapshot generation is manifest-driven via `scripts/help-snapshots.txt` and uses isolated local-state setup for deterministic outputs.
 - Manifest source, required-ID, and date parsing validations are centralized in shared helpers to keep flag behavior consistent across commands.
 - Agent smoke workflow is available via `scripts/smoke-agent.sh` (local-state and dry-run only).
 - IMAP subcommand help is parsed before Bridge auth/connect, so `--help` works even on un-authenticated environments.

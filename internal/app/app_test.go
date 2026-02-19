@@ -500,6 +500,38 @@ func TestMailboxResolveAndSearchHelpIMAPWithoutAuth(t *testing.T) {
 	}
 }
 
+func TestTagAndFilterHelpWithoutAuthOrBridge(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--config", cfg, "--state", state, "tag", "create", "--help"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("tag create --help failed: exit=%d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\"help\":\"tag create\"") || !strings.Contains(stdout.String(), "\"usage\":\"Usage of tag create:") {
+		t.Fatalf("unexpected tag help payload: %s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "auth_missing") || strings.Contains(stderr.String(), "auth_missing") {
+		t.Fatalf("tag help should not require auth: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	exit = Run([]string{"--json", "--config", cfg, "--state", state, "filter", "create", "--help"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("filter create --help failed: exit=%d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "\"help\":\"filter create\"") || !strings.Contains(stdout.String(), "\"usage\":\"Usage of filter create:") {
+		t.Fatalf("unexpected filter help payload: %s", stdout.String())
+	}
+}
+
 func TestLocalBatchDraftCreateAndSendManyParity(t *testing.T) {
 	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
 	tmp := t.TempDir()

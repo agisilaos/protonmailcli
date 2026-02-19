@@ -1,0 +1,8 @@
+Usage of filter create:
+  -add-tag string
+    	tag to add
+  -contains string
+    	subject/body contains
+  -name string
+    	name
+ok

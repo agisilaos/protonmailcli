@@ -1,26 +1,4 @@
 Usage of search:
-  -after string
-    	date filter YYYY-MM-DD
-  -before string
-    	date filter YYYY-MM-DD
-  -cursor string
-    	offset cursor
-  -from string
-    	from filter
-  -has-tag string
-    	imap keyword/tag
-  -limit int
-    	max results (default 50)
-  -mailbox string
-    	mailbox name (messages only)
   -query string
     	query
-  -since-id string
-    	minimum UID (inclusive)
-  -subject string
-    	subject filter
-  -to string
-    	to filter
-  -unread
-    	only unread messages
 ok

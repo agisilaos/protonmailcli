@@ -1,10 +1,6 @@
 Usage of message send-many:
   -file string
     	manifest json path or -
-  -idempotency-key string
-    	idempotency key
-  -smtp-password-file string
-    	path to smtp password file
   -stdin
     	read manifest json from stdin
 ok
