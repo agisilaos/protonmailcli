@@ -698,7 +698,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if !g.dryRun {
 			st.Drafts[id] = d
 		}
-		return map[string]any{"draft": d}, true, nil
+		return map[string]any{"draft": d, "createPath": "local_state", "source": "local"}, true, nil
 	case "update":
 		fs := flag.NewFlagSet("draft update", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -820,7 +820,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 			id := fmt.Sprintf("d_%d", now.UnixNano())
 			d := model.Draft{ID: id, To: it.To, Subject: it.Subject, Body: b, CreatedAt: now, UpdatedAt: now}
 			st.Drafts[id] = d
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: id})
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: id, CreatePath: "local_state"})
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}
@@ -895,7 +895,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			password = strings.TrimSpace(string(b))
 		}
 		if g.dryRun {
-			return map[string]any{"action": "send", "draftId": d.ID, "wouldSend": true, "dryRun": true}, true, nil
+			return map[string]any{"action": "send", "draftId": d.ID, "wouldSend": true, "dryRun": true, "sendPath": "local_state", "source": "local"}, true, nil
 		}
 		from := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username)
 		if from == "" {
@@ -910,7 +910,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		m := model.Message{ID: msgID, DraftID: d.ID, From: from, To: d.To, Subject: d.Subject, Body: d.Body, Tags: d.Tags, SentAt: now}
 		st.Messages[msgID] = m
 		st.Drafts[d.ID] = d
-		return map[string]any{"sent": true, "message": m}, true, nil
+		return map[string]any{"sent": true, "message": m, "sendPath": "local_state", "source": "local"}, true, nil
 	case "send-many":
 		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -955,7 +955,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 				continue
 			}
 			if g.dryRun {
-				results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, DryRun: true})
+				results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, DryRun: true, SendPath: "local_state"})
 				success++
 				continue
 			}
@@ -969,7 +969,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			m := model.Message{ID: msgID, DraftID: d.ID, From: from, To: d.To, Subject: d.Subject, Body: d.Body, Tags: d.Tags, SentAt: now}
 			st.Messages[msgID] = m
 			st.Drafts[d.ID] = d
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SentAt: now.Format(time.RFC3339)})
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SendPath: "local_state", SentAt: now.Format(time.RFC3339)})
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}

@@ -172,15 +172,32 @@ func TestSaveDraftWithFallbackWhenAppendFails(t *testing.T) {
 	t.Setenv("PMAIL_SMTP_PASSWORD", "secret")
 	cfg := config.Default()
 	cfg.Bridge.Username = "u@example.com"
-	uid, err := saveDraftWithFallback(primary, cfg, &model.State{Auth: model.AuthState{Username: "u@example.com"}}, "u@example.com", []string{"a@example.com"}, "s", "b", "raw")
+	uid, createPath, err := saveDraftWithFallback(primary, cfg, &model.State{Auth: model.AuthState{Username: "u@example.com"}}, "u@example.com", []string{"a@example.com"}, "s", "b", "raw")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if uid != "99" {
 		t.Fatalf("expected uid 99 got %s", uid)
 	}
+	if createPath != "smtp_move_fallback" {
+		t.Fatalf("expected fallback path, got %s", createPath)
+	}
 	if !smtpCalled {
 		t.Fatalf("expected smtp fallback to be used")
+	}
+}
+
+func TestSaveDraftWithFallbackReturnsAppendPathOnSuccess(t *testing.T) {
+	primary := &fakeIMAPDraftClient{appendUID: "77"}
+	uid, createPath, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "u@example.com", []string{"a@example.com"}, "s", "b", "raw")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if uid != "77" {
+		t.Fatalf("expected uid 77 got %s", uid)
+	}
+	if createPath != "imap_append" {
+		t.Fatalf("expected imap_append path, got %s", createPath)
 	}
 }
 

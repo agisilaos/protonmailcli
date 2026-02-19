@@ -203,6 +203,13 @@ Success:
 }
 ```
 
+Command-specific telemetry fields for agents:
+
+- `draft create`: `data.createPath`
+- `draft create-many`: `data.results[].createPath`
+- `message send`: `data.sendPath`
+- `message send-many`: `data.results[].sendPath`
+
 Error:
 
 ```json

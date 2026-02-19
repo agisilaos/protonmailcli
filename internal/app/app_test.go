@@ -39,6 +39,39 @@ func TestSetupNonInteractiveAndDraftFlow(t *testing.T) {
 	if ok, _ := env["ok"].(bool); !ok {
 		t.Fatalf("expected ok=true got %v", env)
 	}
+	data, _ := env["data"].(map[string]any)
+	if path, _ := data["createPath"].(string); path != "local_state" {
+		t.Fatalf("expected createPath=local_state got %q payload=%v", path, data)
+	}
+	if source, _ := data["source"].(string); source != "local" {
+		t.Fatalf("expected source=local got %q payload=%v", source, data)
+	}
+}
+
+func TestLocalSendIncludesSendPath(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "draft", "create", "--to", "a@example.com", "--subject", "hello", "--body", "body"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("create failed: %d", exit)
+	}
+	draftID := latestDraftID(t, state)
+	stdout := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--no-input", "--dry-run", "--config", cfg, "--state", state, "message", "send", "--draft-id", draftID, "--confirm-send", draftID}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})
+	if exit != 0 {
+		t.Fatalf("send failed: %d stdout=%s", exit, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"sendPath":"local_state"`) {
+		t.Fatalf("missing sendPath in response: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"source":"local"`) {
+		t.Fatalf("missing source in response: %s", stdout.String())
+	}
 }
 
 func TestSendRequiresConfirmWhenNoInput(t *testing.T) {

@@ -219,6 +219,11 @@ Selected env vars:
 - `stderr`: hints, warnings, diagnostics
 - `--json`: single envelope object
 - Unset optional timestamps are omitted (for example unsent drafts omit `sentAt`)
+- Path telemetry for agents:
+  - `draft create` / `draft create-many[*]`: `createPath`
+  - `message send` / `message send-many[*]`: `sendPath`
+  - IMAP values: `imap_append`, `smtp_move_fallback`, `smtp`
+  - local-state value: `local_state`
 
 Exit codes:
 
@@ -316,11 +321,13 @@ go test ./...
 ```
 3. Read IDs from output and feed them back without transformation:
   `imap:Drafts:<uid>` for draft operations, `imap:INBOX:<uid>` for message operations.
-4. Use safety-first execution for mutating actions:
+4. Route by path telemetry when needed:
+  use `data.createPath` / `data.sendPath` (or per-item `results[].createPath` / `results[].sendPath`) for deterministic branching.
+5. Use safety-first execution for mutating actions:
   run with `--dry-run` first, then execute with explicit confirmation flags.
-5. Page deterministically:
+6. Page deterministically:
   use `--limit` and `--cursor`; stop when `nextCursor` is empty.
-6. Validate behavior contracts before proposing changes:
+7. Validate behavior contracts before proposing changes:
 ```bash
 go test ./internal/app -run TestContractFixtures -v
 ```

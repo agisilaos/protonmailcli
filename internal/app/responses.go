@@ -29,8 +29,9 @@ type draftListResponse struct {
 }
 
 type draftResponse struct {
-	Draft  draftRecord `json:"draft"`
-	Source string      `json:"source"`
+	Draft      draftRecord `json:"draft"`
+	CreatePath string      `json:"createPath,omitempty"`
+	Source     string      `json:"source"`
 }
 
 type messageRecord struct {
@@ -59,16 +60,18 @@ type messageListResponse struct {
 }
 
 type batchItemResponse struct {
-	Index     int      `json:"index"`
-	OK        bool     `json:"ok"`
-	DryRun    bool     `json:"dryRun,omitempty"`
-	To        []string `json:"to,omitempty"`
-	Subject   string   `json:"subject,omitempty"`
-	DraftID   string   `json:"draftId,omitempty"`
-	UID       string   `json:"uid,omitempty"`
-	SentAt    string   `json:"sentAt,omitempty"`
-	ErrorCode string   `json:"errorCode,omitempty"`
-	Error     string   `json:"error,omitempty"`
+	Index      int      `json:"index"`
+	OK         bool     `json:"ok"`
+	DryRun     bool     `json:"dryRun,omitempty"`
+	To         []string `json:"to,omitempty"`
+	Subject    string   `json:"subject,omitempty"`
+	DraftID    string   `json:"draftId,omitempty"`
+	UID        string   `json:"uid,omitempty"`
+	CreatePath string   `json:"createPath,omitempty"`
+	SendPath   string   `json:"sendPath,omitempty"`
+	SentAt     string   `json:"sentAt,omitempty"`
+	ErrorCode  string   `json:"errorCode,omitempty"`
+	Error      string   `json:"error,omitempty"`
 }
 
 type batchResultResponse struct {

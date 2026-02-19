@@ -49,6 +49,10 @@ Status date: 2026-02-18
 - Resource dispatch (`mailbox`, `draft`, `message`, `search`, `tag`) now uses shared backend-router helpers so local-state and IMAP routing stays consistent.
 - Send safety checks (confirm token and force policy) are centralized in one validator used by both local and IMAP send paths.
 - IMAP-heavy command responses now use typed response structs instead of ad-hoc `map[string]any`, preserving JSON contract fields while reducing key drift risk.
+- Draft/send responses now include machine-readable path telemetry:
+  - `createPath`: `imap_append` or `smtp_move_fallback` (IMAP), `local_state` (local mode)
+  - `sendPath`: `smtp` (IMAP), `local_state` (local mode)
+  - batch variants expose the same fields per result item
 - Manifest source, required-ID, and date parsing validations are centralized in shared helpers to keep flag behavior consistent across commands.
 - Agent smoke workflow is available via `scripts/smoke-agent.sh` (local-state and dry-run only).
 - IMAP subcommand help is parsed before Bridge auth/connect, so `--help` works even on un-authenticated environments.

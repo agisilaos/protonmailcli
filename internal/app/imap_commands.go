@@ -184,13 +184,14 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if g.dryRun {
 			return map[string]any{"action": "draft.create", "wouldCreate": true, "source": "imap"}, true, nil
 		}
-		uid, err := saveDraftWithFallback(c, cfg, st, username, to, *subject, b, raw)
+		uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, to, *subject, b, raw)
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_create_failed", msg: err.Error()}
 		}
 		resp := draftResponse{
-			Draft:  draftRecord{ID: imapDraftID(uid), UID: uid, To: to, Subject: *subject, Body: b},
-			Source: "imap",
+			Draft:      draftRecord{ID: imapDraftID(uid), UID: uid, To: to, Subject: *subject, Body: b},
+			CreatePath: createPath,
+			Source:     "imap",
 		}
 		_ = idempotencyStore(st, *idempotencyKey, "draft.create", payload, resp)
 		return resp, true, nil
@@ -245,12 +246,12 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 				success++
 				continue
 			}
-			uid, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw)
+			uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw)
 			if err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "imap_draft_create_failed", Error: err.Error()})
 				continue
 			}
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid})
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid, CreatePath: createPath})
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
@@ -335,12 +336,16 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 	}
 }
 
-func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State, username string, to []string, subject, body, raw string) (string, error) {
+func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State, username string, to []string, subject, body, raw string) (string, string, error) {
 	uid, err := c.AppendDraft(raw)
 	if err == nil {
-		return uid, nil
+		return uid, "imap_append", nil
 	}
-	return createDraftViaMoveFallback(cfg, st, username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")))
+	uid, err = createDraftViaMoveFallback(cfg, st, username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")))
+	if err != nil {
+		return "", "", err
+	}
+	return uid, "smtp_move_fallback", nil
 }
 
 func createDraftViaMoveFallback(cfg config.Config, st *model.State, username string, to []string, subject, body, envPassword string) (string, error) {
@@ -489,7 +494,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, err
 		}
 		if g.dryRun {
-			return map[string]any{"action": "send", "draftId": imapDraftID(uid), "wouldSend": true, "dryRun": true, "source": "imap"}, true, nil
+			return map[string]any{"action": "send", "draftId": imapDraftID(uid), "wouldSend": true, "dryRun": true, "sendPath": "smtp", "source": "imap"}, true, nil
 		}
 		pass := strings.TrimSpace(password)
 		if *passwordFile != "" {
@@ -504,11 +509,12 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, cliError{exit: 4, code: "send_failed", msg: err.Error()}
 		}
 		resp := struct {
-			Sent    bool   `json:"sent"`
-			DraftID string `json:"draftId"`
-			Source  string `json:"source"`
-			SentAt  string `json:"sentAt"`
-		}{Sent: true, DraftID: imapDraftID(uid), Source: "imap", SentAt: time.Now().UTC().Format(time.RFC3339)}
+			Sent     bool   `json:"sent"`
+			DraftID  string `json:"draftId"`
+			SendPath string `json:"sendPath,omitempty"`
+			Source   string `json:"source"`
+			SentAt   string `json:"sentAt"`
+		}{Sent: true, DraftID: imapDraftID(uid), SendPath: "smtp", Source: "imap", SentAt: time.Now().UTC().Format(time.RFC3339)}
 		_ = idempotencyStore(st, *idempotencyKey, "message.send", payload, resp)
 		return resp, true, nil
 	case "send-many":
@@ -576,7 +582,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				continue
 			}
 			if g.dryRun {
-				results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, DryRun: true})
+				results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, DryRun: true, SendPath: "smtp"})
 				success++
 				continue
 			}
@@ -584,7 +590,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "send_failed", Error: err.Error(), DraftID: it.DraftID})
 				continue
 			}
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SentAt: time.Now().UTC().Format(time.RFC3339)})
+			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SendPath: "smtp", SentAt: time.Now().UTC().Format(time.RFC3339)})
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
