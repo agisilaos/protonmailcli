@@ -301,6 +301,18 @@ Run full pre-release checks:
 scripts/release-check.sh
 ```
 
+Generate changelog section from commits:
+
+```bash
+scripts/generate-changelog.sh --version v0.3.0 --since v0.2.1
+```
+
+Validate changelog for current CLI version:
+
+```bash
+scripts/check-changelog.sh
+```
+
 Batch manifest schemas:
 
 - `docs/schemas/draft-create-many.schema.json`

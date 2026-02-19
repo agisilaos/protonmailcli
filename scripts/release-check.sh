@@ -12,6 +12,9 @@ echo "[release-check] contract fixtures"
 echo "[release-check] help snapshot drift"
 "${ROOT_DIR}/scripts/check-help.sh"
 
+echo "[release-check] changelog gate"
+"${ROOT_DIR}/scripts/check-changelog.sh"
+
 echo "[release-check] agent smoke checks"
 "${ROOT_DIR}/scripts/smoke-agent.sh"
 
