@@ -89,6 +89,20 @@ completion
 - `--smtp-password-file <path>`
 - `--profile <name>`
 
+### `doctor`
+
+- no sub-action
+- returns grouped diagnostics for:
+  - config prerequisites
+  - auth prerequisites
+  - bridge TCP checks (`imap`, `smtp`)
+
+Exit behavior:
+
+- `0`: all groups pass
+- `3`: config/auth prerequisite failure (`doctor_prereq_failed`)
+- `4`: bridge connectivity failure (`bridge_unreachable`)
+
 ### `draft create`
 
 - `--to <email>` repeatable (required)

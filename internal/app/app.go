@@ -363,7 +363,7 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 		if action != "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "doctor does not take an action"}
 		}
-		return cmdDoctor(cfg)
+		return cmdDoctor(cfg, state)
 	case "auth":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "auth action required"}
@@ -447,16 +447,76 @@ func (s *sliceFlag) Set(v string) error {
 	return nil
 }
 
-func cmdDoctor(cfg config.Config) (any, bool, error) {
+func cmdDoctor(cfg config.Config, st *model.State) (any, bool, error) {
 	timeout := 3 * time.Second
 	smtp := bridge.CheckTCP(cfg.Bridge.Host, cfg.Bridge.SMTPPort, timeout, "smtp")
 	imap := bridge.CheckTCP(cfg.Bridge.Host, cfg.Bridge.IMAPPort, timeout, "imap")
-	ok := smtp.OK && imap.OK
-	data := map[string]any{"ok": ok, "checks": []bridge.HealthStatus{smtp, imap}}
-	if !ok {
+	bridgeOK := smtp.OK && imap.OK
+	authDetails, authOK := doctorAuthPrereqs(cfg, st)
+	configDetails, configOK := doctorConfigPrereqs(cfg)
+	ok := bridgeOK && authOK && configOK
+	data := map[string]any{
+		"ok":     ok,
+		"checks": []bridge.HealthStatus{smtp, imap}, // backwards-compatible top-level key
+		"summary": map[string]any{
+			"bridge":      bridgeOK,
+			"authPrereqs": authOK,
+			"config":      configOK,
+		},
+		"doctor": map[string]any{
+			"bridge": map[string]any{"ok": bridgeOK, "checks": []bridge.HealthStatus{smtp, imap}},
+			"auth":   authDetails,
+			"config": configDetails,
+		},
+	}
+	if !configOK || !authOK {
+		return data, false, cliError{
+			exit: 3,
+			code: "doctor_prereq_failed",
+			msg:  "one or more doctor prerequisites are not satisfied",
+			hint: "Run setup and auth login, then retry doctor",
+		}
+	}
+	if !bridgeOK {
 		return data, false, cliError{exit: 4, code: "bridge_unreachable", msg: "one or more bridge endpoints are unreachable", hint: "Check Proton Mail Bridge is running and ports match setup"}
 	}
 	return data, false, nil
+}
+
+func doctorConfigPrereqs(cfg config.Config) (map[string]any, bool) {
+	missing := []string{}
+	if strings.TrimSpace(cfg.Bridge.Host) == "" {
+		missing = append(missing, "bridge.host")
+	}
+	if cfg.Bridge.IMAPPort <= 0 {
+		missing = append(missing, "bridge.imap_port")
+	}
+	if cfg.Bridge.SMTPPort <= 0 {
+		missing = append(missing, "bridge.smtp_port")
+	}
+	return map[string]any{
+		"ok":      len(missing) == 0,
+		"missing": missing,
+	}, len(missing) == 0
+}
+
+func doctorAuthPrereqs(cfg config.Config, st *model.State) (map[string]any, bool) {
+	username := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username)
+	passwordFromEnv := strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")) != ""
+	passwordFile := firstNonEmpty(st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
+	passwordFileReadable := false
+	if strings.TrimSpace(passwordFile) != "" {
+		_, err := os.Stat(filepath.Clean(config.Expand(passwordFile)))
+		passwordFileReadable = err == nil
+	}
+	ok := strings.TrimSpace(username) != "" && (passwordFromEnv || passwordFileReadable)
+	return map[string]any{
+		"ok":                     ok,
+		"usernameConfigured":     strings.TrimSpace(username) != "",
+		"passwordFromEnv":        passwordFromEnv,
+		"passwordFileConfigured": strings.TrimSpace(passwordFile) != "",
+		"passwordFileReadable":   passwordFileReadable,
+	}, ok
 }
 
 func cmdCompletion(w io.Writer, args []string) error {

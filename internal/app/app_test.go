@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"protonmailcli/internal/config"
+	"protonmailcli/internal/model"
 )
 
 func TestSetupNonInteractiveAndDraftFlow(t *testing.T) {
@@ -105,6 +108,7 @@ func TestAuthLoginStatusLogout(t *testing.T) {
 
 func TestDoctorFailureExitCode(t *testing.T) {
 	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	t.Setenv("PMAIL_SMTP_PASSWORD", "secret")
 	tmp := t.TempDir()
 	cfg := filepath.Join(tmp, "config.toml")
 	state := filepath.Join(tmp, "state.json")
@@ -119,6 +123,69 @@ func TestDoctorFailureExitCode(t *testing.T) {
 	}
 	if !bytes.Contains(stdout.Bytes(), []byte("bridge_unreachable")) {
 		t.Fatalf("expected bridge_unreachable in stdout: %s", stdout.String())
+	}
+}
+
+func TestDoctorPrereqFailureExitCode(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	// Clear username in config to force prereq failure without credentials.
+	if err := os.WriteFile(cfg, []byte(`[defaults]
+profile = "default"
+output = "human"
+timeout = "30s"
+
+[bridge]
+host = "127.0.0.1"
+imap_port = 1143
+smtp_port = 1025
+tls = true
+username = ""
+password_file = ""
+
+[safety]
+require_confirm_send_non_tty = true
+allow_force_send = true
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--config", cfg, "--state", state, "doctor"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 3 {
+		t.Fatalf("expected exit 3 got %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("doctor_prereq_failed")) {
+		t.Fatalf("expected doctor_prereq_failed in stdout: %s", stdout.String())
+	}
+}
+
+func TestDoctorPayloadGroups(t *testing.T) {
+	cfg := config.Default()
+	cfg.Bridge.Host = "127.0.0.1"
+	cfg.Bridge.IMAPPort = 1
+	cfg.Bridge.SMTPPort = 1
+	st := &model.State{Auth: model.AuthState{Username: "me@example.com"}}
+	t.Setenv("PMAIL_SMTP_PASSWORD", "secret")
+
+	data, _, err := cmdDoctor(cfg, st)
+	if err == nil {
+		t.Fatalf("expected error due to unreachable ports")
+	}
+	m, ok := data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map payload")
+	}
+	if _, ok := m["summary"]; !ok {
+		t.Fatalf("missing summary group: %#v", m)
+	}
+	if _, ok := m["doctor"]; !ok {
+		t.Fatalf("missing doctor group: %#v", m)
 	}
 }
 

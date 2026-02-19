@@ -63,6 +63,7 @@ Automated tests currently cover:
 - non-interactive send confirmation enforcement (`exit 7`)
 - auth login/status/logout
 - doctor unreachable bridge behavior (`exit 4`)
+- doctor prerequisite failure behavior (`exit 3`)
 - completion generation
 - executable contract fixtures (`tests/contracts/*.json`) via `TestContractFixtures`
 - fallback handling when IMAP APPEND fails (tested path)
