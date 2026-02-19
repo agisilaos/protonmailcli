@@ -56,7 +56,7 @@ var (
 )
 
 func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return nil, err
