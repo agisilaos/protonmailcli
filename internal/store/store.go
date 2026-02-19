@@ -24,6 +24,7 @@ func emptyState() model.State {
 		Messages:    map[string]model.Message{},
 		Tags:        map[string]string{},
 		Filters:     map[string]model.Filter{},
+		Bridge:      model.BridgeState{},
 		Idempotency: map[string]model.IdempotencyRecord{},
 	}
 }

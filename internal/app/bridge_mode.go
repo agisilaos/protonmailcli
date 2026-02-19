@@ -17,7 +17,7 @@ func useLocalStateMode() bool {
 }
 
 func resolveBridgeCredentials(cfg config.Config, st *model.State, passwordFileOverride string) (string, string, error) {
-	username := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username)
+	username := firstNonEmpty(st.Bridge.ActiveUsername, st.Auth.Username, cfg.Bridge.Username)
 	if username == "" {
 		return "", "", cliError{exit: 3, code: "config_error", msg: "bridge username is missing", hint: "Run setup or auth login"}
 	}

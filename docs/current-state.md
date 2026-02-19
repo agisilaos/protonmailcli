@@ -15,6 +15,7 @@ Status date: 2026-02-18
   - `setup --non-interactive`
 - Auth/session flows:
   - `auth login|status|logout`
+  - `bridge account list|use`
 - Diagnostics:
   - `doctor`
 - Mail operations (live Bridge):
@@ -38,6 +39,7 @@ Status date: 2026-02-18
 - Local-state-backed:
   - `filter`
   - auth session metadata
+  - active bridge account username selection
 - Optional local-only mode for tests:
   - `PMAIL_USE_LOCAL_STATE=1`
   - now includes batch parity for `draft create-many` and `message send-many`

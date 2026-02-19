@@ -8,6 +8,7 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 
 - Interactive and non-interactive setup (`setup`)
 - Auth session commands (`auth login|status|logout`)
+- Bridge account selection (`bridge account list|use`)
 - Bridge diagnostics (`doctor`: config/auth prerequisites + Bridge TCP checks)
 - Draft lifecycle: create, update, get, list, delete
 - Bulk draft creation: `draft create-many --file|--stdin`
@@ -26,6 +27,7 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 ## Backend matrix (current)
 
 - `auth`: local session state + Bridge credentials
+- `bridge account`: active Bridge username selection state
 - `doctor`: config + auth prerequisites + Bridge TCP checks (IMAP/SMTP)
 - `draft`: Bridge IMAP (`Drafts`)
 - `message get`: Bridge IMAP (`INBOX`)
@@ -81,6 +83,13 @@ Check auth/session:
 
 ```bash
 ./protonmailcli --json auth status
+```
+
+List/select Bridge account profile:
+
+```bash
+./protonmailcli --json bridge account list
+./protonmailcli --json bridge account use --username you@proton.me
 ```
 
 Bridge health checks:

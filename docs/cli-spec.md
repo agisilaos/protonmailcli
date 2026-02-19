@@ -74,6 +74,10 @@ completion
   bash
   zsh
   fish
+
+bridge
+  account list
+  account use
 ```
 
 ## 6. Key subcommand contracts
@@ -88,6 +92,16 @@ completion
 - `--username <email>`
 - `--smtp-password-file <path>`
 - `--profile <name>`
+
+### `bridge account list`
+
+- no flags
+- lists known usernames and current active username
+
+### `bridge account use`
+
+- `--username <email>` required
+- sets active Bridge account username in state
 
 ### `doctor`
 

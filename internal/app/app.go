@@ -280,6 +280,7 @@ Usage:
 
 Resources:
   setup
+  bridge     account list|use
   auth       login|status|logout
   draft      create|create-many|update|get|list|delete
   message    send|send-many|get
@@ -369,6 +370,11 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "auth action required"}
 		}
 		return cmdAuth(action, args, g, cfg, state)
+	case "bridge":
+		if action == "" {
+			return nil, false, cliError{exit: 2, code: "usage_error", msg: "bridge action required"}
+		}
+		return cmdBridge(action, args, cfg, state)
 	case "mailbox":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "mailbox action required"}
@@ -591,6 +597,59 @@ func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, s
 		return map[string]any{"loggedIn": false}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown auth action: " + action}
+	}
+}
+
+func cmdBridge(action string, args []string, cfg config.Config, st *model.State) (any, bool, error) {
+	if action != "account" {
+		return nil, false, cliError{exit: 2, code: "usage_error", msg: "bridge supports account"}
+	}
+	if len(args) == 0 {
+		return nil, false, cliError{exit: 2, code: "usage_error", msg: "bridge account action required (list|use)"}
+	}
+	switch args[0] {
+	case "list":
+		seen := map[string]struct{}{}
+		out := []map[string]any{}
+		for _, u := range []string{cfg.Bridge.Username, st.Auth.Username, st.Bridge.ActiveUsername} {
+			u = strings.TrimSpace(u)
+			if u == "" {
+				continue
+			}
+			if _, ok := seen[u]; ok {
+				continue
+			}
+			seen[u] = struct{}{}
+			out = append(out, map[string]any{
+				"username": u,
+				"active":   strings.TrimSpace(st.Bridge.ActiveUsername) != "" && st.Bridge.ActiveUsername == u,
+			})
+		}
+		return map[string]any{
+			"accounts": out,
+			"count":    len(out),
+			"active":   strings.TrimSpace(st.Bridge.ActiveUsername),
+		}, false, nil
+	case "use":
+		fs := flag.NewFlagSet("bridge account use", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		username := fs.String("username", "", "bridge account username/email")
+		if err := fs.Parse(args[1:]); err != nil {
+			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		}
+		u := strings.TrimSpace(*username)
+		if u == "" {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--username is required"}
+		}
+		st.Bridge.ActiveUsername = u
+		return map[string]any{
+			"active": map[string]any{
+				"username": u,
+			},
+			"changed": true,
+		}, true, nil
+	default:
+		return nil, false, cliError{exit: 2, code: "usage_error", msg: "bridge account supports list|use"}
 	}
 }
 
@@ -1160,16 +1219,16 @@ func bashCompletion() string {
 	return `# protonmailcli bash completion
 _protonmailcli_completions()
 {
-  COMPREPLY=( $(compgen -W "setup doctor completion auth draft message search mailbox tag filter" -- "${COMP_WORDS[1]}") )
+  COMPREPLY=( $(compgen -W "setup doctor completion bridge auth draft message search mailbox tag filter" -- "${COMP_WORDS[1]}") )
 }
 complete -F _protonmailcli_completions protonmailcli`
 }
 
 func zshCompletion() string {
 	return `#compdef protonmailcli
-_arguments "1: :((setup doctor completion auth draft message search mailbox tag filter))"`
+_arguments "1: :((setup doctor completion bridge auth draft message search mailbox tag filter))"`
 }
 
 func fishCompletion() string {
-	return `complete -c protonmailcli -f -a "setup doctor completion auth draft message search mailbox tag filter"`
+	return `complete -c protonmailcli -f -a "setup doctor completion bridge auth draft message search mailbox tag filter"`
 }

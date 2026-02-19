@@ -189,6 +189,45 @@ func TestDoctorPayloadGroups(t *testing.T) {
 	}
 }
 
+func TestBridgeAccountListAndUse(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "cfg@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--config", cfg, "--state", state, "bridge", "account", "list"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("list failed: %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"cfg@example.com"`) {
+		t.Fatalf("expected configured account in list: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	exit = Run([]string{"--json", "--config", cfg, "--state", state, "bridge", "account", "use", "--username", "active@example.com"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("use failed: %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"active@example.com"`) {
+		t.Fatalf("expected active username in output: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	exit = Run([]string{"--json", "--config", cfg, "--state", state, "bridge", "account", "list"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("list after use failed: %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"active":"active@example.com"`) && !strings.Contains(stdout.String(), `"active@example.com"`) {
+		t.Fatalf("expected active account marker: %s", stdout.String())
+	}
+}
+
 func TestCompletionZsh(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	exit := Run([]string{"completion", "zsh"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})

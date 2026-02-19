@@ -52,11 +52,16 @@ type IdempotencyRecord struct {
 	CreatedAt   time.Time       `json:"createdAt"`
 }
 
+type BridgeState struct {
+	ActiveUsername string `json:"activeUsername,omitempty"`
+}
+
 type State struct {
 	Drafts      map[string]Draft             `json:"drafts"`
 	Messages    map[string]Message           `json:"messages"`
 	Tags        map[string]string            `json:"tags"`
 	Filters     map[string]Filter            `json:"filters"`
 	Auth        AuthState                    `json:"auth"`
+	Bridge      BridgeState                  `json:"bridge"`
 	Idempotency map[string]IdempotencyRecord `json:"idempotency"`
 }

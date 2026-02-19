@@ -8,6 +8,7 @@ Usage:
 
 Resources:
   setup
+  bridge     account list|use
   auth       login|status|logout
   draft      create|create-many|update|get|list|delete
   message    send|send-many|get
