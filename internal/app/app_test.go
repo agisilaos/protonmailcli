@@ -548,3 +548,18 @@ func TestLocalDraftCreateManyPerItemValidation(t *testing.T) {
 		t.Fatalf("unexpected output: %s", stdout.String())
 	}
 }
+
+func TestClassifyErrorCategory(t *testing.T) {
+	if got := classifyErrorCategory("send_failed", 4, true); got != "transient" {
+		t.Fatalf("expected transient, got %s", got)
+	}
+	if got := classifyErrorCategory("confirmation_required", 7, false); got != "safety" {
+		t.Fatalf("expected safety, got %s", got)
+	}
+	if got := classifyErrorCategory("auth_missing", 3, false); got != "auth" {
+		t.Fatalf("expected auth, got %s", got)
+	}
+	if got := classifyErrorCategory("not_found", 5, false); got != "not_found" {
+		t.Fatalf("expected not_found, got %s", got)
+	}
+}

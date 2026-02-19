@@ -479,6 +479,7 @@ cat sends.json | ./protonmailcli --json --no-input message send-many --stdin --i
 In `--json` mode, all failures include machine-readable error fields:
 
 - `error.code` (stable programmatic code)
+- `error.category` (`usage`, `safety`, `config`, `auth`, `not_found`, `conflict`, `rate_limit`, `transient`, `runtime`)
 - `error.retryable` (`true` for transient/network-class failures)
 
 Current automated tests cover:

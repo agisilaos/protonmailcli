@@ -235,6 +235,7 @@ Error:
   "ok": false,
   "error": {
     "code": "validation_error",
+    "category": "usage",
     "message": "...",
     "hint": "...",
     "retryable": false

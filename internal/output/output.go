@@ -35,6 +35,7 @@ type ErrBody struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	Hint      string `json:"hint,omitempty"`
+	Category  string `json:"category,omitempty"`
 	Retryable bool   `json:"retryable"`
 }
 
@@ -43,8 +44,8 @@ func PrintSuccess(w io.Writer, mode Mode, data interface{}, profile, requestID s
 	return printEnvelope(w, mode, env)
 }
 
-func PrintError(w io.Writer, mode Mode, code, msg, hint string, retryable bool, profile, requestID string, start time.Time) error {
-	env := Envelope{OK: false, Error: &ErrBody{Code: code, Message: msg, Hint: hint, Retryable: retryable}, Meta: meta(profile, requestID, start)}
+func PrintError(w io.Writer, mode Mode, code, msg, hint, category string, retryable bool, profile, requestID string, start time.Time) error {
+	env := Envelope{OK: false, Error: &ErrBody{Code: code, Message: msg, Hint: hint, Category: category, Retryable: retryable}, Meta: meta(profile, requestID, start)}
 	return printEnvelope(w, mode, env)
 }
 

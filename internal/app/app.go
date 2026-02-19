@@ -63,7 +63,7 @@ func (a App) run(args []string) int {
 		if mode == "" {
 			mode = output.ModeHuman
 		}
-		_ = output.PrintError(a.Stdout, mode, "usage_error", err.Error(), "Use --help for usage", false, g.profile, requestID, start)
+		_ = output.PrintError(a.Stdout, mode, "usage_error", err.Error(), "Use --help for usage", "usage", false, g.profile, requestID, start)
 		return 2
 	}
 	if g.showVer {
@@ -182,10 +182,12 @@ func (a App) exitWithError(err error, mode output.Mode, profile, requestID strin
 		if ce.hint != "" {
 			fmt.Fprintln(a.Stderr, ce.hint)
 		}
-		_ = output.PrintError(a.Stdout, mode, ce.code, ce.msg, ce.hint, isRetryableError(ce.code, ce.exit), profile, requestID, start)
+		retryable := isRetryableError(ce.code, ce.exit)
+		category := classifyErrorCategory(ce.code, ce.exit, retryable)
+		_ = output.PrintError(a.Stdout, mode, ce.code, ce.msg, ce.hint, category, retryable, profile, requestID, start)
 		return ce.exit
 	}
-	_ = output.PrintError(a.Stdout, mode, "runtime_error", err.Error(), "", false, profile, requestID, start)
+	_ = output.PrintError(a.Stdout, mode, "runtime_error", err.Error(), "", "runtime", false, profile, requestID, start)
 	return 1
 }
 
@@ -198,6 +200,34 @@ func isRetryableError(code string, exit int) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func classifyErrorCategory(code string, exit int, retryable bool) string {
+	if retryable {
+		return "transient"
+	}
+	switch exit {
+	case 2:
+		return "usage"
+	case 3:
+		if strings.Contains(code, "auth") {
+			return "auth"
+		}
+		return "config"
+	case 5:
+		return "not_found"
+	case 6:
+		return "conflict"
+	case 7:
+		return "safety"
+	case 8:
+		return "rate_limit"
+	default:
+		if strings.Contains(code, "auth") {
+			return "auth"
+		}
+		return "runtime"
 	}
 }
 

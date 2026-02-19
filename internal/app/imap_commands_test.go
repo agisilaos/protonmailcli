@@ -224,6 +224,9 @@ func TestJSONErrorEnvelopeHasCodeAndRetryable(t *testing.T) {
 	if !strings.Contains(out, `"retryable":false`) {
 		t.Fatalf("expected retryable marker in json: %s", out)
 	}
+	if !strings.Contains(out, `"category":"not_found"`) {
+		t.Fatalf("expected category marker in json: %s", out)
+	}
 }
 
 type fakeIMAPDraftClient struct {

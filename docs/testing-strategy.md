@@ -27,6 +27,7 @@ Scope:
 
 - exact JSON shapes for representative commands
 - exact exit codes for core error classes
+- deterministic error taxonomy fields (`error.category`, `error.retryable`)
 - exact non-interactive safety behavior
 
 Method:

@@ -7,7 +7,9 @@
       "ok": false,
       "error": {
         "code": "confirmation_required",
-        "message": "--confirm-send is required in non-interactive mode"
+        "message": "--confirm-send is required in non-interactive mode",
+        "category": "safety",
+        "retryable": false
       }
     },
     "stderrContains": [
