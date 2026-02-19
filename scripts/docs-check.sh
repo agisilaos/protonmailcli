@@ -11,6 +11,9 @@ fi
 [[ -f "${ROOT_DIR}/README.md" ]] || { echo "error: README.md not found" >&2; exit 1; }
 [[ -f "${ROOT_DIR}/CHANGELOG.md" ]] || { echo "error: CHANGELOG.md not found" >&2; exit 1; }
 
+echo "[docs-check] validating shared docs contract"
+python3 "${ROOT_DIR}/scripts/docs-contract-check.py" --root "${ROOT_DIR}"
+
 echo "[docs-check] help snapshot drift"
 "${ROOT_DIR}/scripts/check-help.sh"
 

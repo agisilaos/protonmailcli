@@ -38,7 +38,7 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - `filter`: local state engine (not yet IMAP-server-side rules)
 - local-state mode parity: supports `draft create-many` and `message send-many` for offline/agent contract testing
 
-## Build
+## Install
 
 ```bash
 cd protonmailcli
@@ -125,7 +125,7 @@ Bridge health checks:
 - `summary.config`
 - `doctor.bridge.checks` (IMAP/SMTP TCP checks)
 
-## Core usage
+## Usage
 
 Create draft:
 
