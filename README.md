@@ -15,7 +15,7 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - Send message from draft with non-interactive safety gate
 - Bulk send workflow: `message send-many --file|--stdin`
 - Search drafts/messages
-- Mailbox listing (`mailbox list`)
+- Mailbox discovery (`mailbox list`, `mailbox resolve`)
 - Tag operations: list, create, add, remove
 - Filter operations: list, create, test, apply, delete
 - Shell completion output (`completion bash|zsh|fish`)
@@ -174,6 +174,13 @@ Mailboxes:
 - `id`: canonical key (`inbox`, `drafts`, `sent`, `all_mail`, or sanitized custom ID)
 - `name`: Bridge mailbox name
 - `kind`: `system` or `custom`
+
+Resolve a mailbox deterministically from either ID or name:
+
+```bash
+./protonmailcli --json mailbox resolve --name all_mail
+./protonmailcli --json mailbox resolve --name "All Mail"
+```
 
 Tags:
 

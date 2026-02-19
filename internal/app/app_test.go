@@ -278,6 +278,23 @@ func TestLocalMailboxListIncludesStableIDAndKind(t *testing.T) {
 	}
 }
 
+func TestLocalMailboxResolveByID(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	stdout := &bytes.Buffer{}
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "mailbox", "resolve", "--name", "drafts"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("mailbox resolve failed: %d stdout=%s", exit, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"id":"drafts"`) || !strings.Contains(stdout.String(), `"matchedBy":"id_exact"`) {
+		t.Fatalf("unexpected mailbox resolve payload: %s", stdout.String())
+	}
+}
+
 func TestCompletionZsh(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	exit := Run([]string{"completion", "zsh"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})

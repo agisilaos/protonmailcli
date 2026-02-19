@@ -19,7 +19,7 @@ Status date: 2026-02-18
 - Diagnostics:
   - `doctor`
 - Mail operations (live Bridge):
-  - `mailbox list` (IMAP, with stable `id/name/kind` mapping)
+  - `mailbox list|resolve` (IMAP, with stable `id/name/kind` mapping)
   - `draft create|get|list|update|delete` (IMAP `Drafts`)
   - `draft create-many --file|--stdin` (batch)
   - `message get` (IMAP `INBOX`)

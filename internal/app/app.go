@@ -285,7 +285,7 @@ Resources:
   draft      create|create-many|update|get|list|delete
   message    send|send-many|get
   search     messages|drafts
-  mailbox    list
+  mailbox    list|resolve
   tag        list|create|add|remove
   filter     list|create|delete|test|apply
 
@@ -653,16 +653,37 @@ func cmdBridge(action string, args []string, cfg config.Config, st *model.State)
 	}
 }
 
-func cmdMailbox(action string, _ []string, st *model.State) (any, bool, error) {
-	if action != "list" {
-		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown mailbox action: " + action}
-	}
+func cmdMailbox(action string, args []string, st *model.State) (any, bool, error) {
 	boxes := []mailboxInfo{
 		{ID: "inbox", Name: "INBOX", Kind: "system", Count: len(st.Messages)},
 		{ID: "drafts", Name: "Drafts", Kind: "system", Count: len(st.Drafts)},
 		{ID: "sent", Name: "Sent", Kind: "system", Count: countSent(st.Messages)},
 	}
-	return map[string]any{"mailboxes": boxes}, false, nil
+	switch action {
+	case "list":
+		return map[string]any{"mailboxes": boxes}, false, nil
+	case "resolve":
+		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		name := fs.String("name", "", "mailbox id or name")
+		if err := fs.Parse(args); err != nil {
+			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
+		}
+		mailbox, matchedBy, ambiguous, err := resolveMailboxQuery(boxes, *name)
+		if err != nil {
+			if len(ambiguous) > 0 {
+				ids := make([]string, 0, len(ambiguous))
+				for _, m := range ambiguous {
+					ids = append(ids, m.ID)
+				}
+				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error(), hint: "Disambiguate with --name one of: " + strings.Join(ids, ", ")}
+			}
+			return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
+		}
+		return map[string]any{"mailbox": mailbox, "matchedBy": matchedBy, "source": "local"}, false, nil
+	default:
+		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown mailbox action: " + action}
+	}
 }
 
 func countSent(msgs map[string]model.Message) int {

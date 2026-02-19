@@ -181,6 +181,17 @@ Exit behavior:
   - `name` (server mailbox name)
   - `kind` (`system` or `custom`)
 
+### `mailbox resolve`
+
+- `--name <mailbox-id-or-name>` required
+- Resolves by:
+  - exact mailbox name
+  - exact canonical mailbox ID
+  - case-insensitive name (only when unique)
+- Returns:
+  - `mailbox` object (`id`, `name`, `kind`)
+  - `matchedBy` (`name_exact`, `id_exact`, `name_casefold`)
+
 ## 7. I/O contract
 
 ### stdout

@@ -13,7 +13,7 @@ Resources:
   draft      create|create-many|update|get|list|delete
   message    send|send-many|get
   search     messages|drafts
-  mailbox    list
+  mailbox    list|resolve
   tag        list|create|add|remove
   filter     list|create|delete|test|apply
 
