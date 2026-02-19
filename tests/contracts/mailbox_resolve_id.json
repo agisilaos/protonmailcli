@@ -1,0 +1,19 @@
+{
+  "name": "mailbox_resolve_id",
+  "command": "protonmailcli mailbox resolve --name inbox --json",
+  "expected": {
+    "exitCode": 0,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "matchedBy": "id_exact",
+        "mailbox": {
+          "id": "inbox",
+          "name": "INBOX",
+          "kind": "system"
+        },
+        "source": "local"
+      }
+    }
+  }
+}

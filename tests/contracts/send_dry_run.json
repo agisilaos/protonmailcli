@@ -9,6 +9,7 @@
         "action": "send",
         "draftId": "d_123",
         "dryRun": true,
+        "sendPath": "local_state",
         "wouldSend": true
       }
     },

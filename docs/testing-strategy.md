@@ -92,6 +92,8 @@ Current gated E2E entrypoint:
 11. IMAP draft create falls back correctly when APPEND fails.
 12. Invalid `--after/--before` or `--since-id` values fail with exit `2`.
 13. local batch parity contracts (`draft create-many`, `message send-many`) stay aligned with machine output expectations.
+14. path telemetry fields (`createPath`, `sendPath`) remain present in contract fixtures.
+15. `mailbox resolve --name <id>` returns canonical mailbox metadata and deterministic match strategy.
 
 ## Suggested directory layout
 
@@ -104,6 +106,7 @@ tests/
     local_draft_create_many_partial.json
     send_requires_confirm_non_tty.json
     send_dry_run.json
+    mailbox_resolve_id.json
     output_stream_discipline.json
 ```
 

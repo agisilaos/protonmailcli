@@ -12,7 +12,8 @@
         "source": "local",
         "results": [
           {
-            "ok": true
+            "ok": true,
+            "createPath": "local_state"
           },
           {
             "ok": false,
