@@ -19,7 +19,7 @@ Status date: 2026-02-18
 - Diagnostics:
   - `doctor`
 - Mail operations (live Bridge):
-  - `mailbox list` (IMAP)
+  - `mailbox list` (IMAP, with stable `id/name/kind` mapping)
   - `draft create|get|list|update|delete` (IMAP `Drafts`)
   - `draft create-many --file|--stdin` (batch)
   - `message get` (IMAP `INBOX`)
@@ -47,6 +47,7 @@ Status date: 2026-02-18
 ## Command architecture notes
 
 - Resource dispatch (`mailbox`, `draft`, `message`, `search`, `tag`) now uses shared backend-router helpers so local-state and IMAP routing stays consistent.
+- Mailbox discovery now returns canonical mailbox IDs (`inbox`, `drafts`, `sent`, etc.) with `kind=system|custom` so agents can map folders deterministically across Bridge variants.
 - Send safety checks (confirm token and force policy) are centralized in one validator used by both local and IMAP send paths.
 - IMAP-heavy command responses now use typed response structs instead of ad-hoc `map[string]any`, preserving JSON contract fields while reducing key drift risk.
 - Draft/send responses now include machine-readable path telemetry:

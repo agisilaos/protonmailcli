@@ -174,6 +174,13 @@ Exit behavior:
 - `--cursor <token>`
 - `--mailbox <name>` (messages only)
 
+### `mailbox list`
+
+- Returns mailbox objects with:
+  - `id` (stable canonical ID)
+  - `name` (server mailbox name)
+  - `kind` (`system` or `custom`)
+
 ## 7. I/O contract
 
 ### stdout

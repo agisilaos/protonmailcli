@@ -1,7 +1,10 @@
 package app
 
 type mailboxInfo struct {
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`
+	Count int    `json:"count,omitempty"`
 }
 
 type mailboxListResponse struct {

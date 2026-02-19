@@ -169,12 +169,20 @@ Mailboxes:
 ./protonmailcli --json mailbox list
 ```
 
+`mailbox list` returns stable mapping metadata per mailbox:
+
+- `id`: canonical key (`inbox`, `drafts`, `sent`, `all_mail`, or sanitized custom ID)
+- `name`: Bridge mailbox name
+- `kind`: `system` or `custom`
+
 Tags:
 
 ```bash
 ./protonmailcli --json tag create --name finance
 ./protonmailcli --json tag add --message-id m_123 --tag finance
 ```
+
+In IMAP mode, tags are IMAP keywords/flags on messages (not folder names).
 
 Filters:
 

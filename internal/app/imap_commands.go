@@ -61,7 +61,8 @@ func cmdMailboxIMAP(action string, _ []string, cfg config.Config, st *model.Stat
 	}
 	res := make([]mailboxInfo, 0, len(boxes))
 	for _, b := range boxes {
-		res = append(res, mailboxInfo{Name: b})
+		id, kind := classifyMailbox(b)
+		res = append(res, mailboxInfo{ID: id, Name: b, Kind: kind})
 	}
 	return mailboxListResponse{Mailboxes: res, Count: len(res)}, false, nil
 }

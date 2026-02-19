@@ -657,10 +657,10 @@ func cmdMailbox(action string, _ []string, st *model.State) (any, bool, error) {
 	if action != "list" {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown mailbox action: " + action}
 	}
-	boxes := []map[string]any{
-		{"name": "INBOX", "kind": "system", "count": len(st.Messages)},
-		{"name": "Drafts", "kind": "system", "count": len(st.Drafts)},
-		{"name": "Sent", "kind": "system", "count": countSent(st.Messages)},
+	boxes := []mailboxInfo{
+		{ID: "inbox", Name: "INBOX", Kind: "system", Count: len(st.Messages)},
+		{ID: "drafts", Name: "Drafts", Kind: "system", Count: len(st.Drafts)},
+		{ID: "sent", Name: "Sent", Kind: "system", Count: countSent(st.Messages)},
 	}
 	return map[string]any{"mailboxes": boxes}, false, nil
 }

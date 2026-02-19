@@ -261,6 +261,23 @@ func TestBridgeAccountListAndUse(t *testing.T) {
 	}
 }
 
+func TestLocalMailboxListIncludesStableIDAndKind(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	stdout := &bytes.Buffer{}
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "mailbox", "list"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("mailbox list failed: %d stdout=%s", exit, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"id":"inbox"`) || !strings.Contains(stdout.String(), `"kind":"system"`) {
+		t.Fatalf("mailbox mapping fields missing: %s", stdout.String())
+	}
+}
+
 func TestCompletionZsh(t *testing.T) {
 	stdout := &bytes.Buffer{}
 	exit := Run([]string{"completion", "zsh"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})
