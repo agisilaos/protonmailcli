@@ -550,19 +550,28 @@ func TestLocalDraftCreateManyPerItemValidation(t *testing.T) {
 }
 
 func TestClassifyCLIError(t *testing.T) {
-	if got := classifyCLIError("send_failed", 4); got.Category != "transient" || !got.Retryable {
-		t.Fatalf("expected transient/retryable, got %+v", got)
+	cases := []struct {
+		name      string
+		code      string
+		exit      int
+		category  string
+		retryable bool
+	}{
+		{name: "transient-known-code", code: "imap_connect_failed", exit: 4, category: "transient", retryable: true},
+		{name: "safety-known-code", code: "confirmation_required", exit: 7, category: "safety", retryable: false},
+		{name: "auth-known-code", code: "auth_missing", exit: 3, category: "auth", retryable: false},
+		{name: "not-found-known-code", code: "not_found", exit: 5, category: "not_found", retryable: false},
+		{name: "conflict-known-code", code: "idempotency_conflict", exit: 6, category: "conflict", retryable: false},
+		{name: "fallback-exit-transient", code: "unknown_code", exit: 4, category: "transient", retryable: true},
+		{name: "fallback-exit-config", code: "unknown_code", exit: 3, category: "config", retryable: false},
+		{name: "fallback-exit-runtime", code: "unknown_code", exit: 1, category: "runtime", retryable: false},
 	}
-	if got := classifyCLIError("confirmation_required", 7); got.Category != "safety" || got.Retryable {
-		t.Fatalf("expected safety/non-retryable, got %+v", got)
-	}
-	if got := classifyCLIError("auth_missing", 3); got.Category != "auth" || got.Retryable {
-		t.Fatalf("expected auth/non-retryable, got %+v", got)
-	}
-	if got := classifyCLIError("not_found", 5); got.Category != "not_found" || got.Retryable {
-		t.Fatalf("expected not_found/non-retryable, got %+v", got)
-	}
-	if got := classifyCLIError("unknown_code", 4); got.Category != "transient" || !got.Retryable {
-		t.Fatalf("expected fallback transient/retryable, got %+v", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyCLIError(tc.code, tc.exit)
+			if got.Category != tc.category || got.Retryable != tc.retryable {
+				t.Fatalf("classifyCLIError(%q,%d) got %+v want category=%s retryable=%t", tc.code, tc.exit, got, tc.category, tc.retryable)
+			}
+		})
 	}
 }

@@ -1,5 +1,7 @@
 package app
 
+import "protonmailcli/internal/model"
+
 type mailboxInfo struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
@@ -43,6 +45,22 @@ type draftResponse struct {
 	Source     string      `json:"source"`
 }
 
+type localDraftResponse struct {
+	Draft      model.Draft `json:"draft"`
+	CreatePath string      `json:"createPath,omitempty"`
+	Source     string      `json:"source,omitempty"`
+}
+
+type localDraftListResponse struct {
+	Drafts []model.Draft `json:"drafts"`
+	Count  int           `json:"count"`
+}
+
+type draftDeleteResponse struct {
+	Deleted bool   `json:"deleted"`
+	DraftID string `json:"draftId"`
+}
+
 type messageRecord struct {
 	ID      string   `json:"id"`
 	UID     string   `json:"uid"`
@@ -57,6 +75,26 @@ type messageRecord struct {
 type messageGetResponse struct {
 	Message messageRecord `json:"message"`
 	Source  string        `json:"source"`
+}
+
+type localMessageGetResponse struct {
+	Message model.Message `json:"message"`
+}
+
+type messageSendResponse struct {
+	Sent     bool          `json:"sent"`
+	Message  model.Message `json:"message"`
+	SendPath string        `json:"sendPath,omitempty"`
+	Source   string        `json:"source,omitempty"`
+}
+
+type sendPlanResponse struct {
+	Action    string `json:"action"`
+	DraftID   string `json:"draftId"`
+	WouldSend bool   `json:"wouldSend"`
+	DryRun    bool   `json:"dryRun"`
+	SendPath  string `json:"sendPath,omitempty"`
+	Source    string `json:"source,omitempty"`
 }
 
 type messageListResponse struct {

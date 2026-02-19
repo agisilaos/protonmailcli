@@ -495,7 +495,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, err
 		}
 		if g.dryRun {
-			return map[string]any{"action": "send", "draftId": imapDraftID(uid), "wouldSend": true, "dryRun": true, "sendPath": "smtp", "source": "imap"}, true, nil
+			return sendPlanResponse{Action: "send", DraftID: imapDraftID(uid), WouldSend: true, DryRun: true, SendPath: "smtp", Source: "imap"}, true, nil
 		}
 		pass := strings.TrimSpace(password)
 		if *passwordFile != "" {

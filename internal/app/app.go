@@ -684,7 +684,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if !g.dryRun {
 			st.Drafts[id] = d
 		}
-		return map[string]any{"draft": d, "createPath": "local_state", "source": "local"}, true, nil
+		return localDraftResponse{Draft: d, CreatePath: "local_state", Source: "local"}, true, nil
 	case "update":
 		fs := flag.NewFlagSet("draft update", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -718,7 +718,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if !g.dryRun {
 			st.Drafts[uid] = d
 		}
-		return map[string]any{"draft": d}, true, nil
+		return localDraftResponse{Draft: d}, true, nil
 	case "get":
 		fs := flag.NewFlagSet("draft get", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -734,7 +734,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		return map[string]any{"draft": d}, false, nil
+		return localDraftResponse{Draft: d}, false, nil
 	case "list":
 		ids := make([]string, 0, len(st.Drafts))
 		for id := range st.Drafts {
@@ -745,7 +745,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		for _, id := range ids {
 			out = append(out, st.Drafts[id])
 		}
-		return map[string]any{"drafts": out, "count": len(out)}, false, nil
+		return localDraftListResponse{Drafts: out, Count: len(out)}, false, nil
 	case "delete":
 		fs := flag.NewFlagSet("draft delete", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -763,7 +763,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if !g.dryRun {
 			delete(st.Drafts, uid)
 		}
-		return map[string]any{"deleted": true, "draftId": uid}, true, nil
+		return draftDeleteResponse{Deleted: true, DraftID: uid}, true, nil
 	case "create-many":
 		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -838,7 +838,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
-		return map[string]any{"message": m}, false, nil
+		return localMessageGetResponse{Message: m}, false, nil
 	case "send":
 		fs := flag.NewFlagSet("message send", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -881,7 +881,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			password = strings.TrimSpace(string(b))
 		}
 		if g.dryRun {
-			return map[string]any{"action": "send", "draftId": d.ID, "wouldSend": true, "dryRun": true, "sendPath": "local_state", "source": "local"}, true, nil
+			return sendPlanResponse{Action: "send", DraftID: d.ID, WouldSend: true, DryRun: true, SendPath: "local_state", Source: "local"}, true, nil
 		}
 		from := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username)
 		if from == "" {
@@ -896,7 +896,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		m := model.Message{ID: msgID, DraftID: d.ID, From: from, To: d.To, Subject: d.Subject, Body: d.Body, Tags: d.Tags, SentAt: now}
 		st.Messages[msgID] = m
 		st.Drafts[d.ID] = d
-		return map[string]any{"sent": true, "message": m, "sendPath": "local_state", "source": "local"}, true, nil
+		return messageSendResponse{Sent: true, Message: m, SendPath: "local_state", Source: "local"}, true, nil
 	case "send-many":
 		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
