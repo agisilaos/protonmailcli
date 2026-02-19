@@ -49,6 +49,12 @@ var readAllStdinFn = func() ([]byte, error) {
 	return io.ReadAll(os.Stdin)
 }
 
+var (
+	Version = "dev"
+	Commit  = "none"
+	Date    = "unknown"
+)
+
 func Run(args []string, in io.Reader, out io.Writer, errw io.Writer) int {
 	a := App{Stdout: out, Stderr: errw, Stdin: in}
 	return a.run(args)
@@ -67,7 +73,7 @@ func (a App) run(args []string) int {
 		return 2
 	}
 	if g.showVer {
-		fmt.Fprintln(a.Stdout, "protonmailcli v0.2.1")
+		fmt.Fprintf(a.Stdout, "protonmailcli %s (%s) %s\n", Version, Commit, Date)
 		return 0
 	}
 	if g.showHelp || len(rest) == 0 {

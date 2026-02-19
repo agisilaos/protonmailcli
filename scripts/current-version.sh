@@ -2,11 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_FILE="${ROOT_DIR}/internal/app/app.go"
+CHANGELOG_FILE="${ROOT_DIR}/CHANGELOG.md"
 
-version="$(sed -n 's/.*protonmailcli v\([0-9][0-9.]*\).*/v\1/p' "${APP_FILE}" | head -n1)"
+if [[ ! -f "${CHANGELOG_FILE}" ]]; then
+  echo "missing ${CHANGELOG_FILE}" >&2
+  exit 1
+fi
+
+version="$(sed -n 's/^## \[\(v[0-9][0-9.]*\)\].*/\1/p' "${CHANGELOG_FILE}" | head -n1)"
 if [[ -z "${version}" ]]; then
-  echo "failed to detect version from ${APP_FILE}" >&2
+  echo "failed to detect version from ${CHANGELOG_FILE}" >&2
   exit 1
 fi
 

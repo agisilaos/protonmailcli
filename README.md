@@ -45,6 +45,26 @@ cd protonmailcli
 go build -o protonmailcli ./cmd/protonmailcli
 ```
 
+Homebrew (after release):
+
+```bash
+brew tap agisilaos/tap
+brew install protonmailcli
+```
+
+## Release
+
+```bash
+make release-check VERSION=vX.Y.Z
+make release-dry-run VERSION=vX.Y.Z
+make release VERSION=vX.Y.Z
+```
+
+Release scripts:
+- `scripts/docs-check.sh` validates help snapshots plus release docs references.
+- `scripts/release-check.sh` validates version/tag preconditions, runs tests/vet/docs/format checks, and verifies stamped version output.
+- `scripts/release.sh` runs `release-check`, updates changelog from git history, builds darwin archives, publishes GitHub release/tag, and updates the Homebrew tap formula.
+
 ## Setup
 
 ### Human interactive setup
@@ -298,7 +318,7 @@ scripts/smoke-agent.sh
 Run full pre-release checks:
 
 ```bash
-scripts/release-check.sh
+scripts/release-check.sh vX.Y.Z
 ```
 
 Generate changelog section from commits:
