@@ -182,53 +182,12 @@ func (a App) exitWithError(err error, mode output.Mode, profile, requestID strin
 		if ce.hint != "" {
 			fmt.Fprintln(a.Stderr, ce.hint)
 		}
-		retryable := isRetryableError(ce.code, ce.exit)
-		category := classifyErrorCategory(ce.code, ce.exit, retryable)
-		_ = output.PrintError(a.Stdout, mode, ce.code, ce.msg, ce.hint, category, retryable, profile, requestID, start)
+		classified := classifyCLIError(ce.code, ce.exit)
+		_ = output.PrintError(a.Stdout, mode, ce.code, ce.msg, ce.hint, classified.Category, classified.Retryable, profile, requestID, start)
 		return ce.exit
 	}
 	_ = output.PrintError(a.Stdout, mode, "runtime_error", err.Error(), "", "runtime", false, profile, requestID, start)
 	return 1
-}
-
-func isRetryableError(code string, exit int) bool {
-	if exit == 4 || exit == 8 {
-		return true
-	}
-	switch code {
-	case "send_failed", "imap_connect_failed", "imap_search_failed", "imap_list_failed", "imap_tag_update_failed", "imap_draft_create_failed":
-		return true
-	default:
-		return false
-	}
-}
-
-func classifyErrorCategory(code string, exit int, retryable bool) string {
-	if retryable {
-		return "transient"
-	}
-	switch exit {
-	case 2:
-		return "usage"
-	case 3:
-		if strings.Contains(code, "auth") {
-			return "auth"
-		}
-		return "config"
-	case 5:
-		return "not_found"
-	case 6:
-		return "conflict"
-	case 7:
-		return "safety"
-	case 8:
-		return "rate_limit"
-	default:
-		if strings.Contains(code, "auth") {
-			return "auth"
-		}
-		return "runtime"
-	}
 }
 
 func parseGlobal(args []string) (globalOptions, []string, error) {
@@ -689,31 +648,7 @@ func cmdMailbox(action string, args []string, st *model.State) (any, bool, error
 		{ID: "drafts", Name: "Drafts", Kind: "system", Count: len(st.Drafts)},
 		{ID: "sent", Name: "Sent", Kind: "system", Count: countSent(st.Messages)},
 	}
-	switch action {
-	case "list":
-		return map[string]any{"mailboxes": boxes}, false, nil
-	case "resolve":
-		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		name := fs.String("name", "", "mailbox id or name")
-		if err := fs.Parse(args); err != nil {
-			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
-		}
-		mailbox, matchedBy, ambiguous, err := resolveMailboxQuery(boxes, *name)
-		if err != nil {
-			if len(ambiguous) > 0 {
-				ids := make([]string, 0, len(ambiguous))
-				for _, m := range ambiguous {
-					ids = append(ids, m.ID)
-				}
-				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error(), hint: "Disambiguate with --name one of: " + strings.Join(ids, ", ")}
-			}
-			return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
-		}
-		return map[string]any{"mailbox": mailbox, "matchedBy": matchedBy, "source": "local"}, false, nil
-	default:
-		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown mailbox action: " + action}
-	}
+	return mailboxAction(action, args, boxes, "local")
 }
 
 func countSent(msgs map[string]model.Message) int {

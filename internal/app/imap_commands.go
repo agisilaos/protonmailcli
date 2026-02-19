@@ -64,27 +64,7 @@ func cmdMailboxIMAP(action string, args []string, cfg config.Config, st *model.S
 		id, kind := classifyMailbox(b)
 		res = append(res, mailboxInfo{ID: id, Name: b, Kind: kind})
 	}
-	if action == "list" {
-		return mailboxListResponse{Mailboxes: res, Count: len(res)}, false, nil
-	}
-	fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	name := fs.String("name", "", "mailbox id or name")
-	if err := fs.Parse(args); err != nil {
-		return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
-	}
-	mailbox, matchedBy, ambiguous, err := resolveMailboxQuery(res, *name)
-	if err != nil {
-		if len(ambiguous) > 0 {
-			ids := make([]string, 0, len(ambiguous))
-			for _, m := range ambiguous {
-				ids = append(ids, m.ID)
-			}
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error(), hint: "Disambiguate with --name one of: " + strings.Join(ids, ", ")}
-		}
-		return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
-	}
-	return map[string]any{"mailbox": mailbox, "matchedBy": matchedBy, "source": "imap"}, false, nil
+	return mailboxAction(action, args, res, "imap")
 }
 
 func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {

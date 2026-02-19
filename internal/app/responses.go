@@ -12,6 +12,12 @@ type mailboxListResponse struct {
 	Count     int           `json:"count"`
 }
 
+type mailboxResolveResponse struct {
+	Mailbox   mailboxInfo `json:"mailbox"`
+	MatchedBy string      `json:"matchedBy"`
+	Source    string      `json:"source"`
+}
+
 type draftRecord struct {
 	ID      string   `json:"id"`
 	UID     string   `json:"uid"`

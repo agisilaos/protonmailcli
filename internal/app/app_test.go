@@ -549,17 +549,20 @@ func TestLocalDraftCreateManyPerItemValidation(t *testing.T) {
 	}
 }
 
-func TestClassifyErrorCategory(t *testing.T) {
-	if got := classifyErrorCategory("send_failed", 4, true); got != "transient" {
-		t.Fatalf("expected transient, got %s", got)
+func TestClassifyCLIError(t *testing.T) {
+	if got := classifyCLIError("send_failed", 4); got.Category != "transient" || !got.Retryable {
+		t.Fatalf("expected transient/retryable, got %+v", got)
 	}
-	if got := classifyErrorCategory("confirmation_required", 7, false); got != "safety" {
-		t.Fatalf("expected safety, got %s", got)
+	if got := classifyCLIError("confirmation_required", 7); got.Category != "safety" || got.Retryable {
+		t.Fatalf("expected safety/non-retryable, got %+v", got)
 	}
-	if got := classifyErrorCategory("auth_missing", 3, false); got != "auth" {
-		t.Fatalf("expected auth, got %s", got)
+	if got := classifyCLIError("auth_missing", 3); got.Category != "auth" || got.Retryable {
+		t.Fatalf("expected auth/non-retryable, got %+v", got)
 	}
-	if got := classifyErrorCategory("not_found", 5, false); got != "not_found" {
-		t.Fatalf("expected not_found, got %s", got)
+	if got := classifyCLIError("not_found", 5); got.Category != "not_found" || got.Retryable {
+		t.Fatalf("expected not_found/non-retryable, got %+v", got)
+	}
+	if got := classifyCLIError("unknown_code", 4); got.Category != "transient" || !got.Retryable {
+		t.Fatalf("expected fallback transient/retryable, got %+v", got)
 	}
 }
