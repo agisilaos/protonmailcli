@@ -137,7 +137,7 @@ func (a App) run(args []string) int {
 		if err := a.cmdSetup(rest[1:], g, cfgPath); err != nil {
 			return a.exitWithError(err, fallbackMode(g.mode), g.profile, requestID, start)
 		}
-		_ = output.PrintSuccess(a.Stdout, fallbackMode(g.mode), map[string]any{"configured": true, "configPath": cfgPath}, g.profile, requestID, start)
+		_ = output.PrintSuccess(a.Stdout, fallbackMode(g.mode), setupResponse{Configured: true, ConfigPath: cfgPath}, g.profile, requestID, start)
 		return 0
 	}
 
@@ -577,7 +577,11 @@ func cmdCompletion(w io.Writer, args []string) error {
 func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
 	switch action {
 	case "status":
-		return map[string]any{"loggedIn": st.Auth.LoggedIn, "username": coalesce(st.Auth.Username, cfg.Bridge.Username), "passwordFile": coalesce(st.Auth.PasswordFile, cfg.Bridge.PasswordFile)}, false, nil
+		return authStatusResponse{
+			LoggedIn:     st.Auth.LoggedIn,
+			Username:     coalesce(st.Auth.Username, cfg.Bridge.Username),
+			PasswordFile: coalesce(st.Auth.PasswordFile, cfg.Bridge.PasswordFile),
+		}, false, nil
 	case "login":
 		fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -618,12 +622,12 @@ func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, s
 		}
 		now := time.Now().UTC()
 		st.Auth = model.AuthState{LoggedIn: true, Username: user, PasswordFile: passFile, LastLoginAt: &now}
-		return map[string]any{"loggedIn": true, "username": user}, true, nil
+		return authLoginResponse{LoggedIn: true, Username: user}, true, nil
 	case "logout":
 		st.Auth.LoggedIn = false
 		now := time.Now().UTC()
 		st.Auth.LastLogoutAt = &now
-		return map[string]any{"loggedIn": false}, true, nil
+		return authLoginResponse{LoggedIn: false}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown auth action: " + action}
 	}
@@ -639,7 +643,7 @@ func cmdBridge(action string, args []string, cfg config.Config, st *model.State)
 	switch args[0] {
 	case "list":
 		seen := map[string]struct{}{}
-		out := []map[string]any{}
+		out := []bridgeAccountItem{}
 		for _, u := range []string{cfg.Bridge.Username, st.Auth.Username, st.Bridge.ActiveUsername} {
 			u = strings.TrimSpace(u)
 			if u == "" {
@@ -649,15 +653,15 @@ func cmdBridge(action string, args []string, cfg config.Config, st *model.State)
 				continue
 			}
 			seen[u] = struct{}{}
-			out = append(out, map[string]any{
-				"username": u,
-				"active":   strings.TrimSpace(st.Bridge.ActiveUsername) != "" && st.Bridge.ActiveUsername == u,
+			out = append(out, bridgeAccountItem{
+				Username: u,
+				Active:   strings.TrimSpace(st.Bridge.ActiveUsername) != "" && st.Bridge.ActiveUsername == u,
 			})
 		}
-		return map[string]any{
-			"accounts": out,
-			"count":    len(out),
-			"active":   strings.TrimSpace(st.Bridge.ActiveUsername),
+		return bridgeAccountListResponse{
+			Accounts: out,
+			Count:    len(out),
+			Active:   strings.TrimSpace(st.Bridge.ActiveUsername),
 		}, false, nil
 	case "use":
 		fs := flag.NewFlagSet("bridge account use", flag.ContinueOnError)
@@ -671,12 +675,9 @@ func cmdBridge(action string, args []string, cfg config.Config, st *model.State)
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--username is required"}
 		}
 		st.Bridge.ActiveUsername = u
-		return map[string]any{
-			"active": map[string]any{
-				"username": u,
-			},
-			"changed": true,
-		}, true, nil
+		resp := bridgeAccountUseResponse{Changed: true}
+		resp.Active.Username = u
+		return resp, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "bridge account supports list|use"}
 	}
@@ -725,7 +726,7 @@ func cmdSearch(action string, args []string, g globalOptions, st *model.State) (
 				out = append(out, d)
 			}
 		}
-		return map[string]any{"drafts": out, "count": len(out)}, false, nil
+		return localSearchDraftsResponse{Drafts: out, Count: len(out)}, false, nil
 	}
 	out := []model.Message{}
 	for _, m := range st.Messages {
@@ -733,7 +734,7 @@ func cmdSearch(action string, args []string, g globalOptions, st *model.State) (
 			out = append(out, m)
 		}
 	}
-	return map[string]any{"messages": out, "count": len(out)}, false, nil
+	return localSearchMessagesResponse{Messages: out, Count: len(out)}, false, nil
 }
 
 func cmdTag(action string, args []string, g globalOptions, st *model.State) (any, bool, error) {
@@ -744,7 +745,7 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 			list = append(list, name)
 		}
 		sort.Strings(list)
-		return map[string]any{"tags": list, "count": len(list)}, false, nil
+		return tagListResponse{Tags: list, Count: len(list)}, false, nil
 	case "create":
 		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -764,7 +765,7 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 			st.Tags[*name] = id
 			changed = true
 		}
-		return map[string]any{"tag": map[string]string{"id": id, "name": *name}, "changed": changed}, changed, nil
+		return tagCreateResponse{Tag: tagInfo{ID: id, Name: *name}, Changed: changed}, changed, nil
 	case "add", "remove":
 		fs := flag.NewFlagSet("tag add/remove", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -804,7 +805,7 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 			m.Tags = next
 		}
 		st.Messages[uid] = m
-		return map[string]any{"messageId": uid, "tag": *tag, "changed": changed}, changed, nil
+		return tagUpdateResponse{MessageID: uid, Tag: *tag, Changed: changed}, changed, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
@@ -817,7 +818,7 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		for _, f := range st.Filters {
 			filters = append(filters, f)
 		}
-		return map[string]any{"filters": filters, "count": len(filters)}, false, nil
+		return filterListResponse{Filters: filters, Count: len(filters)}, false, nil
 	case "create":
 		fs := flag.NewFlagSet("filter create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -837,7 +838,7 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		if !g.dryRun {
 			st.Filters[id] = f
 		}
-		return map[string]any{"filter": f}, true, nil
+		return filterCreateResponse{Filter: f}, true, nil
 	case "delete":
 		fs := flag.NewFlagSet("filter delete", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -853,7 +854,7 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		if !g.dryRun {
 			delete(st.Filters, *id)
 		}
-		return map[string]any{"deleted": true, "filterId": *id}, true, nil
+		return filterDeleteResponse{Deleted: true, FilterID: *id}, true, nil
 	case "test", "apply":
 		fs := flag.NewFlagSet("filter test/apply", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -881,7 +882,7 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 			}
 		}
 		changed := action == "apply" && changes > 0
-		return map[string]any{"filterId": f.ID, "mode": action, "matched": matches, "changed": changes}, changed, nil
+		return filterApplyResponse{FilterID: f.ID, Mode: action, Matched: matches, Changed: changes}, changed, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown filter action: " + action}
 	}

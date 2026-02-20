@@ -133,3 +133,92 @@ type batchResultResponse struct {
 func (r batchResultResponse) ExitCode() int {
 	return r.exitCode
 }
+
+type setupResponse struct {
+	Configured bool   `json:"configured"`
+	ConfigPath string `json:"configPath"`
+}
+
+type authStatusResponse struct {
+	LoggedIn     bool   `json:"loggedIn"`
+	Username     string `json:"username,omitempty"`
+	PasswordFile string `json:"passwordFile,omitempty"`
+}
+
+type authLoginResponse struct {
+	LoggedIn bool   `json:"loggedIn"`
+	Username string `json:"username,omitempty"`
+}
+
+type bridgeAccountItem struct {
+	Username string `json:"username"`
+	Active   bool   `json:"active"`
+}
+
+type bridgeAccountListResponse struct {
+	Accounts []bridgeAccountItem `json:"accounts"`
+	Count    int                 `json:"count"`
+	Active   string              `json:"active,omitempty"`
+}
+
+type bridgeAccountUseResponse struct {
+	Active struct {
+		Username string `json:"username"`
+	} `json:"active"`
+	Changed bool `json:"changed"`
+}
+
+type localSearchDraftsResponse struct {
+	Drafts []model.Draft `json:"drafts"`
+	Count  int           `json:"count"`
+}
+
+type localSearchMessagesResponse struct {
+	Messages []model.Message `json:"messages"`
+	Count    int             `json:"count"`
+}
+
+type tagInfo struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+}
+
+type tagListResponse struct {
+	Tags   []string `json:"tags"`
+	Count  int      `json:"count"`
+	Source string   `json:"source,omitempty"`
+}
+
+type tagCreateResponse struct {
+	Tag     tagInfo `json:"tag"`
+	Changed bool    `json:"changed"`
+	Source  string  `json:"source,omitempty"`
+}
+
+type tagUpdateResponse struct {
+	MessageID string `json:"messageId"`
+	Tag       string `json:"tag"`
+	Changed   bool   `json:"changed"`
+	Source    string `json:"source,omitempty"`
+}
+
+type filterListResponse struct {
+	Filters []model.Filter `json:"filters"`
+	Count   int            `json:"count"`
+}
+
+type filterCreateResponse struct {
+	Filter model.Filter `json:"filter"`
+}
+
+type filterDeleteResponse struct {
+	Deleted  bool   `json:"deleted"`
+	FilterID string `json:"filterId"`
+}
+
+type filterApplyResponse struct {
+	FilterID string `json:"filterId"`
+	Mode     string `json:"mode"`
+	Matched  int    `json:"matched"`
+	Changed  int    `json:"changed"`
+}

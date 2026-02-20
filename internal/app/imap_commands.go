@@ -179,7 +179,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 			return nil, false, cliError{exit: 4, code: "imap_tag_list_failed", msg: err.Error()}
 		}
 		out := sortedUserKeywords(msgs)
-		return map[string]any{"tags": out, "count": len(out), "source": "imap"}, false, nil
+		return tagListResponse{Tags: out, Count: len(out), Source: "imap"}, false, nil
 	case "create":
 		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -192,7 +192,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		if strings.TrimSpace(*name) == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name required"}
 		}
-		return map[string]any{"tag": map[string]any{"name": *name}, "changed": false, "source": "imap"}, false, nil
+		return tagCreateResponse{Tag: tagInfo{Name: *name}, Changed: false, Source: "imap"}, false, nil
 	case "add", "remove":
 		fs := flag.NewFlagSet("tag add/remove", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -216,7 +216,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		if err := c.SetKeyword("INBOX", uid, *tag, action == "add"); err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_tag_update_failed", msg: err.Error()}
 		}
-		return map[string]any{"messageId": imapMessageID(uid), "tag": *tag, "changed": true, "source": "imap"}, true, nil
+		return tagUpdateResponse{MessageID: imapMessageID(uid), Tag: *tag, Changed: true, Source: "imap"}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
