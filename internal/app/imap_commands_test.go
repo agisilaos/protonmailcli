@@ -229,6 +229,24 @@ func TestJSONErrorEnvelopeHasCodeAndRetryable(t *testing.T) {
 	}
 }
 
+func TestSortedUserKeywords(t *testing.T) {
+	msgs := []bridge.DraftMessage{
+		{Flags: []string{"zeta", "\\Seen", "alpha"}},
+		{Flags: []string{"beta", "alpha", "\\Flagged"}},
+	}
+
+	got := sortedUserKeywords(msgs)
+	want := []string{"alpha", "beta", "zeta"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected length: got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected tags: got=%v want=%v", got, want)
+		}
+	}
+}
+
 type fakeIMAPDraftClient struct {
 	appendErr    error
 	appendUID    string

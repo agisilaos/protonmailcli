@@ -692,19 +692,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_tag_list_failed", msg: err.Error()}
 		}
-		set := map[string]struct{}{}
-		for _, m := range msgs {
-			for _, f := range m.Flags {
-				if strings.HasPrefix(f, "\\") {
-					continue
-				}
-				set[f] = struct{}{}
-			}
-		}
-		out := make([]string, 0, len(set))
-		for k := range set {
-			out = append(out, k)
-		}
+		out := sortedUserKeywords(msgs)
 		return map[string]any{"tags": out, "count": len(out), "source": "imap"}, false, nil
 	case "create":
 		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
@@ -746,6 +734,24 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
+}
+
+func sortedUserKeywords(msgs []bridge.DraftMessage) []string {
+	set := map[string]struct{}{}
+	for _, m := range msgs {
+		for _, f := range m.Flags {
+			if strings.HasPrefix(f, "\\") {
+				continue
+			}
+			set[f] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func buildIMAPCriteria(query, subject, from, to, hasTag string, unread bool, sinceID, after, before string) (string, error) {
