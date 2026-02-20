@@ -868,7 +868,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		if err := validateSendSafety(cfg, g.noInput || !isTTY(os.Stdin), *confirm, d.ID, "", *force); err != nil {
+		if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), *confirm, d.ID, "", *force); err != nil {
 			return nil, false, err
 		}
 		if *force {
@@ -931,7 +931,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "not_found", Error: "draft not found", DraftID: it.DraftID})
 				continue
 			}
-			if err := validateSendSafety(cfg, g.noInput || !isTTY(os.Stdin), it.ConfirmSend, it.DraftID, uid, false); err != nil {
+			if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), it.ConfirmSend, it.DraftID, uid, false); err != nil {
 				code := errorCodeFromErr(err, "confirmation_required")
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: code, Error: code, DraftID: it.DraftID})
 				continue

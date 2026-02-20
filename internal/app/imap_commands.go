@@ -483,7 +483,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		} else if found {
 			return cached, false, nil
 		}
-		if err := validateSendSafety(cfg, g.noInput, *confirm, *draftID, uid, *force); err != nil {
+		if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), *confirm, *draftID, uid, *force); err != nil {
 			return nil, false, err
 		}
 		if g.dryRun {
@@ -559,7 +559,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "not_found", Error: "draft not found", DraftID: it.DraftID})
 				continue
 			}
-			if err := validateSendSafety(cfg, g.noInput, it.ConfirmSend, it.DraftID, uid, false); err != nil {
+			if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), it.ConfirmSend, it.DraftID, uid, false); err != nil {
 				code := errorCodeFromErr(err, "confirmation_required")
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: code, Error: code, DraftID: it.DraftID})
 				continue

@@ -16,6 +16,10 @@ func validateSendSafety(cfg config.Config, nonTTY bool, confirm, canonicalID, ca
 	return nil
 }
 
+func isNonInteractiveSend(g globalOptions, stdinIsTTY bool) bool {
+	return g.noInput || !stdinIsTTY
+}
+
 func errorCodeFromErr(err error, fallback string) string {
 	var ce cliError
 	if errors.As(err, &ce) && ce.code != "" {

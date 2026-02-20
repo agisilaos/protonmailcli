@@ -50,3 +50,24 @@ func TestErrorCodeFromErr(t *testing.T) {
 		t.Fatalf("unexpected fallback: %s", got)
 	}
 }
+
+func TestIsNonInteractiveSend(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     globalOptions
+		stdinTTY bool
+		want     bool
+	}{
+		{name: "explicit no-input", opts: globalOptions{noInput: true}, stdinTTY: true, want: true},
+		{name: "non-tty stdin", opts: globalOptions{noInput: false}, stdinTTY: false, want: true},
+		{name: "interactive tty", opts: globalOptions{noInput: false}, stdinTTY: true, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isNonInteractiveSend(tt.opts, tt.stdinTTY); got != tt.want {
+				t.Fatalf("expected %v got %v", tt.want, got)
+			}
+		})
+	}
+}
