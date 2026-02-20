@@ -46,8 +46,15 @@ type cliError struct {
 func (e cliError) Error() string { return e.msg }
 
 var readAllStdinFn = func() ([]byte, error) {
-	return io.ReadAll(os.Stdin)
+	return io.ReadAll(runtimeStdinReader)
 }
+
+var (
+	runtimeStdinReader io.Reader = os.Stdin
+	runtimeStdout      io.Writer = os.Stdout
+	runtimeStderr      io.Writer = os.Stderr
+	runtimeStdinIsTTY            = func() bool { return isTTY(os.Stdin) }
+)
 
 var (
 	Version = "dev"
@@ -60,7 +67,34 @@ func Run(args []string, in io.Reader, out io.Writer, errw io.Writer) int {
 	return a.run(args)
 }
 
+func bindRuntimeIO(a App) func() {
+	prevIn := runtimeStdinReader
+	prevOut := runtimeStdout
+	prevErr := runtimeStderr
+	prevTTY := runtimeStdinIsTTY
+
+	runtimeStdinReader = a.Stdin
+	runtimeStdout = a.Stdout
+	runtimeStderr = a.Stderr
+	runtimeStdinIsTTY = func() bool {
+		if f, ok := a.Stdin.(*os.File); ok {
+			return isTTY(f)
+		}
+		return false
+	}
+
+	return func() {
+		runtimeStdinReader = prevIn
+		runtimeStdout = prevOut
+		runtimeStderr = prevErr
+		runtimeStdinIsTTY = prevTTY
+	}
+}
+
 func (a App) run(args []string) int {
+	restoreIO := bindRuntimeIO(a)
+	defer restoreIO()
+
 	start := time.Now()
 	requestID := fmt.Sprintf("req_%d", time.Now().UnixNano())
 	g, rest, err := parseGlobal(args)
@@ -303,7 +337,7 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 	if err := fs.Parse(args); err != nil {
 		return cliError{exit: 2, code: "usage_error", msg: err.Error()}
 	}
-	useInteractive := *interactive || (!*nonInteractive && !g.noInput && isTTY(os.Stdin))
+	useInteractive := *interactive || (!*nonInteractive && !g.noInput && runtimeStdinIsTTY())
 	cfg := config.Default()
 	cfg.Profile = *profile
 	if useInteractive {
@@ -561,17 +595,17 @@ func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, s
 			passFile = cfg.Bridge.PasswordFile
 		}
 		if user == "" || passFile == "" {
-			if g.noInput || !isTTY(os.Stdin) {
+			if g.noInput || !runtimeStdinIsTTY() {
 				return nil, false, cliError{exit: 2, code: "validation_error", msg: "--username and --password-file are required in non-interactive mode"}
 			}
-			r := bufio.NewReader(os.Stdin)
+			r := bufio.NewReader(runtimeStdinReader)
 			if user == "" {
-				fmt.Fprint(os.Stderr, "Bridge username/email: ")
+				fmt.Fprint(runtimeStderr, "Bridge username/email: ")
 				v, _ := r.ReadString('\n')
 				user = strings.TrimSpace(v)
 			}
 			if passFile == "" {
-				fmt.Fprint(os.Stderr, "Bridge password file path: ")
+				fmt.Fprint(runtimeStderr, "Bridge password file path: ")
 				v, _ := r.ReadString('\n')
 				passFile = strings.TrimSpace(v)
 			}
@@ -658,7 +692,7 @@ func cmdMailbox(action string, args []string, g globalOptions, st *model.State) 
 		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		_ = fs.String("name", "", "mailbox id or name")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -678,7 +712,7 @@ func cmdSearch(action string, args []string, g globalOptions, st *model.State) (
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	query := fs.String("query", "", "query")
-	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, os.Stdout); err != nil {
+	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, runtimeStdout); err != nil {
 		return nil, false, err
 	} else if handled {
 		return helpData, false, nil
@@ -715,7 +749,7 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		name := fs.String("name", "", "tag name")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -736,7 +770,7 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 		fs.SetOutput(io.Discard)
 		msgID := fs.String("message-id", "", "message id")
 		tag := fs.String("tag", "", "tag name")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -790,7 +824,7 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		name := fs.String("name", "", "name")
 		containsQ := fs.String("contains", "", "subject/body contains")
 		addTag := fs.String("add-tag", "", "tag to add")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter create", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter create", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -808,7 +842,7 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		fs := flag.NewFlagSet("filter delete", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		id := fs.String("filter-id", "", "filter id")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter delete", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter delete", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -824,7 +858,7 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		fs := flag.NewFlagSet("filter test/apply", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		id := fs.String("filter-id", "", "filter id")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter "+action, os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter "+action, runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil

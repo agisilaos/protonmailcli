@@ -100,6 +100,56 @@ func TestSendRequiresConfirmWhenNoInput(t *testing.T) {
 	}
 }
 
+func TestSendForceWarningUsesInjectedStderr(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "draft", "create", "--to", "a@example.com", "--subject", "hello", "--body", "body"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("create failed: %d", exit)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	draftID := latestDraftID(t, state)
+	exit := Run(
+		[]string{"--json", "--dry-run", "--config", cfg, "--state", state, "message", "send", "--draft-id", draftID, "--force"},
+		bytes.NewBuffer(nil),
+		stdout,
+		stderr,
+	)
+	if exit != 0 {
+		t.Fatalf("send failed: %d stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning: forcing send by policy override") {
+		t.Fatalf("expected warning in injected stderr: %s", stderr.String())
+	}
+}
+
+func TestSubcommandHelpWritesUsageToInjectedStdout(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := Run([]string{"--config", cfg, "--state", state, "message", "send", "--help"}, bytes.NewBuffer(nil), stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("expected help exit 0 got %d stderr=%s", exit, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Usage of message send:") {
+		t.Fatalf("missing usage on stdout: %s", stdout.String())
+	}
+}
+
 func TestAuthLoginStatusLogout(t *testing.T) {
 	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
 	tmp := t.TempDir()

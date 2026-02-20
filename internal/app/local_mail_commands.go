@@ -129,7 +129,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		fs.SetOutput(io.Discard)
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -199,7 +199,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		confirm := fs.String("confirm-send", "", "confirmation token")
 		force := fs.Bool("force", false, "force send without confirm token")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -212,11 +212,11 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), *confirm, d.ID, "", *force); err != nil {
+		if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), *confirm, d.ID, "", *force); err != nil {
 			return nil, false, err
 		}
 		if *force {
-			fmt.Fprintln(os.Stderr, "warning: forcing send by policy override")
+			fmt.Fprintln(runtimeStderr, "warning: forcing send by policy override")
 		}
 		password := strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD"))
 		candidatePasswordFile := firstNonEmpty(*passwordFile, st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
@@ -249,7 +249,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		fs.SetOutput(io.Discard)
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -275,7 +275,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "not_found", Error: "draft not found", DraftID: it.DraftID})
 				continue
 			}
-			if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), it.ConfirmSend, it.DraftID, uid, false); err != nil {
+			if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), it.ConfirmSend, it.DraftID, uid, false); err != nil {
 				code := errorCodeFromErr(err, "confirmation_required")
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: code, Error: code, DraftID: it.DraftID})
 				continue

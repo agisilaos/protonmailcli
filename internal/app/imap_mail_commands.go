@@ -148,7 +148,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		file := fs.String("file", "", "manifest json path or -")
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -399,7 +399,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		force := fs.Bool("force", false, "force send without confirm token")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -421,7 +421,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		} else if found {
 			return cached, false, nil
 		}
-		if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), *confirm, *draftID, uid, *force); err != nil {
+		if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), *confirm, *draftID, uid, *force); err != nil {
 			return nil, false, err
 		}
 		if g.dryRun {
@@ -455,7 +455,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
 		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
 		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -497,7 +497,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "not_found", Error: "draft not found", DraftID: it.DraftID})
 				continue
 			}
-			if err := validateSendSafety(cfg, isNonInteractiveSend(g, isTTY(os.Stdin)), it.ConfirmSend, it.DraftID, uid, false); err != nil {
+			if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), it.ConfirmSend, it.DraftID, uid, false); err != nil {
 				code := errorCodeFromErr(err, "confirmation_required")
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: code, Error: code, DraftID: it.DraftID})
 				continue

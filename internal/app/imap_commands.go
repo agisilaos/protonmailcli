@@ -52,7 +52,7 @@ func cmdMailboxIMAP(action string, args []string, g globalOptions, cfg config.Co
 		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		_ = fs.String("name", "", "mailbox id or name")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -90,7 +90,7 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 	before := fs.String("before", "", "date filter YYYY-MM-DD")
 	limit := fs.Int("limit", 50, "max results")
 	cursor := fs.String("cursor", "", "offset cursor")
-	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, os.Stdout); err != nil {
+	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, runtimeStdout); err != nil {
 		return nil, false, err
 	} else if handled {
 		return helpData, false, nil
@@ -165,7 +165,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		if len(args) > 0 {
 			fs := flag.NewFlagSet("tag list", flag.ContinueOnError)
 			fs.SetOutput(io.Discard)
-			if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag list", os.Stdout); err != nil {
+			if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag list", runtimeStdout); err != nil {
 				return nil, false, err
 			} else if handled {
 				return helpData, false, nil
@@ -184,7 +184,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		name := fs.String("name", "", "tag name")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
@@ -198,7 +198,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		fs.SetOutput(io.Discard)
 		msgID := fs.String("message-id", "", "message id")
 		tag := fs.String("tag", "", "tag name")
-		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, os.Stdout); err != nil {
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
