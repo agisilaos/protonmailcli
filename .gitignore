@@ -3,6 +3,8 @@
 *.exe
 *.out
 .tmp/
+.gocache/
+dist/
 
 # Local runtime data
 *.log
