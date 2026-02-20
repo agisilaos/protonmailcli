@@ -56,6 +56,7 @@ search
 
 mailbox
   list
+  resolve
 
 tag
   list

@@ -105,5 +105,5 @@ go test ./...
 Run this before cutting a tag:
 
 ```bash
-scripts/release-check.sh
+scripts/release-check.sh vX.Y.Z
 ```
