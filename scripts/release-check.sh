@@ -59,6 +59,9 @@ go test ./internal/app -run TestContractFixtures -v
 echo "[release-check] docs check"
 ./scripts/docs-check.sh
 
+echo "[release-check] checking go module metadata"
+go mod tidy -diff
+
 echo "[release-check] agent smoke checks"
 ./scripts/smoke-agent.sh
 
