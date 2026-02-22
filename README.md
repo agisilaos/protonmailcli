@@ -52,19 +52,6 @@ brew tap agisilaos/tap
 brew install protonmailcli
 ```
 
-## Release
-
-```bash
-make release-check VERSION=vX.Y.Z
-make release-dry-run VERSION=vX.Y.Z
-make release VERSION=vX.Y.Z
-```
-
-Release scripts:
-- `scripts/docs-check.sh` validates help snapshots plus release docs references.
-- `scripts/release-check.sh` validates version/tag preconditions, runs tests/vet/docs/format checks, and verifies stamped version output.
-- `scripts/release.sh` runs `release-check`, updates changelog from git history, builds darwin archives, publishes GitHub release/tag, and updates the Homebrew tap formula.
-
 ## Setup
 
 ### Human interactive setup
@@ -525,6 +512,19 @@ Current automated tests cover:
 - auth login/status/logout flow
 - doctor failure exit code (`exit 4`)
 - completion output generation
+
+## Release
+
+```bash
+make release-check VERSION=vX.Y.Z
+make release-dry-run VERSION=vX.Y.Z
+make release VERSION=vX.Y.Z
+```
+
+Release scripts:
+- `scripts/docs-check.sh` validates help snapshots plus release docs references.
+- `scripts/release-check.sh` validates version/tag preconditions, runs tests/vet/docs/format checks, and verifies stamped version output.
+- `scripts/release.sh` runs `release-check`, updates changelog from git history, builds darwin archives, publishes GitHub release/tag, and updates the Homebrew tap formula.
 
 ## Docs
 
