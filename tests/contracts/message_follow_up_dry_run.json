@@ -1,0 +1,20 @@
+{
+  "name": "message_follow_up_dry_run_no_side_effect",
+  "command": "protonmailcli message follow-up --message-id m_123 --body followup --dry-run --json --no-input",
+  "expected": {
+    "exitCode": 0,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "action": "follow_up",
+        "messageId": "m_123",
+        "dryRun": true,
+        "wouldCreateDraft": true
+      }
+    },
+    "stderrContains": [
+      "dry-run",
+      "no changes applied"
+    ]
+  }
+}

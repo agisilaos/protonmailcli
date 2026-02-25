@@ -71,5 +71,32 @@ func imapDraftID(uid string) string {
 }
 
 func imapMessageID(uid string) string {
-	return "imap:INBOX:" + uid
+	return imapMessageIDForMailbox("INBOX", uid)
+}
+
+func imapMessageIDForMailbox(mailbox, uid string) string {
+	box := strings.TrimSpace(mailbox)
+	if box == "" {
+		box = "INBOX"
+	}
+	return "imap:" + box + ":" + uid
+}
+
+func parseMailboxUID(id, defaultMailbox string) (string, string, error) {
+	v := strings.TrimSpace(id)
+	if v == "" {
+		return "", "", fmt.Errorf("empty id")
+	}
+	parts := strings.Split(v, ":")
+	if len(parts) == 3 && parts[0] == "imap" {
+		if strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+			return "", "", fmt.Errorf("invalid imap id")
+		}
+		return parts[1], parts[2], nil
+	}
+	box := strings.TrimSpace(defaultMailbox)
+	if box == "" {
+		box = "INBOX"
+	}
+	return box, v, nil
 }

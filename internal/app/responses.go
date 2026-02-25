@@ -88,6 +88,32 @@ type messageSendResponse struct {
 	Source   string        `json:"source,omitempty"`
 }
 
+type messageFollowUpPlanResponse struct {
+	Action          string   `json:"action"`
+	MessageID       string   `json:"messageId"`
+	To              []string `json:"to"`
+	Subject         string   `json:"subject"`
+	WouldCreate     bool     `json:"wouldCreateDraft"`
+	DryRun          bool     `json:"dryRun"`
+	Source          string   `json:"source,omitempty"`
+	ThreadInReplyTo string   `json:"inReplyTo,omitempty"`
+	References      []string `json:"references,omitempty"`
+}
+
+type messageFollowUpResponse struct {
+	Draft           draftRecord `json:"draft"`
+	CreatePath      string      `json:"createPath,omitempty"`
+	Source          string      `json:"source,omitempty"`
+	ThreadInReplyTo string      `json:"inReplyTo,omitempty"`
+	References      []string    `json:"references,omitempty"`
+}
+
+type localMessageFollowUpResponse struct {
+	Draft      model.Draft `json:"draft"`
+	CreatePath string      `json:"createPath,omitempty"`
+	Source     string      `json:"source,omitempty"`
+}
+
 type sendPlanResponse struct {
 	Action    string `json:"action"`
 	DraftID   string `json:"draftId"`

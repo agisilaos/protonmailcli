@@ -1,0 +1,16 @@
+Usage of message follow-up:
+  -body string
+    	body
+  -body-file string
+    	body from file or -
+  -idempotency-key string
+    	idempotency key
+  -message-id string
+    	message id
+  -stdin
+    	read body from stdin
+  -subject string
+    	subject override
+  -to value
+    	recipient (repeat)
+ok

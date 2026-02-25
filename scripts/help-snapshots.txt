@@ -4,6 +4,7 @@ draft-create-many.txt	draft create-many --help
 filter-create.txt	filter create --help
 mailbox-resolve.txt	mailbox resolve --help
 message-send.txt	message send --help
+message-follow-up.txt	message follow-up --help
 message-send-many.txt	message send-many --help
 search-messages.txt	search messages --help
 tag-create.txt	tag create --help

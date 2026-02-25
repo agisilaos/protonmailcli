@@ -24,6 +24,7 @@ Status date: 2026-02-18
   - `draft create-many --file|--stdin` (batch)
   - `message get` (IMAP `INBOX`)
   - `message send` (IMAP draft read + SMTP send)
+  - `message follow-up` (threaded draft creation from existing message IDs)
   - `message send-many --file|--stdin` (batch)
   - `search messages|drafts` (IMAP SEARCH with `query/subject/from/to/has-tag/unread/since-id/after/before` + pagination)
   - `tag list|add|remove` (IMAP flags/keywords)
@@ -42,7 +43,7 @@ Status date: 2026-02-18
   - active bridge account username selection
 - Optional local-only mode for tests:
   - `PMAIL_USE_LOCAL_STATE=1`
-  - now includes batch parity for `draft create-many` and `message send-many`
+  - now includes batch parity for `draft create-many` and `message send-many`, plus `message follow-up`
 
 ## Command architecture notes
 

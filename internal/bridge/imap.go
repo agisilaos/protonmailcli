@@ -28,14 +28,17 @@ type IMAPConfig struct {
 }
 
 type DraftMessage struct {
-	UID     string
-	Mailbox string
-	From    string
-	To      []string
-	Subject string
-	Body    string
-	Date    time.Time
-	Flags   []string
+	UID        string
+	Mailbox    string
+	From       string
+	To         []string
+	Subject    string
+	Body       string
+	Date       time.Time
+	Flags      []string
+	MessageID  string
+	InReplyTo  string
+	References string
 }
 
 type IMAPClient struct {
@@ -343,15 +346,22 @@ func parseRawMessage(raw []byte) (DraftMessage, error) {
 	body := decodeBestBody(m.Header, bodyBytes)
 	date, _ := mail.ParseDate(m.Header.Get("Date"))
 	return DraftMessage{
-		From:    m.Header.Get("From"),
-		To:      to,
-		Subject: m.Header.Get("Subject"),
-		Body:    body,
-		Date:    date,
+		From:       m.Header.Get("From"),
+		To:         to,
+		Subject:    m.Header.Get("Subject"),
+		Body:       body,
+		Date:       date,
+		MessageID:  m.Header.Get("Message-ID"),
+		InReplyTo:  m.Header.Get("In-Reply-To"),
+		References: m.Header.Get("References"),
 	}, nil
 }
 
 func BuildRawMessage(from string, to []string, subject, body string) string {
+	return BuildRawMessageWithHeaders(from, to, subject, body, nil)
+}
+
+func BuildRawMessageWithHeaders(from string, to []string, subject, body string, extraHeaders map[string]string) string {
 	headers := []string{
 		fmt.Sprintf("From: %s", from),
 		fmt.Sprintf("To: %s", strings.Join(to, ", ")),
@@ -359,6 +369,16 @@ func BuildRawMessage(from string, to []string, subject, body string) string {
 		fmt.Sprintf("Date: %s", time.Now().UTC().Format(time.RFC1123Z)),
 		"MIME-Version: 1.0",
 		"Content-Type: text/plain; charset=UTF-8",
+	}
+	if len(extraHeaders) > 0 {
+		keys := make([]string, 0, len(extraHeaders))
+		for k := range extraHeaders {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			headers = append(headers, fmt.Sprintf("%s: %s", k, extraHeaders[k]))
+		}
 	}
 	return strings.Join(headers, "\r\n") + "\r\n\r\n" + body
 }

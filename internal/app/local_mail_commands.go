@@ -305,6 +305,78 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			resp.exitCode = 10
 		}
 		return resp, success > 0, nil
+	case "follow-up":
+		fs := flag.NewFlagSet("message follow-up", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		msgID := fs.String("message-id", "", "message id")
+		var to sliceFlag
+		subject := fs.String("subject", "", "subject override")
+		body := fs.String("body", "", "body")
+		bodyFile := fs.String("body-file", "", "body from file or -")
+		stdinBody := fs.Bool("stdin", false, "read body from stdin")
+		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
+		fs.Var(&to, "to", "recipient (repeat)")
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message follow-up", runtimeStdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
+		}
+		uid, err := parseRequiredUID(*msgID, "--message-id")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		orig, ok := st.Messages[uid]
+		if !ok {
+			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
+		}
+		recipients := []string(to)
+		if len(recipients) == 0 {
+			recipients = localFollowUpRecipients(orig, firstNonEmpty(st.Auth.Username, cfg.Bridge.Username))
+		}
+		if len(recipients) == 0 {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "could not resolve recipients; pass --to"}
+		}
+		bodyText, err := loadBody(*body, *bodyFile, *stdinBody)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		followUpSubject := followUpSubject(*subject, orig.Subject)
+		payload := map[string]any{
+			"messageId": *msgID,
+			"to":        recipients,
+			"subject":   followUpSubject,
+			"body":      bodyText,
+		}
+		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "message.follow-up", payload); err != nil {
+			return nil, false, err
+		} else if found {
+			return cached, false, nil
+		}
+		if g.dryRun {
+			return messageFollowUpPlanResponse{
+				Action:      "follow_up",
+				MessageID:   orig.ID,
+				To:          recipients,
+				Subject:     followUpSubject,
+				WouldCreate: true,
+				DryRun:      true,
+				Source:      "local",
+			}, true, nil
+		}
+		now := time.Now().UTC()
+		id := fmt.Sprintf("d_%d", now.UnixNano())
+		d := model.Draft{
+			ID:        id,
+			To:        recipients,
+			Subject:   followUpSubject,
+			Body:      bodyText,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		st.Drafts[id] = d
+		resp := localMessageFollowUpResponse{Draft: d, CreatePath: "local_state", Source: "local"}
+		_ = idempotencyStore(st, *idempotencyKey, "message.follow-up", payload, resp)
+		return resp, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown message action: " + action}
 	}

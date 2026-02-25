@@ -11,7 +11,7 @@ Resources:
   bridge     account list|use
   auth       login|status|logout
   draft      create|create-many|update|get|list|delete
-  message    send|send-many|get
+  message    send|send-many|get|follow-up
   search     messages|drafts
   mailbox    list|resolve
   tag        list|create|add|remove

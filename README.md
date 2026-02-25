@@ -13,6 +13,7 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - Draft lifecycle: create, update, get, list, delete
 - Bulk draft creation: `draft create-many --file|--stdin`
 - Send message from draft with non-interactive safety gate
+- Threaded follow-up draft creation from an existing message (`message follow-up`)
 - Bulk send workflow: `message send-many --file|--stdin`
 - Search drafts/messages
 - Mailbox discovery (`mailbox list`, `mailbox resolve`)
@@ -32,6 +33,7 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - `draft`: Bridge IMAP (`Drafts`)
 - `message get`: Bridge IMAP (`INBOX`)
 - `message send`: draft fetch via IMAP + send via SMTP
+- `message follow-up`: build a threaded draft (`In-Reply-To`/`References`) from an existing message
 - `search`: Bridge IMAP (`INBOX`/`Drafts`)
 - `mailbox list`: Bridge IMAP (`LIST`)
 - `tag add/remove/list`: Bridge IMAP flags/keywords
@@ -140,6 +142,14 @@ List live drafts from Bridge IMAP:
 ```
 
 Draft IDs in IMAP mode look like `imap:Drafts:<uid>` and can be passed back to `draft get`, `draft delete`, and `message send`.
+
+Create a threaded follow-up draft from an existing message:
+
+```bash
+./protonmailcli --json --no-input message follow-up \
+  --message-id imap:Sent:845 \
+  --body "Quick follow-up on this thread."
+```
 
 Send draft safely in non-interactive mode:
 

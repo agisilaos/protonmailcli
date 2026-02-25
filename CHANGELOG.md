@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.2.2] - 2026-02-25
+
+### Added
+- Add `message follow-up` command to create follow-up drafts from existing messages (thread-aware in IMAP mode)
+- Add threading header support (`In-Reply-To`, `References`) for IMAP follow-up draft creation
+- Add contract and unit test coverage for follow-up draft flows and dry-run behavior
+
+### Changed
+- Accept mailbox-qualified IMAP message IDs (`imap:<mailbox>:<uid>`) for message retrieval and follow-up flows
+- Update CLI docs and help snapshots for the new `message follow-up` command and usage examples
+
 ## [v0.2.1] - 2026-02-19
 
 ### Added

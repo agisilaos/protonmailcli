@@ -130,6 +130,64 @@ func TestSendForceWarningUsesInjectedStderr(t *testing.T) {
 	}
 }
 
+func TestMessageFollowUpCreatesDraftLocally(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	now := "2026-02-01T00:00:00Z"
+	payload := `{"drafts":{},"messages":{"m_1":{"id":"m_1","from":"sender@example.com","to":["me@example.com"],"subject":"Status","body":"Original","sentAt":"` + now + `"}},"tags":{},"filters":{},"auth":{"loggedIn":true,"username":"me@example.com"},"bridge":{},"idempotency":{}}`
+	if err := os.WriteFile(state, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--config", cfg, "--state", state, "message", "follow-up", "--message-id", "m_1", "--body", "Following up"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})
+	if exit != 0 {
+		t.Fatalf("follow-up failed: %d stdout=%s", exit, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"subject":"Re: Status"`) {
+		t.Fatalf("expected Re: subject in output: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"to":["sender@example.com"]`) {
+		t.Fatalf("expected recipient from original sender: %s", stdout.String())
+	}
+}
+
+func TestMessageFollowUpDryRunDoesNotMutateState(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	state := filepath.Join(tmp, "state.json")
+	if exit := Run([]string{"--json", "--config", cfg, "--state", state, "setup", "--non-interactive", "--username", "me@example.com"}, bytes.NewBuffer(nil), &bytes.Buffer{}, &bytes.Buffer{}); exit != 0 {
+		t.Fatalf("setup failed: %d", exit)
+	}
+	now := "2026-02-01T00:00:00Z"
+	payload := `{"drafts":{},"messages":{"m_1":{"id":"m_1","from":"sender@example.com","to":["me@example.com"],"subject":"Status","body":"Original","sentAt":"` + now + `"}},"tags":{},"filters":{},"auth":{"loggedIn":true,"username":"me@example.com"},"bridge":{},"idempotency":{}}`
+	if err := os.WriteFile(state, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	stdout := &bytes.Buffer{}
+	exit := Run([]string{"--json", "--dry-run", "--config", cfg, "--state", state, "message", "follow-up", "--message-id", "m_1", "--body", "Following up"}, bytes.NewBuffer(nil), stdout, &bytes.Buffer{})
+	if exit != 0 {
+		t.Fatalf("follow-up dry-run failed: %d stdout=%s", exit, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"wouldCreateDraft":true`) {
+		t.Fatalf("expected dry-run follow-up plan: %s", stdout.String())
+	}
+	st, err := os.ReadFile(state)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if strings.Contains(string(st), `"d_`) {
+		t.Fatalf("dry-run should not add draft: %s", string(st))
+	}
+}
+
 func TestSubcommandHelpWritesUsageToInjectedStdout(t *testing.T) {
 	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
 	tmp := t.TempDir()

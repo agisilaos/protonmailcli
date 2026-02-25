@@ -131,7 +131,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if g.dryRun {
 			return map[string]any{"action": "draft.create", "wouldCreate": true, "source": "imap"}, true, nil
 		}
-		uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, to, *subject, b, raw)
+		uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, to, *subject, b, raw, nil)
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_create_failed", msg: err.Error()}
 		}
@@ -183,7 +183,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 				success++
 				continue
 			}
-			uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw)
+			uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw, nil)
 			if err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "imap_draft_create_failed", Error: err.Error()})
 				continue
@@ -273,19 +273,19 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 	}
 }
 
-func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State, username string, to []string, subject, body, raw string) (string, string, error) {
+func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State, username string, to []string, subject, body, raw string, extraHeaders map[string]string) (string, string, error) {
 	uid, err := c.AppendDraft(raw)
 	if err == nil {
 		return uid, "imap_append", nil
 	}
-	uid, err = createDraftViaMoveFallback(cfg, st, username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")))
+	uid, err = createDraftViaMoveFallback(cfg, st, username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")), extraHeaders)
 	if err != nil {
 		return "", "", err
 	}
 	return uid, "smtp_move_fallback", nil
 }
 
-func createDraftViaMoveFallback(cfg config.Config, st *model.State, username string, to []string, subject, body, envPassword string) (string, error) {
+func createDraftViaMoveFallback(cfg config.Config, st *model.State, username string, to []string, subject, body, envPassword string, extraHeaders map[string]string) (string, error) {
 	_, password, err := resolveBridgeCredentials(cfg, st, "")
 	if err != nil {
 		if strings.TrimSpace(envPassword) == "" {
@@ -294,14 +294,16 @@ func createDraftViaMoveFallback(cfg config.Config, st *model.State, username str
 		password = strings.TrimSpace(envPassword)
 	}
 	token := fmt.Sprintf("pmail-%d", time.Now().UnixNano())
+	headers := map[string]string{"X-Pmail-Draft-Token": token}
+	for k, v := range extraHeaders {
+		headers[k] = v
+	}
 	if err := smtpSendFn(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: password}, bridge.SendInput{
-		From:    username,
-		To:      []string{username},
-		Subject: subject,
-		Body:    body,
-		ExtraHeaders: map[string]string{
-			"X-Pmail-Draft-Token": token,
-		},
+		From:         username,
+		To:           []string{username},
+		Subject:      subject,
+		Body:         body,
+		ExtraHeaders: headers,
 	}); err != nil {
 		return "", err
 	}
@@ -367,21 +369,21 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--message-id")
+		mailbox, uid, err := parseMailboxUID(*id, "INBOX")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
-		msgs, err := c.ListMessages("INBOX", "UID "+uid)
+		msgs, err := c.ListMessages(mailbox, "UID "+uid)
 		if err != nil || len(msgs) == 0 {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
 		m := msgs[0]
 		return messageGetResponse{
 			Message: messageRecord{
-				ID:      imapMessageID(m.UID),
+				ID:      imapMessageIDForMailbox(mailbox, m.UID),
 				UID:     m.UID,
 				From:    m.From,
 				To:      m.To,
@@ -522,6 +524,100 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		}
 		_ = idempotencyStore(st, *idempotencyKey, "message.send-many", items, resp)
 		return resp, success > 0, nil
+	case "follow-up":
+		fs := flag.NewFlagSet("message follow-up", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		msgID := fs.String("message-id", "", "message id")
+		var to sliceFlag
+		subject := fs.String("subject", "", "subject override")
+		body := fs.String("body", "", "body")
+		bodyFile := fs.String("body-file", "", "body from file or -")
+		stdinBody := fs.Bool("stdin", false, "read body from stdin")
+		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
+		fs.Var(&to, "to", "recipient (repeat)")
+		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message follow-up", runtimeStdout); err != nil {
+			return nil, false, err
+		} else if handled {
+			return helpData, false, nil
+		}
+		mailbox, uid, err := parseMailboxUID(*msgID, "INBOX")
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--message-id required"}
+		}
+		if err := ensureClient(); err != nil {
+			return nil, false, err
+		}
+		msgs, err := c.ListMessages(mailbox, "UID "+uid)
+		if err != nil || len(msgs) == 0 {
+			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
+		}
+		orig := msgs[0]
+		recipients := []string(to)
+		if len(recipients) == 0 {
+			recipients = imapFollowUpRecipients(orig.From, orig.To, username)
+		}
+		if len(recipients) == 0 {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "could not resolve recipients; pass --to"}
+		}
+		bodyText, err := loadBody(*body, *bodyFile, *stdinBody)
+		if err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		followSubject := followUpSubject(*subject, orig.Subject)
+		inReplyTo, refs := threadHeaders(orig.MessageID, orig.References)
+		if inReplyTo == "" {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "message has no Message-ID; cannot create threaded follow-up"}
+		}
+		payload := map[string]any{
+			"messageId":  imapMessageIDForMailbox(mailbox, uid),
+			"to":         recipients,
+			"subject":    followSubject,
+			"body":       bodyText,
+			"inReplyTo":  inReplyTo,
+			"references": refs,
+		}
+		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "message.follow-up", payload); err != nil {
+			return nil, false, err
+		} else if found {
+			return cached, false, nil
+		}
+		if g.dryRun {
+			return messageFollowUpPlanResponse{
+				Action:          "follow_up",
+				MessageID:       imapMessageIDForMailbox(mailbox, uid),
+				To:              recipients,
+				Subject:         followSubject,
+				WouldCreate:     true,
+				DryRun:          true,
+				Source:          "imap",
+				ThreadInReplyTo: inReplyTo,
+				References:      refs,
+			}, true, nil
+		}
+		extraHeaders := map[string]string{
+			"In-Reply-To": inReplyTo,
+			"References":  strings.Join(refs, " "),
+		}
+		raw := bridge.BuildRawMessageWithHeaders(username, recipients, followSubject, bodyText, extraHeaders)
+		newUID, createPath, err := saveDraftWithFallback(c, cfg, st, username, recipients, followSubject, bodyText, raw, extraHeaders)
+		if err != nil {
+			return nil, false, cliError{exit: 4, code: "imap_draft_create_failed", msg: err.Error()}
+		}
+		resp := messageFollowUpResponse{
+			Draft: draftRecord{
+				ID:      imapDraftID(newUID),
+				UID:     newUID,
+				To:      recipients,
+				Subject: followSubject,
+				Body:    bodyText,
+			},
+			CreatePath:      createPath,
+			Source:          "imap",
+			ThreadInReplyTo: inReplyTo,
+			References:      refs,
+		}
+		_ = idempotencyStore(st, *idempotencyKey, "message.follow-up", payload, resp)
+		return resp, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown message action: " + action}
 	}

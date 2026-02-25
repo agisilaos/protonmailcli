@@ -137,7 +137,7 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 	paged, next := paginateMessages(items, start, lim)
 	out := make([]messageRecord, 0, len(paged))
 	for _, m := range paged {
-		out = append(out, messageRecord{ID: imapMessageID(m.UID), UID: m.UID, From: m.From, To: m.To, Subject: m.Subject, Date: m.Date.UTC().Format(time.RFC3339)})
+		out = append(out, messageRecord{ID: imapMessageIDForMailbox(targetMailbox, m.UID), UID: m.UID, From: m.From, To: m.To, Subject: m.Subject, Date: m.Date.UTC().Format(time.RFC3339)})
 	}
 	return messageListResponse{Messages: out, Count: len(out), Total: len(items), NextCursor: next, Mailbox: targetMailbox, Source: "imap"}, false, nil
 }

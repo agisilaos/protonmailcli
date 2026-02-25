@@ -49,6 +49,7 @@ message
   send
   send-many
   get
+  follow-up
 
 search
   messages
@@ -158,6 +159,21 @@ Exit behavior:
   - `--file <path|->`
   - `--stdin`
 - `--smtp-password-file <path>`
+- `--idempotency-key <string>`
+
+### `message follow-up`
+
+- `--message-id <id>` required
+  - accepts `imap:<mailbox>:<uid>` or a raw local-state ID
+- optional recipients via repeatable `--to <email>`
+  - default recipient resolution:
+    - received message: original `From`
+    - sent message: original `To`
+- optional `--subject <text>` override (default: `Re: <original subject>`)
+- body via exactly one of:
+  - `--body <text>`
+  - `--body-file <path|->`
+  - `--stdin`
 - `--idempotency-key <string>`
 
 ### `search messages|drafts`
