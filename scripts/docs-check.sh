@@ -10,6 +10,13 @@ fi
 
 [[ -f "${ROOT_DIR}/README.md" ]] || { echo "error: README.md not found" >&2; exit 1; }
 [[ -f "${ROOT_DIR}/CHANGELOG.md" ]] || { echo "error: CHANGELOG.md not found" >&2; exit 1; }
+[[ -f "${ROOT_DIR}/RELEASING.md" ]] || { echo "error: RELEASING.md not found" >&2; exit 1; }
+[[ -f "${ROOT_DIR}/scripts/changelog-context.sh" ]] || { echo "error: scripts/changelog-context.sh not found" >&2; exit 1; }
+[[ -f "${ROOT_DIR}/scripts/changelog-section.py" ]] || { echo "error: scripts/changelog-section.py not found" >&2; exit 1; }
+
+for target in changelog-context release-check release-check-ci release-dry-run release; do
+  grep -qE "^${target}:" "${ROOT_DIR}/Makefile" || { echo "error: Makefile missing target: $target" >&2; exit 1; }
+done
 
 echo "[docs-check] validating shared docs contract"
 python3 "${ROOT_DIR}/scripts/docs-contract-check.py" --root "${ROOT_DIR}"

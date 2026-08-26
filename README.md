@@ -525,16 +525,18 @@ Current automated tests cover:
 
 ## Release
 
+Ask an agent to prepare the changelog from commit and PR evidence, review and commit it, then run:
+
 ```bash
+make changelog-context VERSION=vX.Y.Z
 make release-check VERSION=vX.Y.Z
 make release-dry-run VERSION=vX.Y.Z
 make release VERSION=vX.Y.Z
 ```
 
-Release scripts:
-- `scripts/docs-check.sh` validates help snapshots plus release docs references.
-- `scripts/release-check.sh` validates version/tag preconditions, runs tests/vet/docs/format checks, and verifies stamped version output.
-- `scripts/release.sh` runs `release-check`, updates changelog from git history, builds darwin archives, publishes GitHub release/tag, and updates the Homebrew tap formula.
+Every new changelog bullet links to its pull request or direct commit. The approved changelog section becomes the GitHub Release notes. The dry run builds both macOS archives and checksums and renders the Homebrew formula without remote writes.
+
+See `RELEASING.md` for the full runbook. Release scripts are `scripts/changelog-context.sh`, `scripts/release-check.sh`, and `scripts/release.sh`. Existing changelog helper scripts remain optional authoring tools.
 
 ## Docs
 
