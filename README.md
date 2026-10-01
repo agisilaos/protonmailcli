@@ -272,6 +272,16 @@ Exit codes:
 
 ## Test
 
+Run the complete local gate:
+
+```bash
+make verify
+```
+
+It checks the pinned helper bundle, module metadata, formatting, vet, tests,
+executable contract fixtures, docs/help and the isolated local-state smoke.
+The smoke exercises send with `--dry-run`; it sends no real email.
+
 ```bash
 go test ./...
 ```
@@ -299,6 +309,9 @@ scripts/check-help.sh
 
 Help snapshots are driven by `scripts/help-snapshots.txt`.
 Snapshot generation runs against an isolated local-state setup for deterministic output.
+The binary, build cache, config and state live in temporary storage that is
+removed on success or failure. Snapshots include both stdout and stderr.
+`make help-script-test` verifies stream capture, cleanup and docs failure cases.
 
 If help output changed intentionally, refresh snapshots:
 
@@ -534,9 +547,9 @@ make release-dry-run VERSION=vX.Y.Z
 make release VERSION=vX.Y.Z
 ```
 
-Every new changelog bullet links to its pull request or direct commit. The approved changelog section becomes the GitHub Release notes. The dry run builds both macOS archives and checksums and renders the Homebrew formula without remote writes.
+Every new changelog list item links to its pull request or direct commit. The approved changelog section becomes the GitHub Release notes. The dry run builds both macOS archives and checksums and renders and syntax-checks the Homebrew formula without remote writes.
 
-See `RELEASING.md` for the full runbook. Release scripts are `scripts/changelog-context.sh`, `scripts/release-check.sh`, and `scripts/release.sh`. Existing changelog helper scripts remain optional authoring tools.
+See [RELEASING.md](RELEASING.md) for the full runbook and [release recovery](docs/release-recovery.md) for interrupted publication. Release scripts are `scripts/changelog-context.sh`, `scripts/release-check.sh`, and `scripts/release.sh`. Existing changelog helper scripts remain optional authoring tools.
 
 ## Docs
 
