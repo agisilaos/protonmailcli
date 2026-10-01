@@ -4,8 +4,8 @@
 
 Release checks, dry runs and publication select Go 1.27.1 through
 `RELEASE_GO_TOOLCHAIN` in `scripts/release-config.sh`. Release/current CI uses
-that same version. Go downloads and verifies it if needed. Ordinary verification
-retains the caller's toolchain; the existing module minimum remains supported.
+that same version, and `go.mod` requires Go 1.27.1. Go downloads and verifies
+a required toolchain when automatic toolchain selection is enabled.
 
 Releases are prepared by an agent, reviewed by a human, and published from a clean macOS checkout of the default branch.
 
