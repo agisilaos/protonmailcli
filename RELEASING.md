@@ -1,6 +1,21 @@
 # Releasing
 
+## Go toolchain
+
+Release checks, dry runs and publication select Go 1.27.1 through
+`RELEASE_GO_TOOLCHAIN` in `scripts/release-config.sh`. Release/current CI uses
+that same version. Go downloads and verifies it if needed. Ordinary verification
+retains the caller's toolchain; the existing module minimum remains supported.
+
 Releases are prepared by an agent, reviewed by a human, and published from a clean macOS checkout of the default branch.
+
+## Local verification
+
+Run `make verify` while developing. It checks the pinned local helper bundle,
+module metadata, formatting, vet, Go tests, executable contract fixtures,
+help-generation fixtures, docs/help and the isolated local-state agent smoke.
+Module validation leaves `go.mod` and `go.sum` unchanged on failure. The smoke
+uses a send dry run; real Bridge/email integration remains an explicit opt-in.
 
 ## Prepare the changelog
 
@@ -31,9 +46,13 @@ make release-dry-run VERSION=vX.Y.Z
 make release VERSION=vX.Y.Z
 ```
 
-`release-check` validates the clean worktree, version, changelog, tests, documentation, module metadata, formatting, and version-stamped binary. `release-dry-run` builds both macOS archives and checksums, extracts the approved changelog section as release notes, and renders the Homebrew formula without remote writes.
+`release-check` validates the clean worktree, version and changelog, runs `make verify`, then checks the version-stamped binary. `release-dry-run` builds both macOS archives and checksums, extracts the approved changelog section as release notes, and renders and syntax-checks the Homebrew formula without remote writes. Publication requires the `master` branch and validates the selected existing tap branch before creating a tag.
 
 The final command creates and pushes the tag, publishes the GitHub Release with the approved changelog section, and updates the configured Homebrew tap.
+
+If publication stops, follow [release recovery](docs/release-recovery.md) using
+the retained original artifacts and reported phase outcomes. Inspect remote
+state before attempting a missing step.
 
 ## Changelog policy
 

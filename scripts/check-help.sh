@@ -4,12 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXPECTED_DIR="${ROOT_DIR}/docs/help"
 SNAPSHOT_LIST="${ROOT_DIR}/scripts/help-snapshots.txt"
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/proton-help-check.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
-
-if [[ -z "${GOCACHE:-}" ]]; then
-  export GOCACHE="${ROOT_DIR}/.gocache"
-fi
 
 "${ROOT_DIR}/scripts/update-help.sh" --out-dir "${TMP_DIR}" >/dev/null
 

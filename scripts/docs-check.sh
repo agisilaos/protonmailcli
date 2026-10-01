@@ -13,8 +13,11 @@ fi
 [[ -f "${ROOT_DIR}/RELEASING.md" ]] || { echo "error: RELEASING.md not found" >&2; exit 1; }
 [[ -f "${ROOT_DIR}/scripts/changelog-context.sh" ]] || { echo "error: scripts/changelog-context.sh not found" >&2; exit 1; }
 [[ -f "${ROOT_DIR}/scripts/changelog-section.py" ]] || { echo "error: scripts/changelog-section.py not found" >&2; exit 1; }
+[[ -f "${ROOT_DIR}/scripts/release-config.sh" ]] || { echo "error: scripts/release-config.sh not found" >&2; exit 1; }
+[[ -f "${ROOT_DIR}/scripts/verify.sh" ]] || { echo "error: scripts/verify.sh not found" >&2; exit 1; }
+[[ -f "${ROOT_DIR}/scripts/cli-tooling-manifest.json" ]] || { echo "error: scripts/cli-tooling-manifest.json not found" >&2; exit 1; }
 
-for target in changelog-context release-check release-check-ci release-dry-run release; do
+for target in verify changelog-context release-check release-check-ci release-dry-run release; do
   grep -qE "^${target}:" "${ROOT_DIR}/Makefile" || { echo "error: Makefile missing target: $target" >&2; exit 1; }
 done
 

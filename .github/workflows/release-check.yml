@@ -17,7 +17,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           # Use the release toolchain; compatibility stays in each repo's normal CI.
-          go-version: "1.26.x"
+          go-version: "1.27.1"
 
       # Intentionally no extra dependency install step (brew/apt).
       # release-check scripts must rely on stock runner tooling.
