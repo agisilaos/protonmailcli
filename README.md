@@ -576,3 +576,12 @@ See [RELEASING.md](RELEASING.md) for the full runbook and [release recovery](doc
 ## License
 
 MIT (`LICENSE`)
+
+### Local state save failures
+
+State updates are staged beside the destination and atomically replace it only
+after the complete file is written and closed. Failed staging leaves the previous
+state readable. Existing regular-file permissions are preserved; new files use
+0600. Symlink and directory targets are rejected without replacement. Use a
+regular state file. Run one state-writing process at a time; atomic replacement
+does not provide cross-process locking or a power-loss durability guarantee.

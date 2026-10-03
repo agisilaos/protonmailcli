@@ -78,5 +78,5 @@ func (s *Store) Save(st model.State) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, b, 0o600)
+	return replaceState(s.path, b)
 }
