@@ -289,3 +289,11 @@ func (f *fakeIMAPDraftClient) MoveUID(srcMailbox, uid, dstMailbox string) error 
 }
 
 func (f *fakeIMAPDraftClient) Close() error { return nil }
+
+func TestUncertainAppendDoesNotAttemptSMTPFallback(t *testing.T) {
+	primary := &fakeIMAPDraftClient{appendErr: bridge.ErrAppendUncertain}
+	uid, path, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "synthetic@example.com", []string{"recipient@example.com"}, "s", "b", "raw", nil)
+	if err != bridge.ErrAppendUncertain || uid != "" || path != "" {
+		t.Fatalf("uncertain append was replaced by fallback: uid=%q path=%q err=%v", uid, path, err)
+	}
+}

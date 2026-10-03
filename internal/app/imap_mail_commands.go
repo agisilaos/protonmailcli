@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -277,6 +278,9 @@ func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State
 	uid, err := c.AppendDraft(raw)
 	if err == nil {
 		return uid, "imap_append", nil
+	}
+	if errors.Is(err, bridge.ErrAppendUncertain) {
+		return "", "", err
 	}
 	uid, err = createDraftViaMoveFallback(cfg, st, username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")), extraHeaders)
 	if err != nil {
