@@ -623,3 +623,11 @@ when omitted; it does not read saved output/profile preferences. Existing machin
 help fields remain `help` and `usage`. Values such as `--subject --help` remain
 data; help after `--` or after a positional argument does not bypass execution.
 Examples containing `--dry-run` may still read Bridge; help itself does not.
+
+### Bash completion updates
+
+Regenerate the Bash completion script after upgrading, using the installation
+command above. Completion now suggests child commands only at a group position,
+respects global-option values, and stops at leaf arguments or `--`. It does not
+yet suggest leaf flags or dynamic IDs; no CLI syntax or other shell changes are
+introduced.

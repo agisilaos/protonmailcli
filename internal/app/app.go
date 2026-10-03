@@ -641,12 +641,39 @@ func isTTY(r *os.File) bool {
 }
 
 func bashCompletion() string {
-	return `# protonmailcli bash completion
-_protonmailcli_completions()
-{
-  COMPREPLY=( $(compgen -W "setup doctor completion bridge auth draft message search mailbox tag filter" -- "${COMP_WORDS[1]}") )
+	return `#!/usr/bin/env bash
+_protonmailcli_completions() {
+  local cur="${COMP_WORDS[COMP_CWORD]}" word i candidates
+  local -a path=()
+  COMPREPLY=()
+  for ((i=1; i<COMP_CWORD; i++)); do
+    word="${COMP_WORDS[i]}"
+    if [[ ${#path[@]} -gt 0 && "$word" == -* ]]; then return; fi
+    case "$word" in
+      --profile|--config|--state) ((i++)); [[ $i -lt $COMP_CWORD ]] || return ;;
+      --json|--plain|--no-input|--dry-run|-n) ;;
+      -*) return ;;
+      *) path+=("$word") ;;
+    esac
+  done
+  case "${path[*]}" in
+    "") candidates="setup doctor completion bridge auth draft message search mailbox tag filter" ;;
+    "bridge") candidates="account" ;;
+    "bridge account") candidates="list use" ;;
+    "auth") candidates="login status logout" ;;
+    "draft") candidates="create create-many update get list delete" ;;
+    "message") candidates="send send-many get follow-up" ;;
+    "search") candidates="messages drafts" ;;
+    "mailbox") candidates="list resolve" ;;
+    "tag") candidates="list create add remove" ;;
+    "filter") candidates="list create delete test apply" ;;
+    "completion") candidates="bash zsh fish" ;;
+    *) return ;;
+  esac
+  COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
 }
-complete -F _protonmailcli_completions protonmailcli`
+complete -F _protonmailcli_completions protonmailcli
+`
 }
 
 func zshCompletion() string {
