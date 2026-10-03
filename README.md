@@ -604,3 +604,9 @@ state readable. Existing regular-file permissions are preserved; new files use
 0600. Symlink and directory targets are rejected without replacement. Use a
 regular state file. Run one state-writing process at a time; atomic replacement
 does not provide cross-process locking or a power-loss durability guarantee.
+
+Message search and draft listing fail if any selected message cannot be fetched.
+A failed collection returns an error rather than a successful partial or empty list;
+retry the read after resolving the Bridge error.
+Message lookup and follow-up preparation report retrieval failures separately
+from a successful search with no matching message (`not_found`).

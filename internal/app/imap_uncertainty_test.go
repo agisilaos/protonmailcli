@@ -58,6 +58,19 @@ func draftIMAPServer(t *testing.T, behavior string) (int, *atomic.Int32) {
 							return
 						}
 						r = bufio.NewReader(c)
+					case "UID":
+						if len(fields) > 2 && fields[2] == "SEARCH" {
+							if behavior == "fetch-failure" {
+								fmt.Fprint(c, "* SEARCH 41\r\n")
+							} else {
+								fmt.Fprint(c, "* SEARCH\r\n")
+							}
+							fmt.Fprintf(c, "%s OK searched\r\n", tag)
+						} else if len(fields) > 2 && fields[2] == "FETCH" && behavior == "fetch-failure" {
+							fmt.Fprintf(c, "%s NO synthetic fetch failure\r\n", tag)
+						} else {
+							fmt.Fprintf(c, "%s OK done\r\n", tag)
+						}
 					case "APPEND":
 						if behavior == "reject" {
 							fmt.Fprintf(c, "%s NO rejected before literal\r\n", tag)
@@ -148,5 +161,32 @@ func TestDraftCreationErrorDistinguishesDefiniteFailures(t *testing.T) {
 	definite := draftCreationError(fmt.Errorf("synthetic pre-write failure"))
 	if classified := classifyCLIError(definite.code, definite.exit); !classified.Retryable || classified.Category != "transient" {
 		t.Fatalf("definite failure: %+v", classified)
+	}
+}
+
+func TestMessageLookupDistinguishesFetchFailureFromAbsence(t *testing.T) {
+	for _, action := range []string{"get", "follow-up"} {
+		for _, behavior := range []string{"fetch-failure", "empty-search"} {
+			t.Run(action+"/"+behavior, func(t *testing.T) {
+				port, writes := draftIMAPServer(t, behavior)
+				args := imapCommandArgs(t, port)
+				if action == "follow-up" {
+					args = append(args, "--dry-run")
+				}
+				args = append(args, "message", action, "--message-id", "imap:INBOX:41")
+				if action == "follow-up" {
+					args = append(args, "--body", "synthetic")
+				}
+				var out, errout bytes.Buffer
+				exit := Run(args, bytes.NewBuffer(nil), &out, &errout)
+				wantExit, wantCode := 4, "imap_message_fetch_failed"
+				if behavior == "empty-search" {
+					wantExit, wantCode = 5, "not_found"
+				}
+				if exit != wantExit || !strings.Contains(out.String(), `"code":"`+wantCode+`"`) || strings.Contains(out.String(), `"ok":true`) || writes.Load() != 0 {
+					t.Fatalf("exit=%d writes=%d out=%s err=%s", exit, writes.Load(), out.String(), errout.String())
+				}
+			})
+		}
 	}
 }
