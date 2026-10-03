@@ -116,6 +116,18 @@ Bridge health checks:
 
 ## Usage
 
+### IMAP draft identity and diagnostics
+
+Successful draft creation uses the server's single-message `APPENDUID`, never
+the last message in the mailbox. If an accepted append lacks a valid UID or its
+completion is uncertain, the command fails with inspection guidance and does not
+try the SMTP fallback. Inspect Drafts before retrying: the draft may already
+exist. Servers without a usable APPENDUID cannot provide a confirmed draft ID.
+The public `imap:Drafts:<uid>` format remains unchanged.
+
+`PMAIL_IMAP_DEBUG=1` omits the authentication exchange, including server text that
+could echo credentials. Other protocol diagnostics remain available.
+
 Create draft:
 
 ```bash
@@ -561,15 +573,3 @@ See [RELEASING.md](RELEASING.md) for the full runbook and [release recovery](doc
 ## License
 
 MIT (`LICENSE`)
-
-### IMAP draft identity and diagnostics
-
-Successful draft creation uses the server's single-message `APPENDUID`, never
-the last message in the mailbox. If an accepted append lacks a valid UID or its
-completion is uncertain, the command fails with inspection guidance and does not
-try the SMTP fallback. Inspect Drafts before retrying: the draft may already
-exist. Servers without a usable APPENDUID cannot provide a confirmed draft ID.
-The public `imap:Drafts:<uid>` format remains unchanged.
-
-`PMAIL_IMAP_DEBUG=1` omits the authentication exchange, including server text that
-could echo credentials. Other protocol diagnostics remain available.
