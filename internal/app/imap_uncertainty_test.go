@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"path/filepath"
+	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 	"strconv"
 	"strings"
@@ -17,7 +18,9 @@ import (
 	"time"
 )
 
-func uncertainIMAPServer(t *testing.T) (int, *atomic.Int32) {
+func uncertainIMAPServer(t *testing.T) (int, *atomic.Int32) { return draftIMAPServer(t, "missing-uid") }
+
+func draftIMAPServer(t *testing.T, behavior string) (int, *atomic.Int32) {
 	t.Helper()
 	cert := httptest.NewTLSServer(nil)
 	tc := cert.TLS.Clone()
@@ -58,6 +61,10 @@ func uncertainIMAPServer(t *testing.T) (int, *atomic.Int32) {
 						}
 						r = bufio.NewReader(c)
 					case "APPEND":
+						if behavior == "reject" {
+							fmt.Fprintf(c, "%s NO rejected before literal\r\n", tag)
+							continue
+						}
 						n, e := strconv.Atoi(strings.Trim(fields[len(fields)-1], "{}"))
 						if e != nil {
 							return
@@ -67,6 +74,9 @@ func uncertainIMAPServer(t *testing.T) (int, *atomic.Int32) {
 							return
 						}
 						count.Add(1)
+						if behavior == "lost-completion" {
+							return
+						}
 						fmt.Fprintf(c, "%s OK appended\r\n", tag)
 					case "LOGOUT":
 						fmt.Fprintf(c, "%s OK bye\r\n", tag)
@@ -95,17 +105,36 @@ func imapCommandArgs(t *testing.T, port int) []string {
 	}
 	return []string{"--json", "--config", p, "--state", filepath.Join(root, "state.json")}
 }
+
 func TestUncertainDraftDoesNotAdvertiseRetry(t *testing.T) {
-	port, count := uncertainIMAPServer(t)
-	args := imapCommandArgs(t, port)
-	args = append(args, "draft", "create", "--to", "synthetic@example.invalid", "--body", "synthetic", "--idempotency-key", "audit-key")
-	var out bytes.Buffer
-	exit := Run(args, strings.NewReader(""), &out, io.Discard)
-	if exit != 4 || count.Load() != 1 || !strings.Contains(out.String(), "uncertain") {
-		t.Fatalf("fixture did not reach uncertain append: exit=%d appends=%d out=%s", exit, count.Load(), out.String())
-	}
-	if !strings.Contains(out.String(), `"retryable":false`) || !strings.Contains(out.String(), `"code":"imap_draft_create_uncertain"`) || !strings.Contains(out.String(), `"category":"uncertain"`) {
-		t.Fatalf("uncertain committed draft advertised safe retry: %s", out.String())
+	for _, behavior := range []string{"missing-uid", "lost-completion", "reject"} {
+		t.Run(behavior, func(t *testing.T) {
+			port, count := draftIMAPServer(t, behavior)
+			args := append(imapCommandArgs(t, port), "draft", "create", "--to", "synthetic@example.invalid", "--body", "synthetic", "--idempotency-key", "audit-key")
+			previous := smtpSendFn
+			t.Cleanup(func() { smtpSendFn = previous })
+			smtpCalls := 0
+			smtpSendFn = func(bridge.SMTPConfig, bridge.SendInput) error {
+				smtpCalls++
+				return fmt.Errorf("synthetic fallback rejected")
+			}
+			var out bytes.Buffer
+			exit := Run(args, strings.NewReader(""), &out, io.Discard)
+			if behavior == "reject" {
+				if exit != 4 || count.Load() != 0 || smtpCalls != 1 || !strings.Contains(out.String(), `"code":"imap_draft_create_failed"`) || !strings.Contains(out.String(), `"retryable":true`) {
+					t.Fatalf("definite failure: exit=%d appends=%d smtp=%d output=%s", exit, count.Load(), smtpCalls, out.String())
+				}
+				return
+			}
+			if exit != 4 || count.Load() != 1 || smtpCalls != 0 {
+				t.Fatalf("uncertain dispatch: exit=%d appends=%d smtp=%d output=%s", exit, count.Load(), smtpCalls, out.String())
+			}
+			for _, want := range []string{`"retryable":false`, `"code":"imap_draft_create_uncertain"`, `"category":"uncertain"`, `Inspect Drafts before retrying`} {
+				if !strings.Contains(out.String(), want) {
+					t.Fatalf("missing %q: %s", want, out.String())
+				}
+			}
+		})
 	}
 }
 
