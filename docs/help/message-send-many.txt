@@ -3,4 +3,8 @@ Usage of message send-many:
     	manifest json path or -
   -stdin
     	read manifest json from stdin
+
+Requires a manifest via --file or --stdin. Review all recipients and confirmation fields before execution.
+Example: protonmailcli --dry-run message send-many --file manifest.json
+IMAP previews may read Bridge; help does not.
 ok

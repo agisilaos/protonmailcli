@@ -1,4 +1,7 @@
 Usage of search:
   -query string
     	query
+
+Select messages or drafts; optional filters narrow results.
+Example: protonmailcli search messages --query Example
 ok

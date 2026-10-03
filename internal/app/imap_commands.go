@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -49,9 +48,7 @@ func cmdMailboxIMAP(action string, args []string, g globalOptions, cfg config.Co
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown mailbox action: " + action}
 	}
 	if action == "resolve" {
-		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		_ = fs.String("name", "", "mailbox id or name")
+		fs, _ := newMailboxResolveFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
@@ -76,20 +73,7 @@ func cmdMailboxIMAP(action string, args []string, g globalOptions, cfg config.Co
 }
 
 func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
-	fs := flag.NewFlagSet("search", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	query := fs.String("query", "", "query")
-	mailbox := fs.String("mailbox", "", "mailbox name (messages only)")
-	from := fs.String("from", "", "from filter")
-	to := fs.String("to", "", "to filter")
-	subject := fs.String("subject", "", "subject filter")
-	hasTag := fs.String("has-tag", "", "imap keyword/tag")
-	unread := fs.Bool("unread", false, "only unread messages")
-	sinceID := fs.String("since-id", "", "minimum UID (inclusive)")
-	after := fs.String("after", "", "date filter YYYY-MM-DD")
-	before := fs.String("before", "", "date filter YYYY-MM-DD")
-	limit := fs.Int("limit", 50, "max results")
-	cursor := fs.String("cursor", "", "offset cursor")
+	fs, opts := newIMAPSearchFlags()
 	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, runtimeStdout); err != nil {
 		return nil, false, err
 	} else if handled {
@@ -100,12 +84,12 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 		return nil, false, err
 	}
 	defer c.Close()
-	criteria, err := buildIMAPCriteria(*query, *subject, *from, *to, *hasTag, *unread, *sinceID, *after, *before)
+	criteria, err := buildIMAPCriteria(opts.query, opts.subject, opts.from, opts.to, opts.hasTag, opts.unread, opts.sinceID, opts.after, opts.before)
 	if err != nil {
 		return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 	}
 	if action == "drafts" {
-		if strings.TrimSpace(*mailbox) != "" {
+		if strings.TrimSpace(opts.mailbox) != "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--mailbox is only supported for search messages"}
 		}
 		items, err := c.ListMessages("Drafts", criteria)
@@ -113,7 +97,7 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 			return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
 		}
 		sortByUIDDesc(items)
-		start, lim := parsePage(*cursor, *limit)
+		start, lim := parsePage(opts.cursor, opts.limit)
 		paged, next := paginateMessages(items, start, lim)
 		out := make([]draftRecord, 0, len(paged))
 		for _, m := range paged {
@@ -125,15 +109,15 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "search supports messages|drafts"}
 	}
 	targetMailbox := "INBOX"
-	if strings.TrimSpace(*mailbox) != "" {
-		targetMailbox = strings.TrimSpace(*mailbox)
+	if strings.TrimSpace(opts.mailbox) != "" {
+		targetMailbox = strings.TrimSpace(opts.mailbox)
 	}
 	items, err := c.ListMessages(targetMailbox, criteria)
 	if err != nil {
 		return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
 	}
 	sortByUIDDesc(items)
-	start, lim := parsePage(*cursor, *limit)
+	start, lim := parsePage(opts.cursor, opts.limit)
 	paged, next := paginateMessages(items, start, lim)
 	out := make([]messageRecord, 0, len(paged))
 	for _, m := range paged {
@@ -163,8 +147,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 	switch action {
 	case "list":
 		if len(args) > 0 {
-			fs := flag.NewFlagSet("tag list", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
+			fs := emptyHelpFlags("tag list")
 			if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag list", runtimeStdout); err != nil {
 				return nil, false, err
 			} else if handled {
@@ -181,23 +164,18 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		out := sortedUserKeywords(msgs)
 		return tagListResponse{Tags: out, Count: len(out), Source: "imap"}, false, nil
 	case "create":
-		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		name := fs.String("name", "", "tag name")
+		fs, opts := newIMAPTagCreateFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		if strings.TrimSpace(*name) == "" {
+		if strings.TrimSpace(opts.name) == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name required"}
 		}
-		return tagCreateResponse{Tag: tagInfo{Name: *name}, Changed: false, Source: "imap"}, false, nil
+		return tagCreateResponse{Tag: tagInfo{Name: opts.name}, Changed: false, Source: "imap"}, false, nil
 	case "add", "remove":
-		fs := flag.NewFlagSet("tag add/remove", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		msgID := fs.String("message-id", "", "message id")
-		tag := fs.String("tag", "", "tag name")
+		fs, opts := newIMAPTagAddRemoveFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
@@ -206,17 +184,17 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
-		uid, err := parseRequiredUID(*msgID, "--message-id")
+		uid, err := parseRequiredUID(opts.msgID, "--message-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		if strings.TrimSpace(*tag) == "" {
+		if strings.TrimSpace(opts.tag) == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--tag required"}
 		}
-		if err := c.SetKeyword("INBOX", uid, *tag, action == "add"); err != nil {
+		if err := c.SetKeyword("INBOX", uid, opts.tag, action == "add"); err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_tag_update_failed", msg: err.Error()}
 		}
-		return tagUpdateResponse{MessageID: imapMessageID(uid), Tag: *tag, Changed: true, Source: "imap"}, true, nil
+		return tagUpdateResponse{MessageID: imapMessageID(uid), Tag: opts.tag, Changed: true, Source: "imap"}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
@@ -369,5 +347,5 @@ func usageForFlagSet(fs *flag.FlagSet) string {
 	fs.SetOutput(&b)
 	fs.PrintDefaults()
 	fs.SetOutput(prev)
-	return strings.TrimRight("Usage of "+fs.Name()+":\n"+b.String(), "\n")
+	return strings.TrimRight("Usage of "+fs.Name()+":\n"+b.String(), "\n") + "\n\n" + commandHelpNotes(fs.Name())
 }

@@ -1,4 +1,7 @@
 Usage of mailbox resolve:
   -name string
     	mailbox id or name
+
+Requires --name.
+Example: protonmailcli mailbox resolve --name Inbox
 ok

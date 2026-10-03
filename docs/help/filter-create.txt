@@ -5,4 +5,7 @@ Usage of filter create:
     	subject/body contains
   -name string
     	name
+
+Requires --name, --contains and --add-tag.
+Example: protonmailcli --dry-run filter create --name Example --contains Example --add-tag Example
 ok

@@ -2,9 +2,7 @@ package app
 
 import (
 	"errors"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -37,19 +35,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 
 	switch action {
 	case "list":
-		fs := flag.NewFlagSet("draft list", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		query := fs.String("query", "", "text query")
-		from := fs.String("from", "", "from filter")
-		to := fs.String("to", "", "to filter")
-		after := fs.String("after", "", "date filter YYYY-MM-DD")
-		before := fs.String("before", "", "date filter YYYY-MM-DD")
-		limit := fs.Int("limit", 50, "max results")
-		cursor := fs.String("cursor", "", "offset cursor")
+		fs, opts := newIMAPDraftListFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		criteria, err := buildIMAPCriteria(*query, "", *from, *to, "", false, "", *after, *before)
+		criteria, err := buildIMAPCriteria(opts.query, "", opts.from, opts.to, "", false, "", opts.after, opts.before)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -61,7 +51,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			return nil, false, cliError{exit: 4, code: "imap_draft_list_failed", msg: err.Error()}
 		}
 		sortByUIDDesc(drafts)
-		start, lim := parsePage(*cursor, *limit)
+		start, lim := parsePage(opts.cursor, opts.limit)
 		paged, next := paginateMessages(drafts, start, lim)
 		out := make([]draftRecord, 0, len(drafts))
 		for _, d := range paged {
@@ -78,13 +68,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		}
 		return draftListResponse{Drafts: out, Count: len(out), Total: len(drafts), NextCursor: next, Source: "imap"}, false, nil
 	case "get":
-		fs := flag.NewFlagSet("draft get", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("draft-id", "", "draft id")
+		fs, opts := newIMAPDraftGetFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--draft-id")
+		uid, err := parseRequiredUID(opts.id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -100,27 +88,19 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			Source: "imap",
 		}, false, nil
 	case "create":
-		fs := flag.NewFlagSet("draft create", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		var to sliceFlag
-		subject := fs.String("subject", "", "subject")
-		body := fs.String("body", "", "body")
-		bodyFile := fs.String("body-file", "", "body from file or -")
-		stdinBody := fs.Bool("stdin", false, "read body from stdin")
-		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		fs.Var(&to, "to", "recipient (repeat)")
+		fs, opts := newIMAPDraftCreateFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		if len(to) == 0 {
+		if len(opts.to) == 0 {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "at least one --to is required"}
 		}
-		b, err := loadBody(*body, *bodyFile, *stdinBody)
+		b, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		payload := map[string]any{"to": []string(to), "subject": *subject, "body": b}
-		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "draft.create", payload); err != nil {
+		payload := map[string]any{"to": []string(opts.to), "subject": opts.subject, "body": b}
+		if found, cached, err := idempotencyLookup(st, opts.idempotencyKey, "draft.create", payload); err != nil {
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
@@ -128,46 +108,42 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
-		raw := bridge.BuildRawMessage(username, to, *subject, b)
+		raw := bridge.BuildRawMessage(username, opts.to, opts.subject, b)
 		if g.dryRun {
 			return map[string]any{"action": "draft.create", "wouldCreate": true, "source": "imap"}, true, nil
 		}
-		if err := reserveDraft(st, *idempotencyKey, "draft.create", payload, checkpoint); err != nil {
+		if err := reserveDraft(st, opts.idempotencyKey, "draft.create", payload, checkpoint); err != nil {
 			return nil, false, err
 		}
-		uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, to, *subject, b, raw, nil)
+		uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, opts.to, opts.subject, b, raw, nil)
 		if err != nil {
 			failure := draftCreationError(err)
-			if saveErr := completeDraft(st, *idempotencyKey, "draft.create", payload, nil, &failure, checkpoint); saveErr != nil {
+			if saveErr := completeDraft(st, opts.idempotencyKey, "draft.create", payload, nil, &failure, checkpoint); saveErr != nil {
 				return nil, false, saveErr
 			}
 			return nil, false, failure
 		}
 		resp := draftResponse{
-			Draft:      draftRecord{ID: imapDraftID(uid), UID: uid, To: to, Subject: *subject, Body: b},
+			Draft:      draftRecord{ID: imapDraftID(uid), UID: uid, To: opts.to, Subject: opts.subject, Body: b},
 			CreatePath: createPath,
 			Source:     "imap",
 		}
-		if err := completeDraft(st, *idempotencyKey, "draft.create", payload, resp, nil, checkpoint); err != nil {
+		if err := completeDraft(st, opts.idempotencyKey, "draft.create", payload, resp, nil, checkpoint); err != nil {
 			return nil, false, err
 		}
-		return resp, *idempotencyKey == "", nil
+		return resp, opts.idempotencyKey == "", nil
 	case "create-many":
-		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		file := fs.String("file", "", "manifest json path or -")
-		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
-		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
+		fs, opts := newIMAPDraftCreateManyFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		items, err := parseDraftCreateManifestInput(*file, *fromStdin)
+		items, err := parseDraftCreateManifestInput(opts.file, opts.fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "draft.create-many", items); err != nil {
+		if found, cached, err := idempotencyLookup(st, opts.idempotencyKey, "draft.create-many", items); err != nil {
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
@@ -176,7 +152,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			return nil, false, err
 		}
 		if !g.dryRun {
-			if err := reserveDraft(st, *idempotencyKey, "draft.create-many", items, checkpoint); err != nil {
+			if err := reserveDraft(st, opts.idempotencyKey, "draft.create-many", items, checkpoint); err != nil {
 				return nil, false, err
 			}
 		}
@@ -209,23 +185,17 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		}
 		resp := draftCreationBatchResult(results, success)
 		if !g.dryRun {
-			if err := completeDraft(st, *idempotencyKey, "draft.create-many", items, resp, nil, checkpoint); err != nil {
+			if err := completeDraft(st, opts.idempotencyKey, "draft.create-many", items, resp, nil, checkpoint); err != nil {
 				return nil, false, err
 			}
 		}
-		return resp, *idempotencyKey == "" && success > 0, nil
+		return resp, opts.idempotencyKey == "" && success > 0, nil
 	case "update":
-		fs := flag.NewFlagSet("draft update", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("draft-id", "", "draft id")
-		subject := fs.String("subject", "", "subject")
-		body := fs.String("body", "", "body")
-		bodyFile := fs.String("body-file", "", "body from file or -")
-		stdinBody := fs.Bool("stdin", false, "read body from stdin")
+		fs, opts := newIMAPDraftUpdateFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--draft-id")
+		uid, err := parseRequiredUID(opts.id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -236,11 +206,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err != nil {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
 		}
-		if *subject != "" {
-			d.Subject = *subject
+		if opts.subject != "" {
+			d.Subject = opts.subject
 		}
-		if *body != "" || *bodyFile != "" || *stdinBody {
-			nextBody, err := loadBody(*body, *bodyFile, *stdinBody)
+		if opts.body != "" || opts.bodyFile != "" || opts.stdinBody {
+			nextBody, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
 			if err != nil {
 				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 			}
@@ -261,13 +231,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			Source: "imap",
 		}, true, nil
 	case "delete":
-		fs := flag.NewFlagSet("draft delete", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("draft-id", "", "draft id")
+		fs, opts := newIMAPDraftDeleteFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--draft-id")
+		uid, err := parseRequiredUID(opts.id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -404,13 +372,11 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 
 	switch action {
 	case "get":
-		fs := flag.NewFlagSet("message get", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("message-id", "", "message id")
+		fs, opts := newIMAPMessageGetFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		mailbox, uid, err := parseMailboxUID(*id, "INBOX")
+		mailbox, uid, err := parseMailboxUID(opts.id, "INBOX")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -438,19 +404,13 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			Source: "imap",
 		}, false, nil
 	case "send":
-		fs := flag.NewFlagSet("message send", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		draftID := fs.String("draft-id", "", "draft id")
-		confirm := fs.String("confirm-send", "", "confirmation token")
-		force := fs.Bool("force", false, "force send without confirm token")
-		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
-		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
+		fs, opts := newIMAPMessageSendFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		uid, err := parseRequiredUID(*draftID, "--draft-id")
+		uid, err := parseRequiredUID(opts.draftID, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -461,21 +421,21 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err != nil {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		payload := map[string]any{"draftId": *draftID, "confirm": *confirm, "force": *force, "to": d.To, "subject": d.Subject, "body": d.Body}
-		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "message.send", payload); err != nil {
+		payload := map[string]any{"draftId": opts.draftID, "confirm": opts.confirm, "force": opts.force, "to": d.To, "subject": d.Subject, "body": d.Body}
+		if found, cached, err := idempotencyLookup(st, opts.idempotencyKey, "message.send", payload); err != nil {
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
 		}
-		if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), *confirm, *draftID, uid, *force); err != nil {
+		if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), opts.confirm, opts.draftID, uid, opts.force); err != nil {
 			return nil, false, err
 		}
 		if g.dryRun {
 			return sendPlanResponse{Action: "send", DraftID: imapDraftID(uid), WouldSend: true, DryRun: true, SendPath: "smtp", Source: "imap"}, true, nil
 		}
 		pass := strings.TrimSpace(password)
-		if *passwordFile != "" {
-			_, p, err := resolveBridgeCredentials(cfg, st, *passwordFile)
+		if opts.passwordFile != "" {
+			_, p, err := resolveBridgeCredentials(cfg, st, opts.passwordFile)
 			if err != nil {
 				return nil, false, err
 			}
@@ -492,25 +452,20 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			Source   string `json:"source"`
 			SentAt   string `json:"sentAt"`
 		}{Sent: true, DraftID: imapDraftID(uid), SendPath: "smtp", Source: "imap", SentAt: time.Now().UTC().Format(time.RFC3339)}
-		_ = idempotencyStore(st, *idempotencyKey, "message.send", payload, resp)
+		_ = idempotencyStore(st, opts.idempotencyKey, "message.send", payload, resp)
 		return resp, true, nil
 	case "send-many":
-		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		file := fs.String("file", "", "manifest json path or -")
-		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
-		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
-		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
+		fs, opts := newIMAPMessageSendManyFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		items, err := parseSendManyManifestInput(*file, *fromStdin)
+		items, err := parseSendManyManifestInput(opts.file, opts.fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "message.send-many", items); err != nil {
+		if found, cached, err := idempotencyLookup(st, opts.idempotencyKey, "message.send-many", items); err != nil {
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
@@ -519,8 +474,8 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, err
 		}
 		pass := strings.TrimSpace(password)
-		if *passwordFile != "" {
-			_, p, err := resolveBridgeCredentials(cfg, st, *passwordFile)
+		if opts.passwordFile != "" {
+			_, p, err := resolveBridgeCredentials(cfg, st, opts.passwordFile)
 			if err != nil {
 				return nil, false, err
 			}
@@ -566,25 +521,16 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		} else if success > 0 && (len(results)-success) > 0 {
 			resp.exitCode = 10
 		}
-		_ = idempotencyStore(st, *idempotencyKey, "message.send-many", items, resp)
+		_ = idempotencyStore(st, opts.idempotencyKey, "message.send-many", items, resp)
 		return resp, success > 0, nil
 	case "follow-up":
-		fs := flag.NewFlagSet("message follow-up", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		msgID := fs.String("message-id", "", "message id")
-		var to sliceFlag
-		subject := fs.String("subject", "", "subject override")
-		body := fs.String("body", "", "body")
-		bodyFile := fs.String("body-file", "", "body from file or -")
-		stdinBody := fs.Bool("stdin", false, "read body from stdin")
-		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		fs.Var(&to, "to", "recipient (repeat)")
+		fs, opts := newIMAPMessageFollowUpFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message follow-up", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		mailbox, uid, err := parseMailboxUID(*msgID, "INBOX")
+		mailbox, uid, err := parseMailboxUID(opts.msgID, "INBOX")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--message-id required"}
 		}
@@ -599,18 +545,18 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
 		orig := msgs[0]
-		recipients := []string(to)
+		recipients := []string(opts.to)
 		if len(recipients) == 0 {
 			recipients = imapFollowUpRecipients(orig.From, orig.To, username)
 		}
 		if len(recipients) == 0 {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "could not resolve recipients; pass --to"}
 		}
-		bodyText, err := loadBody(*body, *bodyFile, *stdinBody)
+		bodyText, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		followSubject := followUpSubject(*subject, orig.Subject)
+		followSubject := followUpSubject(opts.subject, orig.Subject)
 		inReplyTo, refs := threadHeaders(orig.MessageID, orig.References)
 		if inReplyTo == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "message has no Message-ID; cannot create threaded follow-up"}
@@ -623,7 +569,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			"inReplyTo":  inReplyTo,
 			"references": refs,
 		}
-		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "message.follow-up", payload); err != nil {
+		if found, cached, err := idempotencyLookup(st, opts.idempotencyKey, "message.follow-up", payload); err != nil {
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
@@ -663,7 +609,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			ThreadInReplyTo: inReplyTo,
 			References:      refs,
 		}
-		_ = idempotencyStore(st, *idempotencyKey, "message.follow-up", payload, resp)
+		_ = idempotencyStore(st, opts.idempotencyKey, "message.follow-up", payload, resp)
 		return resp, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown message action: " + action}

@@ -1,0 +1,7 @@
+Usage of message get:
+  -message-id string
+    	message id
+
+Requires --message-id.
+Example: protonmailcli message get --message-id 123
+ok

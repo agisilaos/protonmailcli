@@ -12,12 +12,7 @@ import (
 func parseFlagSetWithHelp(fs *flag.FlagSet, args []string, g globalOptions, helpName string, stdout io.Writer) (any, bool, error) {
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			usage := usageForFlagSet(fs)
-			if g.mode == output.ModeJSON || g.mode == output.ModePlain {
-				return map[string]any{"help": helpName, "usage": usage}, true, nil
-			}
-			fmt.Fprintln(stdout, usage)
-			return map[string]any{"help": helpName}, true, nil
+			return renderFlagHelp(fs, g, helpName, stdout)
 		}
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 	}
@@ -38,4 +33,15 @@ func parseSendManyManifestInput(file string, fromStdin bool) ([]sendManyItem, er
 		return nil, err
 	}
 	return loadSendManyManifest(manifestPath, fromStdin)
+}
+
+func renderFlagHelp(fs *flag.FlagSet, g globalOptions, name string, stdout io.Writer) (any, bool, error) {
+	usage := usageForFlagSet(fs)
+	if g.mode == output.ModeJSON || g.mode == output.ModePlain {
+		return map[string]any{"help": name, "usage": usage}, true, nil
+	}
+	if _, err := fmt.Fprintln(stdout, usage); err != nil {
+		return nil, true, err
+	}
+	return map[string]any{"help": name}, true, nil
 }

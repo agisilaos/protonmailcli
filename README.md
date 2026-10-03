@@ -610,3 +610,16 @@ A failed collection returns an error rather than a successful partial or empty l
 retry the read after resolving the Bridge error.
 Message lookup and follow-up preparation report retrieval failures separately
 from a successful search with no matching message (`not_found`).
+
+### Offline command help
+
+Recognized leaf `--help`/`-h` requests (including setup and completion) work
+before configuration, state, credentials or Bridge are loaded. Flags and defaults
+come from the same definitions used for execution; the local-state test mode
+shows its own supported options. Global flags still belong before the resource.
+
+Offline help uses explicit `--json`/`--plain` and `--profile`, or human output
+when omitted; it does not read saved output/profile preferences. Existing machine
+help fields remain `help` and `usage`. Values such as `--subject --help` remain
+data; help after `--` or after a positional argument does not bypass execution.
+Examples containing `--dry-run` may still read Bridge; help itself does not.
