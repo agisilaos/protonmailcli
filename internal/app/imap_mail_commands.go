@@ -418,7 +418,10 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, err
 		}
 		msgs, err := c.ListMessages(mailbox, "UID "+uid)
-		if err != nil || len(msgs) == 0 {
+		if err != nil {
+			return nil, false, cliError{exit: 4, code: "imap_message_fetch_failed", msg: err.Error()}
+		}
+		if len(msgs) == 0 {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
 		m := msgs[0]
@@ -589,7 +592,10 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return nil, false, err
 		}
 		msgs, err := c.ListMessages(mailbox, "UID "+uid)
-		if err != nil || len(msgs) == 0 {
+		if err != nil {
+			return nil, false, cliError{exit: 4, code: "imap_message_fetch_failed", msg: err.Error()}
+		}
+		if len(msgs) == 0 {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
 		orig := msgs[0]
