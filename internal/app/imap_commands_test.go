@@ -319,6 +319,17 @@ func TestUncertainDraftBatchReportsFailure(t *testing.T) {
 			if got.ExitCode() != tc.exit || got.Failed != len(tc.results)-tc.success || got.Count != len(tc.results) {
 				t.Fatalf("incorrect batch result: %+v", got)
 			}
+			state := &model.State{}
+			if err := idempotencyStore(state, "batch-key", "draft.create-many", "payload", got); err != nil {
+				t.Fatal(err)
+			}
+			hit, replayed, err := idempotencyLookup(state, "batch-key", "draft.create-many", "payload")
+			if err != nil || !hit {
+				t.Fatalf("batch replay: hit=%v err=%v", hit, err)
+			}
+			if exit := normalizeExitCode(replayed); exit != tc.exit {
+				t.Fatalf("replayed batch exit=%d, want %d", exit, tc.exit)
+			}
 		})
 	}
 }
