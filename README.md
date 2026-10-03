@@ -610,3 +610,11 @@ A failed collection returns an error rather than a successful partial or empty l
 retry the read after resolving the Bridge error.
 Message lookup and follow-up preparation report retrieval failures separately
 from a successful search with no matching message (`not_found`).
+
+### Output delivery failures
+
+A failed or short stdout write exits with status 1 when the command otherwise
+succeeded. Existing command error statuses are preserved, with an additional
+diagnostic on stderr. Output can be incomplete: a saved draft or completed
+operation remains applied. Inspect state before retrying a mutation; the CLI
+does not retry commands or failed writes to recover a missing receipt.
