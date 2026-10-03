@@ -1,0 +1,5 @@
+Usage of completion:
+
+Usage: protonmailcli completion <bash|zsh|fish>
+Example: protonmailcli completion bash > protonmailcli.bash
+ok

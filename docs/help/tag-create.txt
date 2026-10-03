@@ -1,4 +1,7 @@
 Usage of tag create:
   -name string
     	tag name
+
+Requires --name.
+Example: protonmailcli --dry-run tag create --name Example
 ok

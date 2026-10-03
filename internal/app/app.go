@@ -3,7 +3,6 @@ package app
 import (
 	"bufio"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -116,6 +115,18 @@ func (a App) runCommand(args []string) int {
 	}
 	if err := validateNoLateGlobalFlags(rest); err != nil {
 		return a.exitWithError(err, fallbackMode(g.mode), g.profile, requestID, start)
+	}
+
+	if data, handled, err := offlineHelp(rest, g); handled {
+		if err != nil {
+			fmt.Fprintf(a.Stderr, "output: %v\n", err)
+			return 1
+		}
+		if err := output.PrintSuccess(a.Stdout, fallbackMode(g.mode), data, g.profile, requestID, start); err != nil {
+			fmt.Fprintf(a.Stderr, "output: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	cfgPath := g.config
@@ -327,22 +338,13 @@ Global flags:
 }
 
 func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
-	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	interactive := fs.Bool("interactive", false, "interactive prompts")
-	nonInteractive := fs.Bool("non-interactive", false, "disable prompts")
-	host := fs.String("bridge-host", "127.0.0.1", "Bridge host")
-	smtpPort := fs.Int("bridge-smtp-port", 1025, "Bridge SMTP port")
-	imapPort := fs.Int("bridge-imap-port", 1143, "Bridge IMAP port")
-	username := fs.String("username", "", "Bridge username/email")
-	passwordFile := fs.String("smtp-password-file", "", "path to Bridge SMTP password file")
-	profile := fs.String("profile", "default", "Profile name")
+	fs, opts := newSetupFlags()
 	if err := fs.Parse(args); err != nil {
 		return cliError{exit: 2, code: "usage_error", msg: err.Error()}
 	}
-	useInteractive := *interactive || (!*nonInteractive && !g.noInput && runtimeStdinIsTTY())
+	useInteractive := opts.interactive || (!opts.nonInteractive && !g.noInput && runtimeStdinIsTTY())
 	cfg := config.Default()
-	cfg.Profile = *profile
+	cfg.Profile = opts.profile
 	if useInteractive {
 		r := bufio.NewReader(a.Stdin)
 		fmt.Fprint(a.Stderr, "Profile [default]: ")
@@ -370,11 +372,11 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 			cfg.Bridge.PasswordFile = strings.TrimSpace(v)
 		}
 	} else {
-		cfg.Bridge.Host = *host
-		cfg.Bridge.SMTPPort = *smtpPort
-		cfg.Bridge.IMAPPort = *imapPort
-		cfg.Bridge.Username = *username
-		cfg.Bridge.PasswordFile = *passwordFile
+		cfg.Bridge.Host = opts.host
+		cfg.Bridge.SMTPPort = opts.smtpPort
+		cfg.Bridge.IMAPPort = opts.imapPort
+		cfg.Bridge.Username = opts.username
+		cfg.Bridge.PasswordFile = opts.passwordFile
 		if cfg.Bridge.Username == "" {
 			return cliError{exit: 2, code: "validation_error", msg: "--username is required in non-interactive setup", hint: "Pass --username or use --interactive"}
 		}
@@ -639,12 +641,39 @@ func isTTY(r *os.File) bool {
 }
 
 func bashCompletion() string {
-	return `# protonmailcli bash completion
-_protonmailcli_completions()
-{
-  COMPREPLY=( $(compgen -W "setup doctor completion bridge auth draft message search mailbox tag filter" -- "${COMP_WORDS[1]}") )
+	return `#!/usr/bin/env bash
+_protonmailcli_completions() {
+  local cur="${COMP_WORDS[COMP_CWORD]}" word i candidates
+  local -a path=()
+  COMPREPLY=()
+  for ((i=1; i<COMP_CWORD; i++)); do
+    word="${COMP_WORDS[i]}"
+    if [[ ${#path[@]} -gt 0 && "$word" == -* ]]; then return; fi
+    case "$word" in
+      --profile|--config|--state) ((i++)); [[ $i -lt $COMP_CWORD ]] || return ;;
+      --json|--plain|--no-input|--dry-run|-n) ;;
+      -*) return ;;
+      *) path+=("$word") ;;
+    esac
+  done
+  case "${path[*]}" in
+    "") candidates="setup doctor completion bridge auth draft message search mailbox tag filter" ;;
+    "bridge") candidates="account" ;;
+    "bridge account") candidates="list use" ;;
+    "auth") candidates="login status logout" ;;
+    "draft") candidates="create create-many update get list delete" ;;
+    "message") candidates="send send-many get follow-up" ;;
+    "search") candidates="messages drafts" ;;
+    "mailbox") candidates="list resolve" ;;
+    "tag") candidates="list create add remove" ;;
+    "filter") candidates="list create delete test apply" ;;
+    "completion") candidates="bash zsh fish" ;;
+    *) return ;;
+  esac
+  COMPREPLY=( $(compgen -W "$candidates" -- "$cur") )
 }
-complete -F _protonmailcli_completions protonmailcli`
+complete -F _protonmailcli_completions protonmailcli
+`
 }
 
 func zshCompletion() string {

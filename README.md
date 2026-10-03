@@ -618,3 +618,24 @@ succeeded. Existing command error statuses are preserved, with an additional
 diagnostic on stderr. Output can be incomplete: a saved draft or completed
 operation remains applied. Inspect state before retrying a mutation; the CLI
 does not retry commands or failed writes to recover a missing receipt.
+
+### Offline command help
+
+Recognized leaf `--help`/`-h` requests (including setup and completion) work
+before configuration, state, credentials or Bridge are loaded. Flags and defaults
+come from the same definitions used for execution; the local-state test mode
+shows its own supported options. Global flags still belong before the resource.
+
+Offline help uses explicit `--json`/`--plain` and `--profile`, or human output
+when omitted; it does not read saved output/profile preferences. Existing machine
+help fields remain `help` and `usage`. Values such as `--subject --help` remain
+data; help after `--` or after a positional argument does not bypass execution.
+Examples containing `--dry-run` may still read Bridge; help itself does not.
+
+### Bash completion updates
+
+Regenerate the Bash completion script after upgrading, using the installation
+command above. Completion now suggests child commands only at a group position,
+respects global-option values, and stops at leaf arguments or `--`. It does not
+yet suggest leaf flags or dynamic IDs; no CLI syntax or other shell changes are
+introduced.

@@ -2,9 +2,7 @@ package app
 
 import (
 	"bufio"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -22,15 +20,12 @@ func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, s
 			PasswordFile: coalesce(st.Auth.PasswordFile, cfg.Bridge.PasswordFile),
 		}, false, nil
 	case "login":
-		fs := flag.NewFlagSet("auth login", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		username := fs.String("username", "", "Bridge username/email")
-		passwordFile := fs.String("password-file", "", "path to Bridge password file")
+		fs, opts := newAuthLoginFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		user := *username
-		passFile := *passwordFile
+		user := opts.username
+		passFile := opts.passwordFile
 		if user == "" {
 			user = cfg.Bridge.Username
 		}
@@ -103,13 +98,11 @@ func cmdBridge(action string, args []string, cfg config.Config, st *model.State)
 			Active:   strings.TrimSpace(st.Bridge.ActiveUsername),
 		}, false, nil
 	case "use":
-		fs := flag.NewFlagSet("bridge account use", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		username := fs.String("username", "", "bridge account username/email")
+		fs, opts := newBridgeAccountUseFlags()
 		if err := fs.Parse(args[1:]); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		u := strings.TrimSpace(*username)
+		u := strings.TrimSpace(opts.username)
 		if u == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--username is required"}
 		}

@@ -1,0 +1,21 @@
+Usage of setup:
+  -bridge-host string
+    	Bridge host (default "127.0.0.1")
+  -bridge-imap-port int
+    	Bridge IMAP port (default 1143)
+  -bridge-smtp-port int
+    	Bridge SMTP port (default 1025)
+  -interactive
+    	interactive prompts
+  -non-interactive
+    	disable prompts
+  -profile string
+    	Profile name (default "default")
+  -smtp-password-file string
+    	path to Bridge SMTP password file
+  -username string
+    	Bridge username/email
+
+Noninteractive setup requires --username; optional password-file values are paths, not passwords.
+Example: protonmailcli --no-input setup --username user@example.invalid
+ok

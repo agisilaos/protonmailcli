@@ -8,3 +8,9 @@ message-follow-up.txt	message follow-up --help
 message-send-many.txt	message send-many --help
 search-messages.txt	search messages --help
 tag-create.txt	tag create --help
+
+setup.txt	setup --help
+completion.txt	completion --help
+draft-create.txt	draft create --help
+message-get.txt	message get --help
+mailbox-list.txt	mailbox list --help

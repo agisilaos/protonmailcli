@@ -7,4 +7,8 @@ Usage of message send:
     	force send without confirm token
   -smtp-password-file string
     	path to smtp password file
+
+Requires --draft-id. Noninteractive confirmation policy may require matching --confirm-send or --force.
+Example: protonmailcli --dry-run message send --draft-id 123 --confirm-send 123
+A preview may read Bridge and validates send policy; it does not send mail.
 ok

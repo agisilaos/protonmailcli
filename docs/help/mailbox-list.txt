@@ -1,0 +1,4 @@
+Usage of mailbox list:
+
+Example: protonmailcli mailbox list
+ok
