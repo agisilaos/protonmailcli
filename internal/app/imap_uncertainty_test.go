@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-func uncertainIMAPServer(t *testing.T) (int, *atomic.Int32) { return draftIMAPServer(t, "missing-uid") }
-
 func draftIMAPServer(t *testing.T, behavior string) (int, *atomic.Int32) {
 	t.Helper()
 	cert := httptest.NewTLSServer(nil)
