@@ -13,4 +13,7 @@ Usage of message follow-up:
     	subject override
   -to value
     	recipient (repeat)
+
+Requires --message-id and one body source; creates a follow-up draft. Recipients are derived from the original message unless --to overrides them.
+Example: protonmailcli --dry-run message follow-up --message-id 123 --to user@example.invalid --body Example
 ok

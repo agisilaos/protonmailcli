@@ -1,9 +1,7 @@
 package app
 
 import (
-	"flag"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -18,9 +16,7 @@ func cmdMailbox(action string, args []string, g globalOptions, st *model.State) 
 		{ID: "sent", Name: "Sent", Kind: "system", Count: countSent(st.Messages)},
 	}
 	if action == "resolve" {
-		fs := flag.NewFlagSet("mailbox resolve", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		_ = fs.String("name", "", "mailbox id or name")
+		fs, _ := newMailboxResolveFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "mailbox resolve", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
@@ -38,15 +34,13 @@ func cmdSearch(action string, args []string, g globalOptions, st *model.State) (
 	if action != "messages" && action != "drafts" {
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "search supports messages|drafts"}
 	}
-	fs := flag.NewFlagSet("search", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	query := fs.String("query", "", "query")
+	fs, opts := newLocalSearchFlags()
 	if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "search "+action, runtimeStdout); err != nil {
 		return nil, false, err
 	} else if handled {
 		return helpData, false, nil
 	}
-	q := strings.ToLower(*query)
+	q := strings.ToLower(opts.query)
 	if action == "drafts" {
 		out := []model.Draft{}
 		for _, d := range st.Drafts {
@@ -75,36 +69,31 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 		sort.Strings(list)
 		return tagListResponse{Tags: list, Count: len(list)}, false, nil
 	case "create":
-		fs := flag.NewFlagSet("tag create", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		name := fs.String("name", "", "tag name")
+		fs, opts := newIMAPTagCreateFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag create", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		if *name == "" {
+		if opts.name == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name required"}
 		}
-		id := st.Tags[*name]
+		id := st.Tags[opts.name]
 		changed := false
 		if id == "" {
 			id = fmt.Sprintf("t_%d", time.Now().UnixNano())
-			st.Tags[*name] = id
+			st.Tags[opts.name] = id
 			changed = true
 		}
-		return tagCreateResponse{Tag: tagInfo{ID: id, Name: *name}, Changed: changed}, changed, nil
+		return tagCreateResponse{Tag: tagInfo{ID: id, Name: opts.name}, Changed: changed}, changed, nil
 	case "add", "remove":
-		fs := flag.NewFlagSet("tag add/remove", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		msgID := fs.String("message-id", "", "message id")
-		tag := fs.String("tag", "", "tag name")
+		fs, opts := newIMAPTagAddRemoveFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "tag "+action, runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		uid, err := parseRequiredUID(*msgID, "--message-id")
+		uid, err := parseRequiredUID(opts.msgID, "--message-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -112,19 +101,19 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
-		if *tag == "" {
+		if opts.tag == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--tag required"}
 		}
 		changed := false
 		if action == "add" {
-			if !contains(m.Tags, *tag) {
-				m.Tags = append(m.Tags, *tag)
+			if !contains(m.Tags, opts.tag) {
+				m.Tags = append(m.Tags, opts.tag)
 				changed = true
 			}
 		} else {
 			next := make([]string, 0, len(m.Tags))
 			for _, t := range m.Tags {
-				if t != *tag {
+				if t != opts.tag {
 					next = append(next, t)
 				} else {
 					changed = true
@@ -133,7 +122,7 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 			m.Tags = next
 		}
 		st.Messages[uid] = m
-		return tagUpdateResponse{MessageID: uid, Tag: *tag, Changed: changed}, changed, nil
+		return tagUpdateResponse{MessageID: uid, Tag: opts.tag, Changed: changed}, changed, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
@@ -148,51 +137,43 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		}
 		return filterListResponse{Filters: filters, Count: len(filters)}, false, nil
 	case "create":
-		fs := flag.NewFlagSet("filter create", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		name := fs.String("name", "", "name")
-		containsQ := fs.String("contains", "", "subject/body contains")
-		addTag := fs.String("add-tag", "", "tag to add")
+		fs, opts := newLocalFilterCreateFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter create", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		if *name == "" || *containsQ == "" || *addTag == "" {
+		if opts.name == "" || opts.containsQ == "" || opts.addTag == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name, --contains and --add-tag are required"}
 		}
 		id := fmt.Sprintf("f_%d", time.Now().UnixNano())
-		f := model.Filter{ID: id, Name: *name, Contains: *containsQ, AddTag: *addTag, CreatedAt: time.Now().UTC()}
+		f := model.Filter{ID: id, Name: opts.name, Contains: opts.containsQ, AddTag: opts.addTag, CreatedAt: time.Now().UTC()}
 		if !g.dryRun {
 			st.Filters[id] = f
 		}
 		return filterCreateResponse{Filter: f}, true, nil
 	case "delete":
-		fs := flag.NewFlagSet("filter delete", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("filter-id", "", "filter id")
+		fs, opts := newLocalFilterDeleteFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter delete", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		if _, ok := st.Filters[*id]; !ok {
+		if _, ok := st.Filters[opts.id]; !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "filter not found"}
 		}
 		if !g.dryRun {
-			delete(st.Filters, *id)
+			delete(st.Filters, opts.id)
 		}
-		return filterDeleteResponse{Deleted: true, FilterID: *id}, true, nil
+		return filterDeleteResponse{Deleted: true, FilterID: opts.id}, true, nil
 	case "test", "apply":
-		fs := flag.NewFlagSet("filter test/apply", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("filter-id", "", "filter id")
+		fs, opts := newLocalFilterTestApplyFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "filter "+action, runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		f, ok := st.Filters[*id]
+		f, ok := st.Filters[opts.id]
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "filter not found"}
 		}

@@ -1,9 +1,7 @@
 package app
 
 import (
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,45 +16,30 @@ import (
 func cmdDraft(action string, args []string, g globalOptions, st *model.State) (any, bool, error) {
 	switch action {
 	case "create":
-		fs := flag.NewFlagSet("draft create", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		var to sliceFlag
-		var tags sliceFlag
-		subject := fs.String("subject", "", "subject")
-		body := fs.String("body", "", "body")
-		bodyFile := fs.String("body-file", "", "body from file or -")
-		stdinBody := fs.Bool("stdin", false, "read body from stdin")
-		fs.Var(&to, "to", "recipient (repeat)")
-		fs.Var(&tags, "tag", "tag (repeat)")
+		fs, opts := newLocalDraftCreateFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		if len(to) == 0 {
+		if len(opts.to) == 0 {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "at least one --to is required"}
 		}
-		b, err := loadBody(*body, *bodyFile, *stdinBody)
+		b, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		now := time.Now().UTC()
 		id := fmt.Sprintf("d_%d", now.UnixNano())
-		d := model.Draft{ID: id, To: to, Subject: *subject, Body: b, Tags: tags, CreatedAt: now, UpdatedAt: now}
+		d := model.Draft{ID: id, To: opts.to, Subject: opts.subject, Body: b, Tags: opts.tags, CreatedAt: now, UpdatedAt: now}
 		if !g.dryRun {
 			st.Drafts[id] = d
 		}
 		return localDraftResponse{Draft: d, CreatePath: "local_state", Source: "local"}, true, nil
 	case "update":
-		fs := flag.NewFlagSet("draft update", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("draft-id", "", "draft id")
-		subject := fs.String("subject", "", "subject")
-		body := fs.String("body", "", "body")
-		bodyFile := fs.String("body-file", "", "body from file or -")
-		stdinBody := fs.Bool("stdin", false, "read body from stdin")
+		fs, opts := newIMAPDraftUpdateFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--draft-id")
+		uid, err := parseRequiredUID(opts.id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -64,11 +47,11 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		if *subject != "" {
-			d.Subject = *subject
+		if opts.subject != "" {
+			d.Subject = opts.subject
 		}
-		if *body != "" || *bodyFile != "" || *stdinBody {
-			nextBody, err := loadBody(*body, *bodyFile, *stdinBody)
+		if opts.body != "" || opts.bodyFile != "" || opts.stdinBody {
+			nextBody, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
 			if err != nil {
 				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 			}
@@ -80,13 +63,11 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		}
 		return localDraftResponse{Draft: d}, true, nil
 	case "get":
-		fs := flag.NewFlagSet("draft get", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("draft-id", "", "draft id")
+		fs, opts := newIMAPDraftGetFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--draft-id")
+		uid, err := parseRequiredUID(opts.id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -107,13 +88,11 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		}
 		return localDraftListResponse{Drafts: out, Count: len(out)}, false, nil
 	case "delete":
-		fs := flag.NewFlagSet("draft delete", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("draft-id", "", "draft id")
+		fs, opts := newIMAPDraftDeleteFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--draft-id")
+		uid, err := parseRequiredUID(opts.id, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -125,16 +104,13 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		}
 		return draftDeleteResponse{Deleted: true, DraftID: uid}, true, nil
 	case "create-many":
-		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		file := fs.String("file", "", "manifest json path or -")
-		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
+		fs, opts := newLocalDraftCreateManyFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "draft create-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		items, err := parseDraftCreateManifestInput(*file, *fromStdin)
+		items, err := parseDraftCreateManifestInput(opts.file, opts.fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -177,13 +153,11 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 func cmdMessage(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
 	switch action {
 	case "get":
-		fs := flag.NewFlagSet("message get", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		id := fs.String("message-id", "", "message id")
+		fs, opts := newIMAPMessageGetFlags()
 		if err := fs.Parse(args); err != nil {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: err.Error()}
 		}
-		uid, err := parseRequiredUID(*id, "--message-id")
+		uid, err := parseRequiredUID(opts.id, "--message-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -193,18 +167,13 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		}
 		return localMessageGetResponse{Message: m}, false, nil
 	case "send":
-		fs := flag.NewFlagSet("message send", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		draftID := fs.String("draft-id", "", "draft id")
-		confirm := fs.String("confirm-send", "", "confirmation token")
-		force := fs.Bool("force", false, "force send without confirm token")
-		passwordFile := fs.String("smtp-password-file", "", "path to smtp password file")
+		fs, opts := newLocalMessageSendFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		uid, err := parseRequiredUID(*draftID, "--draft-id")
+		uid, err := parseRequiredUID(opts.draftID, "--draft-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -212,14 +181,14 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), *confirm, d.ID, "", *force); err != nil {
+		if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), opts.confirm, d.ID, "", opts.force); err != nil {
 			return nil, false, err
 		}
-		if *force {
+		if opts.force {
 			fmt.Fprintln(runtimeStderr, "warning: forcing send by policy override")
 		}
 		password := strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD"))
-		candidatePasswordFile := firstNonEmpty(*passwordFile, st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
+		candidatePasswordFile := firstNonEmpty(opts.passwordFile, st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
 		if password == "" && candidatePasswordFile != "" {
 			b, err := os.ReadFile(filepath.Clean(config.Expand(candidatePasswordFile)))
 			if err != nil {
@@ -245,16 +214,13 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		st.Drafts[d.ID] = d
 		return messageSendResponse{Sent: true, Message: m, SendPath: "local_state", Source: "local"}, true, nil
 	case "send-many":
-		fs := flag.NewFlagSet("message send-many", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		file := fs.String("file", "", "manifest json path or -")
-		fromStdin := fs.Bool("stdin", false, "read manifest json from stdin")
+		fs, opts := newLocalMessageSendManyFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		items, err := parseSendManyManifestInput(*file, *fromStdin)
+		items, err := parseSendManyManifestInput(opts.file, opts.fromStdin)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -306,22 +272,13 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		}
 		return resp, success > 0, nil
 	case "follow-up":
-		fs := flag.NewFlagSet("message follow-up", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		msgID := fs.String("message-id", "", "message id")
-		var to sliceFlag
-		subject := fs.String("subject", "", "subject override")
-		body := fs.String("body", "", "body")
-		bodyFile := fs.String("body-file", "", "body from file or -")
-		stdinBody := fs.Bool("stdin", false, "read body from stdin")
-		idempotencyKey := fs.String("idempotency-key", "", "idempotency key")
-		fs.Var(&to, "to", "recipient (repeat)")
+		fs, opts := newIMAPMessageFollowUpFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message follow-up", runtimeStdout); err != nil {
 			return nil, false, err
 		} else if handled {
 			return helpData, false, nil
 		}
-		uid, err := parseRequiredUID(*msgID, "--message-id")
+		uid, err := parseRequiredUID(opts.msgID, "--message-id")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
@@ -329,25 +286,25 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "message not found"}
 		}
-		recipients := []string(to)
+		recipients := []string(opts.to)
 		if len(recipients) == 0 {
 			recipients = localFollowUpRecipients(orig, firstNonEmpty(st.Auth.Username, cfg.Bridge.Username))
 		}
 		if len(recipients) == 0 {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "could not resolve recipients; pass --to"}
 		}
-		bodyText, err := loadBody(*body, *bodyFile, *stdinBody)
+		bodyText, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		followUpSubject := followUpSubject(*subject, orig.Subject)
+		followUpSubject := followUpSubject(opts.subject, orig.Subject)
 		payload := map[string]any{
-			"messageId": *msgID,
+			"messageId": opts.msgID,
 			"to":        recipients,
 			"subject":   followUpSubject,
 			"body":      bodyText,
 		}
-		if found, cached, err := idempotencyLookup(st, *idempotencyKey, "message.follow-up", payload); err != nil {
+		if found, cached, err := idempotencyLookup(st, opts.idempotencyKey, "message.follow-up", payload); err != nil {
 			return nil, false, err
 		} else if found {
 			return cached, false, nil
@@ -375,7 +332,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		}
 		st.Drafts[id] = d
 		resp := localMessageFollowUpResponse{Draft: d, CreatePath: "local_state", Source: "local"}
-		_ = idempotencyStore(st, *idempotencyKey, "message.follow-up", payload, resp)
+		_ = idempotencyStore(st, opts.idempotencyKey, "message.follow-up", payload, resp)
 		return resp, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown message action: " + action}
