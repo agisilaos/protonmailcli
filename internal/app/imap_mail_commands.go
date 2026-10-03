@@ -192,10 +192,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid, CreatePath: createPath})
 			success++
 		}
-		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
-		if success > 0 && (len(results)-success) > 0 {
-			resp.exitCode = 10
-		}
+		resp := draftCreationBatchResult(results, success)
 		_ = idempotencyStore(st, *idempotencyKey, "draft.create-many", items, resp)
 		return resp, success > 0, nil
 	case "update":
@@ -272,6 +269,17 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown draft action: " + action}
 	}
+}
+
+func draftCreationBatchResult(results []batchItemResponse, success int) batchResultResponse {
+	resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
+	if resp.Failed > 0 {
+		resp.exitCode = 4
+		if success > 0 {
+			resp.exitCode = 10
+		}
+	}
+	return resp
 }
 
 func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State, username string, to []string, subject, body, raw string, extraHeaders map[string]string) (string, string, error) {

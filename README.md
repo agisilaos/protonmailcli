@@ -123,7 +123,9 @@ the last message in the mailbox. If an accepted append lacks a valid UID or its
 completion is uncertain, the command fails with inspection guidance and does not
 try the SMTP fallback. Inspect Drafts before retrying: the draft may already
 exist. Servers without a usable APPENDUID cannot provide a confirmed draft ID.
-The public `imap:Drafts:<uid>` format remains unchanged.
+The public `imap:Drafts:<uid>` format remains unchanged. IMAP `draft create-many`
+returns exit 4 when every item fails and exit 10 for mixed success/failure;
+per-item failure details remain in the batch result.
 
 `PMAIL_IMAP_DEBUG=1` omits the authentication exchange, including server text that
 could echo credentials. Other protocol diagnostics remain available.
