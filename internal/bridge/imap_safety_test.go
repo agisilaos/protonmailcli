@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -92,6 +93,63 @@ func TestLoginDoesNotExposeCredentials(t *testing.T) {
 			}
 			if !strings.Contains(sent.String(), pass) {
 				t.Fatal("wire authentication changed")
+			}
+		})
+	}
+}
+
+func TestListMessagesRejectsIncompleteFetches(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		failAt  int
+		failure string
+	}{
+		{"first", 0, "NO unavailable\r\n"}, {"middle", 1, "NO unavailable\r\n"}, {"last", 2, "BAD invalid\r\n"},
+		{"missing literal", 1, "OK fetched\r\n"}, {"truncated", 1, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transcript := "A0001 OK selected\r\n* SEARCH 41 42 43\r\nA0002 OK searched\r\n"
+			for i := 0; i < 3; i++ {
+				tag := fmt.Sprintf("A%04d", i+3)
+				if i == tc.failAt {
+					if tc.failure != "" {
+						transcript += tag + " " + tc.failure
+					}
+					break
+				}
+				raw := "Subject: synthetic\r\n\r\nbody"
+				transcript += fmt.Sprintf("* 1 FETCH (UID %d BODY[] {%d}\r\n%s)\r\n%s OK fetched\r\n", 41+i, len(raw), raw, tag)
+			}
+			var sent bytes.Buffer
+			c := &IMAPClient{r: bufio.NewReader(strings.NewReader(transcript)), w: bufio.NewWriter(&sent), tag: 1}
+			messages, err := c.ListMessages("INBOX", "ALL")
+			if err == nil || messages != nil {
+				t.Fatalf("partial success: messages=%v err=%v", messages, err)
+			}
+			if n := strings.Count(sent.String(), "UID FETCH"); n != tc.failAt+1 {
+				t.Fatalf("fetches=%d want=%d", n, tc.failAt+1)
+			}
+		})
+	}
+}
+
+func TestListMessagesCompleteAndEmpty(t *testing.T) {
+	for _, count := range []int{0, 2} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			transcript := "A0001 OK selected\r\n* SEARCH"
+			for i := 0; i < count; i++ {
+				transcript += fmt.Sprintf(" %d", 41+i)
+			}
+			transcript += "\r\nA0002 OK searched\r\n"
+			for i := 0; i < count; i++ {
+				raw := "Subject: synthetic\r\n\r\nbody"
+				transcript += fmt.Sprintf("* 1 FETCH (UID %d BODY[] {%d}\r\n%s)\r\nA%04d OK fetched\r\n", 41+i, len(raw), raw, i+3)
+			}
+			var sent bytes.Buffer
+			c := &IMAPClient{r: bufio.NewReader(strings.NewReader(transcript)), w: bufio.NewWriter(&sent), tag: 1}
+			messages, err := c.ListMessages("INBOX", "ALL")
+			if err != nil || len(messages) != count {
+				t.Fatalf("messages=%v err=%v", messages, err)
 			}
 		})
 	}

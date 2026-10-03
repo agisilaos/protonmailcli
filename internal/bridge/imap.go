@@ -139,7 +139,7 @@ func (c *IMAPClient) ListMessages(mailbox, criteria string) ([]DraftMessage, err
 	for _, uid := range uids {
 		m, err := c.fetchUID(mailbox, uid)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("fetch message UID %s from mailbox %q: %w", uid, mailbox, err)
 		}
 		msgs = append(msgs, m)
 	}
