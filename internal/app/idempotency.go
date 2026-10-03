@@ -24,6 +24,13 @@ func idempotencyLookup(st *model.State, key, op string, payload any) (bool, any,
 	if rec.Operation != op || rec.PayloadHash != h {
 		return false, nil, cliError{exit: 6, code: "idempotency_conflict", msg: "idempotency key already used with different payload"}
 	}
+	if rec.Status != "" && rec.Status != "complete" {
+		return true, nil, pendingDraftError()
+	}
+	if rec.Failure != nil {
+		f := rec.Failure
+		return true, nil, cliError{exit: f.Exit, code: f.Code, msg: f.Message, hint: f.Hint}
+	}
 	if len(rec.Response) == 0 {
 		return true, map[string]any{"ok": true, "replayed": true}, nil
 	}
@@ -69,4 +76,44 @@ func payloadHash(v any) (string, error) {
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func pendingDraftError() cliError {
+	return cliError{exit: 4, code: "imap_draft_create_uncertain", msg: "draft creation has an unfinished recovery record", hint: "Inspect Drafts before retrying. Keep this key and state; reconcile every batch item. Only after independently confirming absence, use a new key for missing drafts."}
+}
+
+// reserveDraft persists intent before any keyed draft can be dispatched.
+func reserveDraft(st *model.State, key, op string, payload any, checkpoint func(model.State) error) error {
+	if key == "" {
+		return nil
+	}
+	if err := idempotencyStore(st, key, op, payload, nil); err != nil {
+		return err
+	}
+	rec := st.Idempotency[key]
+	rec.Status = "pending"
+	st.Idempotency[key] = rec
+	if err := checkpoint(*st); err != nil {
+		return cliError{exit: 1, code: "state_save_failed", msg: "cannot persist draft intent; no draft dispatched", hint: err.Error()}
+	}
+	return nil
+}
+
+func completeDraft(st *model.State, key, op string, payload, response any, failure *cliError, checkpoint func(model.State) error) error {
+	if key == "" {
+		return nil
+	}
+	if err := idempotencyStore(st, key, op, payload, response); err != nil {
+		return err
+	}
+	rec := st.Idempotency[key]
+	rec.Status = "complete"
+	if failure != nil {
+		rec.Failure = &model.IdempotencyFailure{Exit: failure.exit, Code: failure.code, Message: failure.msg, Hint: failure.hint}
+	}
+	st.Idempotency[key] = rec
+	if err := checkpoint(*st); err != nil {
+		return pendingDraftError()
+	}
+	return nil
 }
