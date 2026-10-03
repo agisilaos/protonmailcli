@@ -125,7 +125,10 @@ try the SMTP fallback. Inspect Drafts before retrying: the draft may already
 exist. Servers without a usable APPENDUID cannot provide a confirmed draft ID.
 The public `imap:Drafts:<uid>` format remains unchanged. IMAP `draft create-many`
 returns exit 4 when every item fails and exit 10 for mixed success/failure;
-per-item failure details remain in the batch result. Replaying a cached IMAP
+per-item failure details remain in the batch result.
+Uncertain creation uses `imap_draft_create_uncertain`; single-command JSON errors
+use category `uncertain` and `retryable: false`. Batch items carry that same error
+code. Inspect Drafts before deciding whether any replacement is needed. Replaying a cached IMAP
 batch with the same idempotency key preserves that exit status.
 
 `PMAIL_IMAP_DEBUG=1` omits the authentication exchange, including server text that
@@ -539,7 +542,7 @@ cat sends.json | ./protonmailcli --json --no-input message send-many --stdin --i
 In `--json` mode, all failures include machine-readable error fields:
 
 - `error.code` (stable programmatic code)
-- `error.category` (`usage`, `safety`, `config`, `auth`, `not_found`, `conflict`, `rate_limit`, `transient`, `runtime`)
+- `error.category` (`usage`, `safety`, `config`, `auth`, `not_found`, `conflict`, `rate_limit`, `transient`, `uncertain`, `runtime`)
 - `error.retryable` (`true` for transient/network-class failures)
 
 Current automated tests cover:

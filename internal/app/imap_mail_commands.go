@@ -134,7 +134,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		}
 		uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, to, *subject, b, raw, nil)
 		if err != nil {
-			return nil, false, cliError{exit: 4, code: "imap_draft_create_failed", msg: err.Error()}
+			return nil, false, draftCreationError(err)
 		}
 		resp := draftResponse{
 			Draft:      draftRecord{ID: imapDraftID(uid), UID: uid, To: to, Subject: *subject, Body: b},
@@ -186,7 +186,8 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			}
 			uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw, nil)
 			if err != nil {
-				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "imap_draft_create_failed", Error: err.Error()})
+				failure := draftCreationError(err)
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: failure.code, Error: failure.msg})
 				continue
 			}
 			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid, CreatePath: createPath})
@@ -269,6 +270,16 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown draft action: " + action}
 	}
+}
+
+func draftCreationError(err error) cliError {
+	code := "imap_draft_create_failed"
+	hint := ""
+	if errors.Is(err, bridge.ErrAppendUncertain) {
+		code = "imap_draft_create_uncertain"
+		hint = "Inspect Drafts before retrying; the draft may already exist."
+	}
+	return cliError{exit: 4, code: code, msg: err.Error(), hint: hint}
 }
 
 func draftCreationBatchResult(results []batchItemResponse, success int) batchResultResponse {
@@ -613,7 +624,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		raw := bridge.BuildRawMessageWithHeaders(username, recipients, followSubject, bodyText, extraHeaders)
 		newUID, createPath, err := saveDraftWithFallback(c, cfg, st, username, recipients, followSubject, bodyText, raw, extraHeaders)
 		if err != nil {
-			return nil, false, cliError{exit: 4, code: "imap_draft_create_failed", msg: err.Error()}
+			return nil, false, draftCreationError(err)
 		}
 		resp := messageFollowUpResponse{
 			Draft: draftRecord{
