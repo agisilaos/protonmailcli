@@ -27,6 +27,15 @@ func idempotencyLookup(st *model.State, key, op string, payload any) (bool, any,
 	if len(rec.Response) == 0 {
 		return true, map[string]any{"ok": true, "replayed": true}, nil
 	}
+	if op == "draft.create-many" {
+		var cached batchResultResponse
+		if err := json.Unmarshal(rec.Response, &cached); err != nil {
+			return false, nil, err
+		}
+		if cached.Source == "imap" {
+			return true, draftCreationBatchResult(cached.Results, cached.Success), nil
+		}
+	}
 	var out any
 	if err := json.Unmarshal(rec.Response, &out); err != nil {
 		return false, nil, err

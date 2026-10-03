@@ -289,3 +289,47 @@ func (f *fakeIMAPDraftClient) MoveUID(srcMailbox, uid, dstMailbox string) error 
 }
 
 func (f *fakeIMAPDraftClient) Close() error { return nil }
+
+func TestUncertainAppendDoesNotAttemptSMTPFallback(t *testing.T) {
+	primary := &fakeIMAPDraftClient{appendErr: bridge.ErrAppendUncertain}
+	uid, path, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "synthetic@example.com", []string{"recipient@example.com"}, "s", "b", "raw", nil)
+	if err != bridge.ErrAppendUncertain || uid != "" || path != "" {
+		t.Fatalf("uncertain append was replaced by fallback: uid=%q path=%q err=%v", uid, path, err)
+	}
+}
+
+func TestUncertainDraftBatchReportsFailure(t *testing.T) {
+	primary := &fakeIMAPDraftClient{appendErr: bridge.ErrAppendUncertain}
+	_, _, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "synthetic@example.com", nil, "s", "b", "raw", nil)
+	if err != bridge.ErrAppendUncertain {
+		t.Fatal(err)
+	}
+	failed := batchItemResponse{Index: 0, OK: false, ErrorCode: "imap_draft_create_failed", Error: err.Error()}
+	for _, tc := range []struct {
+		name          string
+		results       []batchItemResponse
+		success, exit int
+	}{
+		{"all uncertain", []batchItemResponse{failed}, 0, 4},
+		{"partial", []batchItemResponse{failed, {Index: 1, OK: true, UID: "41"}}, 1, 10},
+		{"success", []batchItemResponse{{OK: true, UID: "41"}}, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := draftCreationBatchResult(tc.results, tc.success)
+			if got.ExitCode() != tc.exit || got.Failed != len(tc.results)-tc.success || got.Count != len(tc.results) {
+				t.Fatalf("incorrect batch result: %+v", got)
+			}
+			state := &model.State{}
+			if err := idempotencyStore(state, "batch-key", "draft.create-many", "payload", got); err != nil {
+				t.Fatal(err)
+			}
+			hit, replayed, err := idempotencyLookup(state, "batch-key", "draft.create-many", "payload")
+			if err != nil || !hit {
+				t.Fatalf("batch replay: hit=%v err=%v", hit, err)
+			}
+			if exit := normalizeExitCode(replayed); exit != tc.exit {
+				t.Fatalf("replayed batch exit=%d, want %d", exit, tc.exit)
+			}
+		})
+	}
+}

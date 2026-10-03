@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -191,10 +192,7 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid, CreatePath: createPath})
 			success++
 		}
-		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
-		if success > 0 && (len(results)-success) > 0 {
-			resp.exitCode = 10
-		}
+		resp := draftCreationBatchResult(results, success)
 		_ = idempotencyStore(st, *idempotencyKey, "draft.create-many", items, resp)
 		return resp, success > 0, nil
 	case "update":
@@ -273,10 +271,24 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 	}
 }
 
+func draftCreationBatchResult(results []batchItemResponse, success int) batchResultResponse {
+	resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
+	if resp.Failed > 0 {
+		resp.exitCode = 4
+		if success > 0 {
+			resp.exitCode = 10
+		}
+	}
+	return resp
+}
+
 func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State, username string, to []string, subject, body, raw string, extraHeaders map[string]string) (string, string, error) {
 	uid, err := c.AppendDraft(raw)
 	if err == nil {
 		return uid, "imap_append", nil
+	}
+	if errors.Is(err, bridge.ErrAppendUncertain) {
+		return "", "", err
 	}
 	uid, err = createDraftViaMoveFallback(cfg, st, username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")), extraHeaders)
 	if err != nil {

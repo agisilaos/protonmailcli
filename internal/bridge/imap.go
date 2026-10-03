@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -49,6 +50,8 @@ type IMAPClient struct {
 	timeout time.Duration
 	debug   bool
 }
+
+var ErrAppendUncertain = errors.New("draft append outcome or identity is uncertain; inspect Drafts before retrying")
 
 var (
 	literalRe   = regexp.MustCompile(`\{(\d+)\}\r?$`)
@@ -183,25 +186,27 @@ func (c *IMAPClient) AppendDraft(raw string) (string, error) {
 
 	c.debugf("C: [literal %d bytes]", len(raw))
 	if _, err := c.w.WriteString(raw + "\r\n"); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrAppendUncertain, err)
 	}
 	if err := c.w.Flush(); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrAppendUncertain, err)
 	}
 	for {
 		line, err := c.readLine()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("%w: %v", ErrAppendUncertain, err)
 		}
 		if strings.HasPrefix(line, tag+" OK") {
-			if err := c.selectMailbox(mb); err != nil {
-				return "", err
+			// APPENDUID identifies this append even when another client writes concurrently.
+			fields := strings.Fields(line)
+			if len(fields) >= 5 && strings.EqualFold(fields[2], "[APPENDUID") && strings.HasSuffix(fields[4], "]") {
+				validity, validityErr := strconv.ParseUint(fields[3], 10, 32)
+				uid, uidErr := strconv.ParseUint(strings.TrimSuffix(fields[4], "]"), 10, 32)
+				if validityErr == nil && uidErr == nil && validity > 0 && uid > 0 {
+					return strconv.FormatUint(uid, 10), nil
+				}
 			}
-			uids, err := c.searchUID("ALL")
-			if err != nil || len(uids) == 0 {
-				return "", err
-			}
-			return uids[len(uids)-1], nil
+			return "", ErrAppendUncertain
 		}
 		if strings.HasPrefix(line, tag+" NO") || strings.HasPrefix(line, tag+" BAD") {
 			return "", fmt.Errorf("imap append failed: %s", line)
@@ -255,7 +260,14 @@ func (c *IMAPClient) login(user, pass string) error {
 	if user == "" || pass == "" {
 		return fmt.Errorf("missing IMAP credentials")
 	}
-	return c.simple(fmt.Sprintf(`LOGIN "%s" "%s"`, escape(user), escape(pass)))
+	debug := c.debug
+	c.debugf("C: LOGIN [redacted]")
+	c.debug = false
+	defer func() { c.debug = debug }()
+	if err := c.simple(fmt.Sprintf(`LOGIN "%s" "%s"`, escape(user), escape(pass))); err != nil {
+		return errors.New("IMAP authentication failed (check Bridge credentials and connectivity)")
+	}
+	return nil
 }
 
 func (c *IMAPClient) selectMailbox(mailbox string) error {
