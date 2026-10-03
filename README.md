@@ -131,6 +131,22 @@ use category `uncertain` and `retryable: false`. Batch items carry that same err
 code. Inspect Drafts before deciding whether any replacement is needed. Replaying a cached IMAP
 batch with the same idempotency key preserves that exit status.
 
+For IMAP `draft create` and `draft create-many`, keyed commands save a pending
+record before dispatch and checkpoint the terminal response, including batches
+with no confirmed successes. Reusing that key replays the saved result without
+sending again. An interruption or failed final save leaves a pending record:
+subsequent runs stop with `imap_draft_create_uncertain`, not an automatic retry.
+Inspect Drafts, retain the key and state, and reconcile every batch item. Use an
+existing draft ID when found; only after independently confirming absence should
+you create missing drafts under a new key (a batch replacement must include only
+missing items). There is no automatic reset or resume of an unfinished batch.
+
+Use one state-writing process at a time. Do not reuse recovery-bearing state with
+older binaries that ignore pending records. Unkeyed commands have no durable replay
+protection. Batch payload identity retains the existing manifest hash: body-file
+paths, rather than their resolved bytes, participate in that hash. Dry runs do not
+reserve keys. This does not provide cross-process locking or power-loss guarantees.
+
 `PMAIL_IMAP_DEBUG=1` omits the authentication exchange, including server text that
 could echo credentials. Other protocol diagnostics remain available.
 

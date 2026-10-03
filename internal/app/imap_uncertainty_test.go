@@ -71,7 +71,15 @@ func draftIMAPServer(t *testing.T, behavior string) (int, *atomic.Int32) {
 						if _, e = io.CopyN(io.Discard, r, int64(n+2)); e != nil {
 							return
 						}
-						count.Add(1)
+						number := count.Add(1)
+						if behavior == "hold" {
+							time.Sleep(3 * time.Second)
+							return
+						}
+						if behavior == "confirmed" || (behavior == "mixed" && number == 1) {
+							fmt.Fprintf(c, "%s OK [APPENDUID 123 %d] appended\r\n", tag, number)
+							continue
+						}
 						if behavior == "lost-completion" {
 							return
 						}

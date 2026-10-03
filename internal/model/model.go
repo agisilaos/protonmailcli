@@ -46,10 +46,12 @@ type AuthState struct {
 }
 
 type IdempotencyRecord struct {
-	Operation   string          `json:"operation"`
-	PayloadHash string          `json:"payloadHash"`
-	Response    json.RawMessage `json:"response"`
-	CreatedAt   time.Time       `json:"createdAt"`
+	Status      string              `json:"status,omitempty"`
+	Failure     *IdempotencyFailure `json:"failure,omitempty"`
+	Operation   string              `json:"operation"`
+	PayloadHash string              `json:"payloadHash"`
+	Response    json.RawMessage     `json:"response"`
+	CreatedAt   time.Time           `json:"createdAt"`
 }
 
 type BridgeState struct {
@@ -64,4 +66,12 @@ type State struct {
 	Auth        AuthState                    `json:"auth"`
 	Bridge      BridgeState                  `json:"bridge"`
 	Idempotency map[string]IdempotencyRecord `json:"idempotency"`
+}
+
+// IdempotencyFailure preserves the original terminal error without dispatching again.
+type IdempotencyFailure struct {
+	Exit    int    `json:"exit"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"`
 }

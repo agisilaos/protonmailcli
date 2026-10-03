@@ -14,7 +14,7 @@ import (
 	"protonmailcli/internal/model"
 )
 
-func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
+func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State, checkpoint func(model.State) error) (any, bool, error) {
 	var c *bridge.IMAPClient
 	var username string
 	ensureClient := func() error {
@@ -132,17 +132,26 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if g.dryRun {
 			return map[string]any{"action": "draft.create", "wouldCreate": true, "source": "imap"}, true, nil
 		}
+		if err := reserveDraft(st, *idempotencyKey, "draft.create", payload, checkpoint); err != nil {
+			return nil, false, err
+		}
 		uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, to, *subject, b, raw, nil)
 		if err != nil {
-			return nil, false, draftCreationError(err)
+			failure := draftCreationError(err)
+			if saveErr := completeDraft(st, *idempotencyKey, "draft.create", payload, nil, &failure, checkpoint); saveErr != nil {
+				return nil, false, saveErr
+			}
+			return nil, false, failure
 		}
 		resp := draftResponse{
 			Draft:      draftRecord{ID: imapDraftID(uid), UID: uid, To: to, Subject: *subject, Body: b},
 			CreatePath: createPath,
 			Source:     "imap",
 		}
-		_ = idempotencyStore(st, *idempotencyKey, "draft.create", payload, resp)
-		return resp, true, nil
+		if err := completeDraft(st, *idempotencyKey, "draft.create", payload, resp, nil, checkpoint); err != nil {
+			return nil, false, err
+		}
+		return resp, *idempotencyKey == "", nil
 	case "create-many":
 		fs := flag.NewFlagSet("draft create-many", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -165,6 +174,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		}
 		if err := ensureClient(); err != nil {
 			return nil, false, err
+		}
+		if !g.dryRun {
+			if err := reserveDraft(st, *idempotencyKey, "draft.create-many", items, checkpoint); err != nil {
+				return nil, false, err
+			}
 		}
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
@@ -194,8 +208,12 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			success++
 		}
 		resp := draftCreationBatchResult(results, success)
-		_ = idempotencyStore(st, *idempotencyKey, "draft.create-many", items, resp)
-		return resp, success > 0, nil
+		if !g.dryRun {
+			if err := completeDraft(st, *idempotencyKey, "draft.create-many", items, resp, nil, checkpoint); err != nil {
+				return nil, false, err
+			}
+		}
+		return resp, *idempotencyKey == "" && success > 0, nil
 	case "update":
 		fs := flag.NewFlagSet("draft update", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)

@@ -19,9 +19,10 @@ import (
 )
 
 type App struct {
-	Stdout io.Writer
-	Stderr io.Writer
-	Stdin  io.Reader
+	checkpoint func(model.State) error
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Stdin      io.Reader
 }
 
 type globalOptions struct {
@@ -160,6 +161,9 @@ func (a App) run(args []string) int {
 		return a.exitWithError(cliError{exit: 1, code: "state_error", msg: err.Error()}, g.mode, g.profile, requestID, start)
 	}
 
+	if a.checkpoint == nil {
+		a.checkpoint = st.Save
+	}
 	data, changed, err := a.dispatch(rest, g, cfg, &state)
 	if err != nil {
 		return a.exitWithError(err, g.mode, g.profile, requestID, start)
@@ -412,7 +416,7 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "draft action required"}
 		}
-		return dispatchDraft(action, args, g, cfg, state)
+		return a.dispatchDraft(action, args, g, cfg, state)
 	case "message":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "message action required"}
@@ -445,11 +449,11 @@ func dispatchMailbox(action string, args []string, g globalOptions, cfg config.C
 	return cmdMailboxIMAP(action, args, g, cfg, state)
 }
 
-func dispatchDraft(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
+func (a App) dispatchDraft(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
 	if useLocalStateMode() {
 		return cmdDraft(action, args, g, state)
 	}
-	return cmdDraftIMAP(action, args, g, cfg, state)
+	return cmdDraftIMAP(action, args, g, cfg, state, a.checkpoint)
 }
 
 func dispatchMessage(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
