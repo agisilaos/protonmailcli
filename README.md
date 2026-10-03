@@ -610,3 +610,11 @@ A failed collection returns an error rather than a successful partial or empty l
 retry the read after resolving the Bridge error.
 Message lookup and follow-up preparation report retrieval failures separately
 from a successful search with no matching message (`not_found`).
+
+### Bash completion updates
+
+Regenerate the Bash completion script after upgrading, using the installation
+command above. Completion now suggests child commands only at a group position,
+respects global-option values, and stops at leaf arguments or `--`. It does not
+yet suggest leaf flags or dynamic IDs; no CLI syntax or other shell changes are
+introduced.
