@@ -90,7 +90,7 @@ func bindRuntimeIO(a App) func() {
 	}
 }
 
-func (a App) run(args []string) int {
+func (a App) runCommand(args []string) int {
 	restoreIO := bindRuntimeIO(a)
 	defer restoreIO()
 
