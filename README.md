@@ -267,6 +267,12 @@ Generate shell completion:
 
 ## Config and state
 
+Configuration updates are written to a private temporary file beside the target,
+then replace it only after writing, syncing, and closing succeed. A failed staging
+write leaves the previous configuration readable. Saved configs use permissions
+0600. Atomic replacement does not serialize concurrent writers or guarantee
+recovery after power loss.
+
 Defaults:
 
 - Config: `~/.config/protonmailcli/config.toml`
