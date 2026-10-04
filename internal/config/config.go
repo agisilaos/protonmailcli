@@ -154,5 +154,20 @@ password_file = "%s"
 require_confirm_send_non_tty = %t
 allow_force_send = %t
 `, cfg.Profile, cfg.Output, cfg.Timeout, cfg.Bridge.Host, cfg.Bridge.IMAPPort, cfg.Bridge.SMTPPort, cfg.Bridge.TLS, cfg.Bridge.Username, cfg.Bridge.PasswordFile, cfg.Safety.RequireConfirmSendNonTTY, cfg.Safety.AllowForceSend)
-	return os.WriteFile(path, []byte(content), 0o600)
+	f, err := os.CreateTemp(filepath.Dir(path), ".config-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err := f.Write([]byte(content)); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
