@@ -430,7 +430,7 @@ func (a App) dispatch(rest []string, g globalOptions, cfg config.Config, state *
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "message action required"}
 		}
-		return dispatchMessage(action, args, g, cfg, state)
+		return a.dispatchMessage(action, args, g, cfg, state)
 	case "search":
 		if action == "" {
 			return nil, false, cliError{exit: 2, code: "usage_error", msg: "search action required"}
@@ -465,11 +465,11 @@ func (a App) dispatchDraft(action string, args []string, g globalOptions, cfg co
 	return cmdDraftIMAP(action, args, g, cfg, state, a.checkpoint)
 }
 
-func dispatchMessage(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
+func (a App) dispatchMessage(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
 	if useLocalStateMode() {
 		return cmdMessage(action, args, g, cfg, state)
 	}
-	return cmdMessageIMAP(action, args, g, cfg, state)
+	return cmdMessageIMAP(action, args, g, cfg, state, a.checkpoint)
 }
 
 func dispatchSearch(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {

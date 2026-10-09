@@ -7,6 +7,8 @@ type classifiedError struct {
 
 var errorCodeClasses = map[string]classifiedError{
 	"imap_draft_create_uncertain": {Category: "uncertain", Retryable: false},
+	"imap_draft_update_uncertain": {Category: "uncertain", Retryable: false},
+	"imap_send_uncertain":         {Category: "uncertain", Retryable: false},
 	"usage_error":                 {Category: "usage", Retryable: false},
 	"validation_error":            {Category: "usage", Retryable: false},
 	"config_missing":              {Category: "config", Retryable: false},

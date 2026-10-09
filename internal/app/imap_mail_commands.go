@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -46,7 +47,11 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
-		drafts, err := c.ListMessages("Drafts", criteria)
+		mailbox, err := c.DraftMailboxName()
+		if err != nil {
+			return nil, false, cliError{exit: 4, code: "imap_draft_list_failed", msg: err.Error()}
+		}
+		drafts, err := c.ListMessages(mailbox, criteria)
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_draft_list_failed", msg: err.Error()}
 		}
@@ -79,9 +84,12 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
+		if err := validateDraftIdentity(c, opts.id); err != nil {
+			return nil, false, err
+		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
-			return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
+			return nil, false, draftFetchError(err)
 		}
 		return draftResponse{
 			Draft:  draftRecord{ID: imapDraftID(d.UID), UID: d.UID, To: d.To, Subject: d.Subject, Body: d.Body, Flags: d.Flags},
@@ -107,6 +115,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		}
 		if err := ensureClient(); err != nil {
 			return nil, false, err
+		}
+		if err := bridge.ValidateMessageHeaders(username, opts.to, opts.subject, nil); err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		raw := bridge.BuildRawMessage(username, opts.to, opts.subject, b)
 		if g.dryRun {
@@ -168,19 +179,48 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
 				continue
 			}
+			if err := bridge.ValidateMessageHeaders(username, it.To, it.Subject, nil); err != nil {
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
+				continue
+			}
+			payload := map[string]any{"to": it.To, "subject": it.Subject, "body": b}
+			if found, cached, err := idempotencyLookup(st, it.IdempotencyKey, "imap.draft.create-item", payload); err != nil {
+				results = append(results, batchItemResponse{Index: i, ErrorCode: errorCodeFromErr(err, "idempotency_conflict"), Error: err.Error()})
+				continue
+			} else if found {
+				item, err := replayBatchItem(cached, i)
+				if err != nil {
+					return nil, false, err
+				}
+				results = append(results, item)
+				if item.OK {
+					success++
+				}
+				continue
+			}
 			raw := bridge.BuildRawMessage(username, it.To, it.Subject, b)
 			if g.dryRun {
 				results = append(results, batchItemResponse{Index: i, OK: true, DryRun: true, To: it.To, Subject: it.Subject})
 				success++
 				continue
 			}
+			if err := reserveDraft(st, it.IdempotencyKey, "imap.draft.create-item", payload, checkpoint); err != nil {
+				return nil, false, err
+			}
 			uid, createPath, err := saveDraftWithFallback(c, cfg, st, username, it.To, it.Subject, b, raw, nil)
 			if err != nil {
 				failure := draftCreationError(err)
+				if saveErr := completeDraft(st, it.IdempotencyKey, "imap.draft.create-item", payload, nil, &failure, checkpoint); saveErr != nil {
+					return nil, false, saveErr
+				}
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: failure.code, Error: failure.msg})
 				continue
 			}
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid, CreatePath: createPath})
+			result := batchItemResponse{Index: i, OK: true, DraftID: imapDraftID(uid), UID: uid, CreatePath: createPath}
+			if err := completeDraft(st, it.IdempotencyKey, "imap.draft.create-item", payload, result, nil, checkpoint); err != nil {
+				return nil, false, err
+			}
+			results = append(results, result)
 			success++
 		}
 		resp := draftCreationBatchResult(results, success)
@@ -202,29 +242,38 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
+		if err := validateDraftIdentity(c, opts.id); err != nil {
+			return nil, false, err
+		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
-			return nil, false, cliError{exit: 5, code: "not_found", msg: err.Error()}
+			return nil, false, draftFetchError(err)
 		}
-		if opts.subject != "" {
+		if flagWasSet(fs, "subject") {
 			d.Subject = opts.subject
 		}
-		if opts.body != "" || opts.bodyFile != "" || opts.stdinBody {
-			nextBody, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
+		if flagWasSet(fs, "body") || opts.bodyFile != "" || opts.stdinBody {
+			nextBody, err := loadDraftUpdateBody(fs, opts)
 			if err != nil {
 				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 			}
 			d.Body = nextBody
 		}
+		if err := bridge.ValidateMessageHeaders(username, d.To, d.Subject, draftThreadHeaders(d)); err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
 		if g.dryRun {
 			return map[string]any{"action": "draft.update", "draftId": imapDraftID(uid), "wouldUpdate": true, "source": "imap"}, true, nil
 		}
-		if err := c.DeleteDraft(uid); err != nil {
+		newUID, err := c.AppendDraft(bridge.BuildRawMessageWithHeaders(username, d.To, d.Subject, d.Body, draftThreadHeaders(d)))
+		if err != nil {
+			if errors.Is(err, bridge.ErrAppendUncertain) {
+				return nil, false, cliError{exit: 4, code: "imap_draft_update_uncertain", msg: err.Error(), hint: "Original draft " + imapDraftID(uid) + " was retained. Inspect Drafts before retrying; a replacement may exist."}
+			}
 			return nil, false, cliError{exit: 4, code: "imap_draft_update_failed", msg: err.Error()}
 		}
-		newUID, err := c.AppendDraft(bridge.BuildRawMessage(username, d.To, d.Subject, d.Body))
-		if err != nil {
-			return nil, false, cliError{exit: 4, code: "imap_draft_update_failed", msg: err.Error()}
+		if err := c.DeleteDraft(uid); err != nil {
+			return nil, false, cliError{exit: 4, code: "imap_draft_update_uncertain", msg: "replacement was created but original deletion failed: " + err.Error(), hint: "Replacement " + imapDraftID(newUID) + " is confirmed. Inspect original " + imapDraftID(uid) + " before retrying; do not create another replacement."}
 		}
 		return draftResponse{
 			Draft:  draftRecord{ID: imapDraftID(newUID), UID: newUID, To: d.To, Subject: d.Subject, Body: d.Body},
@@ -240,6 +289,9 @@ func cmdDraftIMAP(action string, args []string, g globalOptions, cfg config.Conf
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		if err := ensureClient(); err != nil {
+			return nil, false, err
+		}
+		if err := validateDraftIdentity(c, opts.id); err != nil {
 			return nil, false, err
 		}
 		if g.dryRun {
@@ -309,7 +361,8 @@ func createDraftViaMoveFallback(cfg config.Config, st *model.State, username str
 	}
 	if err := smtpSendFn(bridgeSMTPConfig(cfg, username, password), bridge.SendInput{
 		From:         username,
-		To:           []string{username},
+		To:           to,
+		EnvelopeTo:   []string{username},
 		Subject:      subject,
 		Body:         body,
 		ExtraHeaders: headers,
@@ -318,36 +371,36 @@ func createDraftViaMoveFallback(cfg config.Config, st *model.State, username str
 	}
 	c2, _, _, err := openBridgeClientFn(cfg, st, "")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: SMTP accepted fallback; %v", bridge.ErrAppendUncertain, err)
 	}
 	defer c2.Close()
 	draftsMailbox, err := c2.DraftMailboxName()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: SMTP accepted fallback; %v", bridge.ErrAppendUncertain, err)
 	}
 	var uid string
 	for i := 0; i < 10; i++ {
 		uids, err := c2.SearchUIDs("INBOX", fmt.Sprintf(`HEADER X-Pmail-Draft-Token "%s"`, escapeSearch(token)))
-		if err == nil && len(uids) > 0 {
+		if err == nil && len(uids) == 1 {
 			uid = uids[len(uids)-1]
 			break
 		}
 		time.Sleep(1 * time.Second)
 	}
 	if uid == "" {
-		return "", fmt.Errorf("fallback could not locate created message in INBOX")
+		return "", fmt.Errorf("%w: SMTP accepted fallback but INBOX identity could not be confirmed", bridge.ErrAppendUncertain)
 	}
 	if err := c2.MoveUID("INBOX", uid, draftsMailbox); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: SMTP accepted fallback; %v", bridge.ErrAppendUncertain, err)
 	}
 	draftUIDs, err := c2.SearchUIDs(draftsMailbox, fmt.Sprintf(`HEADER X-Pmail-Draft-Token "%s"`, escapeSearch(token)))
-	if err != nil || len(draftUIDs) == 0 {
-		return uid, nil
+	if err != nil || len(draftUIDs) != 1 {
+		return "", fmt.Errorf("%w: fallback moved from INBOX UID %s to %q but destination identity is unconfirmed", bridge.ErrAppendUncertain, uid, draftsMailbox)
 	}
 	return draftUIDs[len(draftUIDs)-1], nil
 }
 
-func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
+func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State, checkpoint func(model.State) error) (any, bool, error) {
 	var c *bridge.IMAPClient
 	var username string
 	var password string
@@ -414,14 +467,20 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
+		if err := pendingIdempotencyError(st, opts.idempotencyKey, "message.send"); err != nil {
+			return nil, false, err
+		}
 		if err := ensureClient(); err != nil {
+			return nil, false, err
+		}
+		if err := validateDraftIdentity(c, opts.draftID); err != nil {
 			return nil, false, err
 		}
 		d, err := c.GetDraft(uid)
 		if err != nil {
-			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
+			return nil, false, draftFetchError(err)
 		}
-		payload := map[string]any{"draftId": opts.draftID, "confirm": opts.confirm, "force": opts.force, "to": d.To, "subject": d.Subject, "body": d.Body}
+		payload := map[string]any{"draftId": opts.draftID, "confirm": opts.confirm, "force": opts.force, "to": d.To, "subject": d.Subject, "body": d.Body, "headers": draftThreadHeaders(d)}
 		if found, cached, err := idempotencyLookup(st, opts.idempotencyKey, "message.send", payload); err != nil {
 			return nil, false, err
 		} else if found {
@@ -441,8 +500,14 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			}
 			pass = p
 		}
-		err = bridge.Send(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body})
+		if err := reserveSend(st, opts.idempotencyKey, "message.send", payload, checkpoint); err != nil {
+			return nil, false, err
+		}
+		err = bridge.Send(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body, ExtraHeaders: draftThreadHeaders(d)})
 		if err != nil {
+			if opts.idempotencyKey != "" {
+				return nil, false, pendingSendError("send attempt for " + opts.draftID + " did not confirm delivery: " + err.Error())
+			}
 			return nil, false, cliError{exit: 4, code: "send_failed", msg: err.Error()}
 		}
 		resp := struct {
@@ -452,8 +517,11 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			Source   string `json:"source"`
 			SentAt   string `json:"sentAt"`
 		}{Sent: true, DraftID: imapDraftID(uid), SendPath: "smtp", Source: "imap", SentAt: time.Now().UTC().Format(time.RFC3339)}
-		_ = idempotencyStore(st, opts.idempotencyKey, "message.send", payload, resp)
-		return resp, true, nil
+		if err := completeSend(st, opts.idempotencyKey, "message.send", payload, resp, checkpoint); err != nil {
+			failure := pendingSendError("SMTP accepted " + opts.draftID + " but its receipt could not be saved: " + err.Error())
+			return nil, false, failure
+		}
+		return resp, false, nil
 	case "send-many":
 		fs, opts := newIMAPMessageSendManyFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message send-many", runtimeStdout); err != nil {
@@ -470,6 +538,11 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		} else if found {
 			return cached, false, nil
 		}
+		for _, item := range items {
+			if err := pendingIdempotencyError(st, item.IdempotencyKey, "imap.message.send-item"); err != nil {
+				return nil, false, err
+			}
+		}
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
@@ -480,6 +553,11 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				return nil, false, err
 			}
 			pass = p
+		}
+		if !g.dryRun {
+			if err := reserveSend(st, opts.idempotencyKey, "message.send-many", items, checkpoint); err != nil {
+				return nil, false, err
+			}
 		}
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
@@ -493,9 +571,32 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "invalid draft_id"})
 				continue
 			}
+			if err := validateDraftIdentity(c, it.DraftID); err != nil {
+				results = append(results, batchItemResponse{Index: i, DraftID: it.DraftID, ErrorCode: errorCodeFromErr(err, "validation_error"), Error: err.Error()})
+				continue
+			}
 			d, err := c.GetDraft(uid)
 			if err != nil {
-				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "not_found", Error: "draft not found", DraftID: it.DraftID})
+				failure := draftFetchError(err)
+				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: failure.code, Error: failure.msg, DraftID: it.DraftID})
+				continue
+			}
+			payload := map[string]any{"draftId": it.DraftID, "confirm": it.ConfirmSend, "to": d.To, "subject": d.Subject, "body": d.Body, "headers": draftThreadHeaders(d)}
+			if found, cached, err := idempotencyLookup(st, it.IdempotencyKey, "imap.message.send-item", payload); err != nil {
+				if errorCodeFromErr(err, "") == "imap_send_uncertain" {
+					return nil, false, err
+				}
+				results = append(results, batchItemResponse{Index: i, DraftID: it.DraftID, ErrorCode: errorCodeFromErr(err, "idempotency_conflict"), Error: err.Error()})
+				continue
+			} else if found {
+				item, err := replayBatchItem(cached, i)
+				if err != nil {
+					return nil, false, err
+				}
+				results = append(results, item)
+				if item.OK {
+					success++
+				}
 				continue
 			}
 			if err := validateSendSafety(cfg, isNonInteractiveSend(g, runtimeStdinIsTTY()), it.ConfirmSend, it.DraftID, uid, false); err != nil {
@@ -508,11 +609,21 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				success++
 				continue
 			}
-			if err := smtpSendFn(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body}); err != nil {
+			if err := reserveSend(st, it.IdempotencyKey, "imap.message.send-item", payload, checkpoint); err != nil {
+				return nil, false, err
+			}
+			if err := smtpSendFn(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body, ExtraHeaders: draftThreadHeaders(d)}); err != nil {
+				if opts.idempotencyKey != "" || it.IdempotencyKey != "" {
+					return nil, false, pendingSendError("send attempt for " + it.DraftID + " did not confirm delivery: " + err.Error())
+				}
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "send_failed", Error: err.Error(), DraftID: it.DraftID})
 				continue
 			}
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SendPath: "smtp", SentAt: time.Now().UTC().Format(time.RFC3339)})
+			result := batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SendPath: "smtp", SentAt: time.Now().UTC().Format(time.RFC3339)}
+			if err := completeSend(st, it.IdempotencyKey, "imap.message.send-item", payload, result, checkpoint); err != nil {
+				return nil, false, pendingSendError("SMTP accepted " + it.DraftID + " but its receipt could not be saved: " + err.Error())
+			}
+			results = append(results, result)
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "imap"}
@@ -521,8 +632,12 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		} else if success > 0 && (len(results)-success) > 0 {
 			resp.exitCode = 10
 		}
-		_ = idempotencyStore(st, opts.idempotencyKey, "message.send-many", items, resp)
-		return resp, success > 0, nil
+		if !g.dryRun {
+			if err := completeSend(st, opts.idempotencyKey, "message.send-many", items, resp, checkpoint); err != nil {
+				return nil, false, err
+			}
+		}
+		return resp, false, nil
 	case "follow-up":
 		fs, opts := newIMAPMessageFollowUpFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message follow-up", runtimeStdout); err != nil {
@@ -533,6 +648,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		mailbox, uid, err := parseMailboxUID(opts.msgID, "INBOX")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--message-id required"}
+		}
+		if err := pendingIdempotencyError(st, opts.idempotencyKey, "message.follow-up"); err != nil {
+			return nil, false, err
 		}
 		if err := ensureClient(); err != nil {
 			return nil, false, err
@@ -560,6 +678,9 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		inReplyTo, refs := threadHeaders(orig.MessageID, orig.References)
 		if inReplyTo == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "message has no Message-ID; cannot create threaded follow-up"}
+		}
+		if err := bridge.ValidateMessageHeaders(username, recipients, followSubject, map[string]string{"In-Reply-To": inReplyTo, "References": strings.Join(refs, " ")}); err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		payload := map[string]any{
 			"messageId":  imapMessageIDForMailbox(mailbox, uid),
@@ -592,9 +713,16 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			"References":  strings.Join(refs, " "),
 		}
 		raw := bridge.BuildRawMessageWithHeaders(username, recipients, followSubject, bodyText, extraHeaders)
+		if err := reserveDraft(st, opts.idempotencyKey, "message.follow-up", payload, checkpoint); err != nil {
+			return nil, false, err
+		}
 		newUID, createPath, err := saveDraftWithFallback(c, cfg, st, username, recipients, followSubject, bodyText, raw, extraHeaders)
 		if err != nil {
-			return nil, false, draftCreationError(err)
+			failure := draftCreationError(err)
+			if err := completeDraft(st, opts.idempotencyKey, "message.follow-up", payload, nil, &failure, checkpoint); err != nil {
+				return nil, false, err
+			}
+			return nil, false, failure
 		}
 		resp := messageFollowUpResponse{
 			Draft: draftRecord{
@@ -609,9 +737,59 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			ThreadInReplyTo: inReplyTo,
 			References:      refs,
 		}
-		_ = idempotencyStore(st, opts.idempotencyKey, "message.follow-up", payload, resp)
-		return resp, true, nil
+		if err := completeDraft(st, opts.idempotencyKey, "message.follow-up", payload, resp, nil, checkpoint); err != nil {
+			return nil, false, err
+		}
+		return resp, false, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown message action: " + action}
 	}
+}
+
+func draftFetchError(err error) cliError {
+	if errors.Is(err, bridge.ErrMessageNotFound) {
+		return cliError{exit: 5, code: "not_found", msg: "draft not found"}
+	}
+	return cliError{exit: 4, code: "imap_draft_fetch_failed", msg: err.Error()}
+}
+
+func draftThreadHeaders(d bridge.DraftMessage) map[string]string {
+	headers := map[string]string{}
+	if d.InReplyTo != "" {
+		headers["In-Reply-To"] = d.InReplyTo
+	}
+	if d.References != "" {
+		headers["References"] = d.References
+	}
+	return headers
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+// Drafts is the canonical alias emitted by draft commands. Other qualified
+// identities must match the discovered mailbox; UIDs have mailbox-local scope.
+func validateDraftIdentity(c *bridge.IMAPClient, id string) error {
+	mailbox, _, err := parseMailboxUID(id, "Drafts")
+	if err != nil {
+		return cliError{exit: 2, code: "validation_error", msg: err.Error()}
+	}
+	if mailbox == "Drafts" {
+		return nil
+	}
+	discovered, err := c.DraftMailboxName()
+	if err != nil {
+		return cliError{exit: 4, code: "imap_draft_fetch_failed", msg: err.Error()}
+	}
+	if mailbox != discovered {
+		return cliError{exit: 2, code: "validation_error", msg: fmt.Sprintf("draft ID mailbox %q does not match Drafts mailbox %q", mailbox, discovered)}
+	}
+	return nil
 }

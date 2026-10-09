@@ -8,7 +8,7 @@ import (
 	"protonmailcli/internal/model"
 )
 
-func TestLoadCreatesEmptyStateFile(t *testing.T) {
+func TestLoadReturnsEmptyStateWithoutWriting(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "state.json")
 	s := New(path)
@@ -20,8 +20,8 @@ func TestLoadCreatesEmptyStateFile(t *testing.T) {
 	if st.Drafts == nil || st.Messages == nil || st.Tags == nil || st.Filters == nil || st.Idempotency == nil {
 		t.Fatalf("expected initialized maps: %+v", st)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("expected state file to be created: %v", err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("load must not create a state file: %v", err)
 	}
 }
 

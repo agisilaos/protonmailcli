@@ -45,3 +45,13 @@ func renderFlagHelp(fs *flag.FlagSet, g globalOptions, name string, stdout io.Wr
 	}
 	return map[string]any{"help": name}, true, nil
 }
+
+func loadDraftUpdateBody(fs *flag.FlagSet, opts *imapDraftUpdateFlags) (string, error) {
+	if flagWasSet(fs, "body") {
+		if opts.bodyFile != "" || opts.stdinBody {
+			return "", fmt.Errorf("provide only one of --body, --body-file, or --stdin")
+		}
+		return opts.body, nil
+	}
+	return loadBody(opts.body, opts.bodyFile, opts.stdinBody)
+}

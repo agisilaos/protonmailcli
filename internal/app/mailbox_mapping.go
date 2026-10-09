@@ -46,12 +46,18 @@ func resolveMailboxQuery(mailboxes []mailboxInfo, query string) (mailboxInfo, st
 			return m, "name_exact", nil, nil
 		}
 	}
+	var matches []mailboxInfo
 	for _, m := range mailboxes {
 		if m.ID == q {
-			return m, "id_exact", nil, nil
+			matches = append(matches, m)
 		}
 	}
-	var matches []mailboxInfo
+	if len(matches) == 1 {
+		return matches[0], "id_exact", nil, nil
+	}
+	if len(matches) > 1 {
+		return mailboxInfo{}, "", matches, fmt.Errorf("ambiguous mailbox id: %q matches %d mailboxes; use the exact mailbox name", q, len(matches))
+	}
 	for _, m := range mailboxes {
 		if strings.EqualFold(m.Name, q) {
 			matches = append(matches, m)

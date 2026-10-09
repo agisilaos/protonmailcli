@@ -50,7 +50,9 @@ responses, TLS, authentication, and message delivery. The default is 30 seconds.
 
 From, recipient, subject, and extra-header values cannot contain CR or LF.
 Extra-header names must be nonempty printable ASCII without spaces or colons.
-Message bodies may contain line breaks.
+Message bodies may contain line breaks. SMTP recipients can differ from the
+visible `To` header when an internal draft fallback sends only to the account's
+own address; the intended draft recipients remain in its message headers.
 
 SMTP's successful final DATA response acknowledges acceptance. A later QUIT
 failure does not turn that accepted send into a retryable failure. Errors before

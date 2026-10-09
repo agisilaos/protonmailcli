@@ -92,10 +92,15 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 		if strings.TrimSpace(opts.mailbox) != "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--mailbox is only supported for search messages"}
 		}
-		items, err := c.ListMessages("Drafts", criteria)
+		mailbox, err := c.DraftMailboxName()
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
 		}
+		items, err := c.ListMessages(mailbox, criteria)
+		if err != nil {
+			return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
+		}
+		items = filterSinceUID(items, opts.sinceID)
 		sortByUIDDesc(items)
 		start, lim := parsePage(opts.cursor, opts.limit)
 		paged, next := paginateMessages(items, start, lim)
@@ -116,6 +121,7 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 	if err != nil {
 		return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
 	}
+	items = filterSinceUID(items, opts.sinceID)
 	sortByUIDDesc(items)
 	start, lim := parsePage(opts.cursor, opts.limit)
 	paged, next := paginateMessages(items, start, lim)
@@ -184,17 +190,23 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		if err := ensureClient(); err != nil {
 			return nil, false, err
 		}
-		uid, err := parseRequiredUID(opts.msgID, "--message-id")
+		mailbox, uid, err := parseMailboxUID(opts.msgID, "INBOX")
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		if strings.TrimSpace(opts.tag) == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--tag required"}
 		}
-		if err := c.SetKeyword("INBOX", uid, opts.tag, action == "add"); err != nil {
+		if err := bridge.ValidateKeyword(opts.tag); err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
+		}
+		if g.dryRun {
+			return tagUpdateResponse{MessageID: imapMessageIDForMailbox(mailbox, uid), Tag: opts.tag, Changed: false, Source: "imap"}, false, nil
+		}
+		if err := c.SetKeyword(mailbox, uid, opts.tag, action == "add"); err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_tag_update_failed", msg: err.Error()}
 		}
-		return tagUpdateResponse{MessageID: imapMessageID(uid), Tag: opts.tag, Changed: true, Source: "imap"}, true, nil
+		return tagUpdateResponse{MessageID: imapMessageIDForMailbox(mailbox, uid), Tag: opts.tag, Changed: true, Source: "imap"}, true, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}
@@ -358,4 +370,20 @@ func usageForFlagSet(fs *flag.FlagSet) string {
 	fs.PrintDefaults()
 	fs.SetOutput(prev)
 	return strings.TrimRight("Usage of "+fs.Name()+":\n"+b.String(), "\n") + "\n\n" + commandHelpNotes(fs.Name())
+}
+
+// IMAP n:* includes the current maximum UID when n exceeds it. Enforce
+// the inclusive lower bound before pagination and total calculations.
+func filterSinceUID(items []bridge.DraftMessage, since string) []bridge.DraftMessage {
+	if strings.TrimSpace(since) == "" {
+		return items
+	}
+	lower := uidAsInt(since)
+	out := make([]bridge.DraftMessage, 0, len(items))
+	for _, item := range items {
+		if uidAsInt(item.UID) >= lower {
+			out = append(out, item)
+		}
+	}
+	return out
 }

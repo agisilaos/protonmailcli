@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,9 +59,9 @@ func parseUID(id string) (string, error) {
 	if v == "" {
 		return "", fmt.Errorf("empty id")
 	}
-	parts := strings.Split(v, ":")
-	if len(parts) == 3 && parts[0] == "imap" {
-		return parts[2], nil
+	if strings.HasPrefix(v, "imap:") {
+		_, uid, err := parseMailboxUID(v, "Drafts")
+		return uid, err
 	}
 	return v, nil
 }
@@ -86,18 +87,33 @@ func parseMailboxUID(id, defaultMailbox string) (string, string, error) {
 	if v == "" {
 		return "", "", fmt.Errorf("empty id")
 	}
-	parts := strings.Split(v, ":")
-	if len(parts) == 3 && parts[0] == "imap" {
-		if strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+	if strings.HasPrefix(v, "imap:") {
+		split := strings.LastIndex(v, ":")
+		if split <= len("imap:") || split == len(v)-1 {
 			return "", "", fmt.Errorf("invalid imap id")
 		}
-		return parts[1], parts[2], nil
+		box, uid := v[len("imap:"):split], v[split+1:]
+		if err := validMessageUID(uid); err != nil {
+			return "", "", err
+		}
+		return box, uid, nil
+	}
+	if err := validMessageUID(v); err != nil {
+		return "", "", err
 	}
 	box := strings.TrimSpace(defaultMailbox)
 	if box == "" {
 		box = "INBOX"
 	}
 	return box, v, nil
+}
+
+func validMessageUID(uid string) error {
+	n, err := strconv.ParseUint(uid, 10, 32)
+	if err != nil || n == 0 {
+		return fmt.Errorf("invalid IMAP UID %q (expected positive integer)", uid)
+	}
+	return nil
 }
 
 func bridgeSMTPConfig(cfg config.Config, username, password string) bridge.SMTPConfig {

@@ -24,8 +24,8 @@ func idempotencyLookup(st *model.State, key, op string, payload any) (bool, any,
 	if rec.Operation != op || rec.PayloadHash != h {
 		return false, nil, cliError{exit: 6, code: "idempotency_conflict", msg: "idempotency key already used with different payload"}
 	}
-	if rec.Status != "" && rec.Status != "complete" {
-		return true, nil, pendingDraftError()
+	if err := pendingIdempotencyError(st, key, op); err != nil {
+		return true, nil, err
 	}
 	if rec.Failure != nil {
 		f := rec.Failure
@@ -34,13 +34,22 @@ func idempotencyLookup(st *model.State, key, op string, payload any) (bool, any,
 	if len(rec.Response) == 0 {
 		return true, map[string]any{"ok": true, "replayed": true}, nil
 	}
-	if op == "draft.create-many" {
+	if op == "draft.create-many" || op == "message.send-many" {
 		var cached batchResultResponse
 		if err := json.Unmarshal(rec.Response, &cached); err != nil {
 			return false, nil, err
 		}
-		if cached.Source == "imap" {
+		if op == "draft.create-many" && cached.Source == "imap" {
 			return true, draftCreationBatchResult(cached.Results, cached.Success), nil
+		}
+		if op == "message.send-many" {
+			if cached.Failed > 0 {
+				cached.exitCode = 1
+				if cached.Success > 0 {
+					cached.exitCode = 10
+				}
+			}
+			return true, cached, nil
 		}
 	}
 	var out any
@@ -116,4 +125,69 @@ func completeDraft(st *model.State, key, op string, payload, response any, failu
 		return pendingDraftError()
 	}
 	return nil
+}
+
+func replayBatchItem(cached any, index int) (batchItemResponse, error) {
+	raw, err := json.Marshal(cached)
+	if err != nil {
+		return batchItemResponse{}, err
+	}
+	var item batchItemResponse
+	if err := json.Unmarshal(raw, &item); err != nil {
+		return item, err
+	}
+	item.Index = index
+	return item, nil
+}
+
+func pendingSendError(detail string) cliError {
+	return cliError{exit: 4, code: "imap_send_uncertain", msg: detail, hint: "Do not retry automatically. Inspect delivery before retrying; keep this key and state and reconcile every batch item."}
+}
+
+// A persisted intent prevents replay after interruption or a failed receipt save.
+func reserveSend(st *model.State, key, op string, payload any, checkpoint func(model.State) error) error {
+	if key == "" {
+		return nil
+	}
+	if err := idempotencyStore(st, key, op, payload, nil); err != nil {
+		return err
+	}
+	rec := st.Idempotency[key]
+	rec.Status = "pending"
+	st.Idempotency[key] = rec
+	if err := checkpoint(*st); err != nil {
+		return cliError{exit: 1, code: "state_save_failed", msg: "cannot persist send intent; this send was not dispatched", hint: err.Error()}
+	}
+	return nil
+}
+
+func completeSend(st *model.State, key, op string, payload, response any, checkpoint func(model.State) error) error {
+	if key == "" {
+		return nil
+	}
+	if err := idempotencyStore(st, key, op, payload, response); err != nil {
+		return pendingSendError("send receipt could not be encoded: " + err.Error())
+	}
+	rec := st.Idempotency[key]
+	rec.Status = "complete"
+	st.Idempotency[key] = rec
+	if err := checkpoint(*st); err != nil {
+		return pendingSendError("send completed but its receipt could not be saved: " + err.Error())
+	}
+	return nil
+}
+
+// Pending recovery must remain visible even when the backend is unavailable.
+func pendingIdempotencyError(st *model.State, key, op string) error {
+	if key == "" {
+		return nil
+	}
+	rec, ok := st.Idempotency[key]
+	if !ok || rec.Operation != op || rec.Status == "" || rec.Status == "complete" {
+		return nil
+	}
+	if op == "message.send" || op == "message.send-many" || op == "imap.message.send-item" {
+		return pendingSendError("send has an unfinished recovery record")
+	}
+	return pendingDraftError()
 }

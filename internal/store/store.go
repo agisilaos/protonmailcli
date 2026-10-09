@@ -30,16 +30,9 @@ func emptyState() model.State {
 }
 
 func (s *Store) Load() (model.State, error) {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return model.State{}, err
-	}
 	_, err := os.Stat(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		st := emptyState()
-		if saveErr := s.Save(st); saveErr != nil {
-			return model.State{}, saveErr
-		}
-		return st, nil
+		return emptyState(), nil
 	}
 	if err != nil {
 		return model.State{}, err
