@@ -180,7 +180,7 @@ func (a App) runCommand(args []string) int {
 	}
 	data, changed, err := a.dispatch(rest, g, cfg, &state)
 	if err != nil {
-		return a.exitWithError(err, g.mode, g.profile, requestID, start)
+		return a.exitWithError(err, g.mode, g.profile, requestID, start, data)
 	}
 	exitCode := normalizeExitCode(data)
 	if changed && !g.dryRun {
@@ -233,17 +233,21 @@ func normalizeExitCode(data any) int {
 	return 0
 }
 
-func (a App) exitWithError(err error, mode output.Mode, profile, requestID string, start time.Time) int {
+func (a App) exitWithError(err error, mode output.Mode, profile, requestID string, start time.Time, details ...any) int {
+	var data any
+	if len(details) != 0 {
+		data = details[0]
+	}
 	var ce cliError
 	if errors.As(err, &ce) {
 		if ce.hint != "" {
 			fmt.Fprintln(a.Stderr, ce.hint)
 		}
 		classified := classifyCLIError(ce.code, ce.exit)
-		_ = output.PrintError(a.Stdout, mode, ce.code, ce.msg, ce.hint, classified.Category, classified.Retryable, profile, requestID, start)
+		_ = output.PrintErrorWithData(a.Stdout, mode, ce.code, ce.msg, ce.hint, classified.Category, classified.Retryable, profile, requestID, start, data)
 		return ce.exit
 	}
-	_ = output.PrintError(a.Stdout, mode, "runtime_error", err.Error(), "", "runtime", false, profile, requestID, start)
+	_ = output.PrintErrorWithData(a.Stdout, mode, "runtime_error", err.Error(), "", "runtime", false, profile, requestID, start, data)
 	return 1
 }
 
@@ -544,12 +548,12 @@ func doctorConfigPrereqs(cfg config.Config) (map[string]any, bool) {
 }
 
 func doctorAuthPrereqs(cfg config.Config, st *model.State) (map[string]any, bool) {
-	username := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username)
+	username := firstNonEmpty(st.Bridge.ActiveUsername, st.Auth.Username, cfg.Bridge.Username)
 	passwordFromEnv := strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")) != ""
 	passwordFile := firstNonEmpty(st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
 	passwordFileReadable := false
 	if strings.TrimSpace(passwordFile) != "" {
-		_, err := os.Stat(filepath.Clean(config.Expand(passwordFile)))
+		_, err := readPasswordFile(passwordFile)
 		passwordFileReadable = err == nil
 	}
 	ok := strings.TrimSpace(username) != "" && (passwordFromEnv || passwordFileReadable)

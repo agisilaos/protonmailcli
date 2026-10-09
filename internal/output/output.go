@@ -45,7 +45,11 @@ func PrintSuccess(w io.Writer, mode Mode, data interface{}, profile, requestID s
 }
 
 func PrintError(w io.Writer, mode Mode, code, msg, hint, category string, retryable bool, profile, requestID string, start time.Time) error {
-	env := Envelope{OK: false, Error: &ErrBody{Code: code, Message: msg, Hint: hint, Category: category, Retryable: retryable}, Meta: meta(profile, requestID, start)}
+	return PrintErrorWithData(w, mode, code, msg, hint, category, retryable, profile, requestID, start, nil)
+}
+
+func PrintErrorWithData(w io.Writer, mode Mode, code, msg, hint, category string, retryable bool, profile, requestID string, start time.Time, data any) error {
+	env := Envelope{OK: false, Data: data, Error: &ErrBody{Code: code, Message: msg, Hint: hint, Category: category, Retryable: retryable}, Meta: meta(profile, requestID, start)}
 	return printEnvelope(w, mode, env)
 }
 

@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,11 +23,11 @@ func resolveBridgeCredentials(cfg config.Config, st *model.State, passwordFileOv
 	password := strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD"))
 	passwordFile := firstNonEmpty(passwordFileOverride, st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
 	if password == "" && passwordFile != "" {
-		b, err := os.ReadFile(filepath.Clean(config.Expand(passwordFile)))
+		filePassword, err := readPasswordFile(passwordFile)
 		if err != nil {
 			return "", "", cliError{exit: 2, code: "validation_error", msg: "cannot read smtp password file"}
 		}
-		password = strings.TrimSpace(string(b))
+		password = filePassword
 	}
 	if password == "" {
 		return "", "", cliError{exit: 3, code: "auth_missing", msg: "bridge password is missing", hint: "Set PMAIL_SMTP_PASSWORD or auth login --password-file"}

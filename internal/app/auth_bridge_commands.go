@@ -3,7 +3,6 @@ package app
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -51,8 +50,8 @@ func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, s
 		if user == "" || passFile == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "username and password-file are required"}
 		}
-		if _, err := os.Stat(config.Expand(passFile)); err != nil {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "password-file not readable"}
+		if _, err := readPasswordFile(passFile); err != nil {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "invalid password-file: " + err.Error()}
 		}
 		now := time.Now().UTC()
 		st.Auth = model.AuthState{LoggedIn: true, Username: user, PasswordFile: passFile, LastLoginAt: &now}
