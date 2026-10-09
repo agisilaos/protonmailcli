@@ -367,6 +367,11 @@ PMAIL_E2E_PASSWORD='bridge-password' \
 go test -tags integration ./internal/app -run TestBridgeE2EDraftCreateSearchSend -v
 ```
 
+The default send phase previews delivery; a real send requires the separate
+`PMAIL_E2E_REAL_SEND=1` opt-in. Its preview argument construction is also covered
+without Bridge access by `TestBridgeE2ESafeSendArguments` under the integration
+build tag.
+
 Validate CLI help contracts (recommended before release):
 
 ```bash

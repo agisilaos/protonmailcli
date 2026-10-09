@@ -89,17 +89,7 @@ func TestBridgeE2EDraftCreateSearchSend(t *testing.T) {
 		t.Fatalf("draft %s not found via search", draftID)
 	}
 
-	sendArgs := []string{
-		"--json", "--no-input",
-		"--config", cfgPath, "--state", statePath,
-		"message", "send",
-		"--draft-id", draftID,
-		"--confirm-send", draftID,
-		"--smtp-password-file", passPath,
-	}
-	if strings.TrimSpace(os.Getenv("PMAIL_E2E_REAL_SEND")) != "1" {
-		sendArgs = append(sendArgs, "--dry-run")
-	}
+	sendArgs := bridgeE2ESendArgs(cfgPath, statePath, draftID, passPath, strings.TrimSpace(os.Getenv("PMAIL_E2E_REAL_SEND")) == "1")
 	send := mustRunJSON(t, sendArgs)
 	if strings.TrimSpace(os.Getenv("PMAIL_E2E_REAL_SEND")) == "1" {
 		if sent, _ := dig(send, "data", "sent").(bool); !sent {
@@ -180,4 +170,36 @@ func envIntOr(name string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func bridgeE2ESendArgs(cfgPath, statePath, draftID, passPath string, realSend bool) []string {
+	args := []string{
+		"--json", "--no-input",
+		"--config", cfgPath, "--state", statePath,
+		"message", "send",
+		"--draft-id", draftID,
+		"--confirm-send", draftID,
+		"--smtp-password-file", passPath,
+	}
+	if !realSend {
+		args = append([]string{"--dry-run"}, args...)
+	}
+	return args
+}
+
+func TestBridgeE2ESafeSendArguments(t *testing.T) {
+	c := newRegressionCLI(t)
+	code, out := c.run("", "draft", "create", "--to", "recipient@example.invalid", "--body", "safe preview")
+	if code != 0 {
+		t.Fatalf("create: %d %s", code, out)
+	}
+	id := regressionData(t, out)["draft"].(map[string]any)["id"].(string)
+	result := mustRunJSON(t, bridgeE2ESendArgs(c.config, c.state, id, "unused-local-password", false))
+	if dig(result, "data", "wouldSend") != true {
+		t.Fatalf("expected dry-run plan: %#v", result)
+	}
+	code, out = c.run("", "search", "messages")
+	if code != 0 || regressionData(t, out)["count"] != float64(0) {
+		t.Fatalf("preview created message: %d %s", code, out)
+	}
 }

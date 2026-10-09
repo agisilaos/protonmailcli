@@ -28,3 +28,7 @@ credential availability; it does not authenticate with the remote server.
 Failed `doctor` JSON includes the computed `data.summary`, `data.checks`, and
 `data.doctor` sections alongside its error so callers can inspect failed checks.
 Doctor recognizes the selected Bridge account before auth/config usernames.
+
+The integration suite's default send phase places `--dry-run` before the
+resource. Its argument helper is exercised with isolated local state, without
+requiring the opt-in live Bridge test.
