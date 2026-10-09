@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/ianaindex"
 )
 
 type IMAPConfig struct {
@@ -51,17 +53,25 @@ type IMAPClient struct {
 	debug   bool
 }
 
+var ErrMessageNotFound = errors.New("message not found")
+
 var ErrAppendUncertain = errors.New("draft append outcome or identity is uncertain; inspect Drafts before retrying")
 
 var (
 	literalRe   = regexp.MustCompile(`\{(\d+)\}\r?$`)
-	uidRe       = regexp.MustCompile(`UID\s+(\d+)`)
-	flagsRe     = regexp.MustCompile(`FLAGS\s+\(([^)]*)\)`)
-	nameRe      = regexp.MustCompile(`"([^"]+)"\s*$`)
+	uidRe       = regexp.MustCompile(`(?i)UID\s+(\d+)`)
+	flagsRe     = regexp.MustCompile(`(?i)FLAGS\s+\(([^)]*)\)`)
+	nameRe      = regexp.MustCompile(`"((?:\\["\\]|[^"\\])*)"\s*$`)
 	listFlagsRe = regexp.MustCompile(`^\* LIST \(([^)]*)\)`)
 )
 
 func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
+	if err := validateIMAPString(cfg.Username); err != nil {
+		return nil, fmt.Errorf("invalid IMAP username: %w", err)
+	}
+	if err := validateIMAPString(cfg.Password); err != nil {
+		return nil, fmt.Errorf("invalid IMAP password: %w", err)
+	}
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
@@ -112,7 +122,7 @@ func (c *IMAPClient) ListMailboxes() ([]string, error) {
 		}
 		m := nameRe.FindStringSubmatch(line)
 		if len(m) == 2 {
-			boxes = append(boxes, m[1])
+			boxes = append(boxes, unescapeIMAPQuoted(m[1]))
 		}
 	}
 	sort.Strings(boxes)
@@ -128,6 +138,9 @@ func (c *IMAPClient) ListDrafts() ([]DraftMessage, error) {
 }
 
 func (c *IMAPClient) ListMessages(mailbox, criteria string) ([]DraftMessage, error) {
+	if err := validateSearchCriteria(criteria); err != nil {
+		return nil, err
+	}
 	if err := c.selectMailbox(mailbox); err != nil {
 		return nil, err
 	}
@@ -148,6 +161,9 @@ func (c *IMAPClient) ListMessages(mailbox, criteria string) ([]DraftMessage, err
 }
 
 func (c *IMAPClient) GetDraft(uid string) (DraftMessage, error) {
+	if err := validateUID(uid); err != nil {
+		return DraftMessage{}, err
+	}
 	mb, err := c.DraftMailboxName()
 	if err != nil {
 		return DraftMessage{}, err
@@ -215,6 +231,26 @@ func (c *IMAPClient) AppendDraft(raw string) (string, error) {
 }
 
 func (c *IMAPClient) DeleteDraft(uid string) error {
+	if err := validateUID(uid); err != nil {
+		return err
+	}
+	lines, err := c.simpleLines("CAPABILITY")
+	if err != nil {
+		return err
+	}
+	scopedExpunge := false
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[0] != "*" || !strings.EqualFold(fields[1], "CAPABILITY") {
+			continue
+		}
+		for _, capability := range fields[2:] {
+			scopedExpunge = scopedExpunge || strings.EqualFold(capability, "UIDPLUS") || strings.EqualFold(capability, "IMAP4rev2")
+		}
+	}
+	if !scopedExpunge {
+		return errors.New("safe draft deletion requires IMAP UIDPLUS or IMAP4rev2 (UID EXPUNGE); no flags were changed")
+	}
 	mb, err := c.DraftMailboxName()
 	if err != nil {
 		return err
@@ -222,13 +258,19 @@ func (c *IMAPClient) DeleteDraft(uid string) error {
 	if err := c.selectMailbox(mb); err != nil {
 		return err
 	}
-	if err := c.simple(fmt.Sprintf("UID STORE %s +FLAGS.SILENT (\\\\Deleted)", uid)); err != nil {
+	if err := c.simple(fmt.Sprintf(`UID STORE %s +FLAGS.SILENT (\Deleted)`, uid)); err != nil {
 		return err
 	}
-	return c.simple("EXPUNGE")
+	return c.simple("UID EXPUNGE " + uid)
 }
 
 func (c *IMAPClient) SetKeyword(mailbox, uid, keyword string, add bool) error {
+	if err := validateUID(uid); err != nil {
+		return err
+	}
+	if err := ValidateKeyword(keyword); err != nil {
+		return err
+	}
 	if err := c.selectMailbox(mailbox); err != nil {
 		return err
 	}
@@ -271,10 +313,16 @@ func (c *IMAPClient) login(user, pass string) error {
 }
 
 func (c *IMAPClient) selectMailbox(mailbox string) error {
+	if err := validateIMAPString(mailbox); err != nil {
+		return fmt.Errorf("invalid mailbox: %w", err)
+	}
 	return c.simple(fmt.Sprintf(`SELECT "%s"`, escape(mailbox)))
 }
 
 func (c *IMAPClient) searchUID(criteria string) ([]string, error) {
+	if err := validateSearchCriteria(criteria); err != nil {
+		return nil, err
+	}
 	lines, err := c.simpleLines("UID SEARCH " + criteria)
 	if err != nil {
 		return nil, err
@@ -285,6 +333,11 @@ func (c *IMAPClient) searchUID(criteria string) ([]string, error) {
 			if len(parts) <= 2 {
 				return []string{}, nil
 			}
+			for _, uid := range parts[2:] {
+				if err := validateUID(uid); err != nil {
+					return nil, fmt.Errorf("invalid UID in SEARCH response: %w", err)
+				}
+			}
 			return parts[2:], nil
 		}
 	}
@@ -292,8 +345,11 @@ func (c *IMAPClient) searchUID(criteria string) ([]string, error) {
 }
 
 func (c *IMAPClient) fetchUID(mailbox, uid string) (DraftMessage, error) {
+	if err := validateUID(uid); err != nil {
+		return DraftMessage{}, err
+	}
 	tag := c.nextTag()
-	cmd := fmt.Sprintf("%s UID FETCH %s (UID FLAGS RFC822)\r\n", tag, uid)
+	cmd := fmt.Sprintf("%s UID FETCH %s (UID FLAGS BODY.PEEK[])\r\n", tag, uid)
 	if _, err := c.w.WriteString(cmd); err != nil {
 		return DraftMessage{}, err
 	}
@@ -302,27 +358,51 @@ func (c *IMAPClient) fetchUID(mailbox, uid string) (DraftMessage, error) {
 	}
 	var raw []byte
 	var flags []string
+	fetched := false
 	for {
 		line, err := c.readLine()
 		if err != nil {
 			return DraftMessage{}, err
 		}
-		if strings.HasPrefix(line, "*") && strings.Contains(line, "FETCH") {
-			if fm := flagsRe.FindStringSubmatch(line); len(fm) == 2 {
-				flags = strings.Fields(strings.TrimSpace(fm[1]))
-			}
+		if strings.HasPrefix(line, "*") && strings.Contains(strings.ToUpper(line), "FETCH") {
+			metadata := line
+			var messageRaw []byte
+			hasLiteral := false
 			if lm := literalRe.FindStringSubmatch(line); len(lm) == 2 {
-				n, _ := strconv.Atoi(lm[1])
-				buf := make([]byte, n)
-				if _, err := io.ReadFull(c.r, buf); err != nil {
+				n, err := strconv.Atoi(lm[1])
+				if err != nil {
+					return DraftMessage{}, fmt.Errorf("invalid FETCH literal size: %w", err)
+				}
+				messageRaw = make([]byte, n)
+				if _, err := io.ReadFull(c.r, messageRaw); err != nil {
 					return DraftMessage{}, err
 				}
-				raw = buf
-				_, _ = c.readLine()
+				suffix, err := c.readLine()
+				if err != nil {
+					return DraftMessage{}, err
+				}
+				metadata += " " + suffix
+				hasLiteral = true
+			}
+			// Unsolicited flag updates may concern another UID or omit UID.
+			// UID can precede or follow the body literal in a FETCH response.
+			um := uidRe.FindStringSubmatch(flagsRe.ReplaceAllString(metadata, ""))
+			if len(um) != 2 || um[1] != uid {
+				continue
+			}
+			fetched = true
+			if fm := flagsRe.FindStringSubmatch(metadata); len(fm) == 2 {
+				flags = strings.Fields(strings.TrimSpace(fm[1]))
+			}
+			if hasLiteral {
+				raw = messageRaw
 			}
 			continue
 		}
 		if strings.HasPrefix(line, tag+" OK") {
+			if !fetched {
+				return DraftMessage{}, ErrMessageNotFound
+			}
 			msg, err := parseRawMessage(raw)
 			if err != nil {
 				return DraftMessage{}, err
@@ -354,13 +434,24 @@ func parseRawMessage(raw []byte) (DraftMessage, error) {
 			}
 		}
 	}
-	bodyBytes, _ := io.ReadAll(m.Body)
-	body := decodeBestBody(m.Header, bodyBytes)
+	bodyBytes, err := io.ReadAll(m.Body)
+	if err != nil {
+		return DraftMessage{}, err
+	}
+	body, err := decodeBestBody(m.Header, bodyBytes)
+	if err != nil {
+		return DraftMessage{}, err
+	}
+	decoder := &mime.WordDecoder{CharsetReader: charsetReader}
+	subject, err := decoder.DecodeHeader(m.Header.Get("Subject"))
+	if err != nil {
+		return DraftMessage{}, fmt.Errorf("decode Subject: %w", err)
+	}
 	date, _ := mail.ParseDate(m.Header.Get("Date"))
 	return DraftMessage{
 		From:       m.Header.Get("From"),
 		To:         to,
-		Subject:    m.Header.Get("Subject"),
+		Subject:    subject,
 		Body:       body,
 		Date:       date,
 		MessageID:  m.Header.Get("Message-ID"),
@@ -443,7 +534,7 @@ func (c *IMAPClient) readLine() (string, error) {
 }
 
 func escape(s string) string {
-	return strings.ReplaceAll(s, `"`, `\"`)
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s)
 }
 
 func (c *IMAPClient) debugf(format string, args ...interface{}) {
@@ -479,13 +570,16 @@ func (c *IMAPClient) DraftMailboxName() (string, error) {
 		}
 		m := nameRe.FindStringSubmatch(line)
 		if len(m) == 2 {
-			return m[1], nil
+			return unescapeIMAPQuoted(m[1]), nil
 		}
 	}
 	return "Drafts", nil
 }
 
 func (c *IMAPClient) SearchUIDs(mailbox, criteria string) ([]string, error) {
+	if err := validateSearchCriteria(criteria); err != nil {
+		return nil, err
+	}
 	if err := c.selectMailbox(mailbox); err != nil {
 		return nil, err
 	}
@@ -493,6 +587,12 @@ func (c *IMAPClient) SearchUIDs(mailbox, criteria string) ([]string, error) {
 }
 
 func (c *IMAPClient) MoveUID(srcMailbox, uid, dstMailbox string) error {
+	if err := validateUID(uid); err != nil {
+		return err
+	}
+	if err := validateIMAPString(dstMailbox); err != nil {
+		return fmt.Errorf("invalid destination mailbox: %w", err)
+	}
 	if err := c.selectMailbox(srcMailbox); err != nil {
 		return err
 	}
@@ -507,61 +607,84 @@ func uidInt(uid string) int {
 	return n
 }
 
-func decodeBestBody(h mail.Header, body []byte) string {
+func decodeBestBody(h mail.Header, body []byte) (string, error) {
+	text, _, err := decodeBodyPart(h, body)
+	return text, err
+}
+
+// A plain inline body outranks HTML; attachments (including multipart
+// attachments) never participate in choosing the message body.
+func decodeBodyPart(h mail.Header, body []byte) (string, int, error) {
+	if disposition := h.Get("Content-Disposition"); disposition != "" {
+		kind, params, err := mime.ParseMediaType(disposition)
+		if err != nil {
+			return "", 0, fmt.Errorf("parse Content-Disposition: %w", err)
+		}
+		if strings.EqualFold(kind, "attachment") || params["filename"] != "" {
+			return "", 0, nil
+		}
+	}
+	mediaType := "text/plain"
+	params := map[string]string{}
+	if contentType := h.Get("Content-Type"); contentType != "" {
+		var err error
+		mediaType, params, err = mime.ParseMediaType(contentType)
+		if err != nil {
+			return "", 0, fmt.Errorf("parse Content-Type: %w", err)
+		}
+	}
+	if params["name"] != "" {
+		return "", 0, nil
+	}
 	decoded := decodeByTransferEncoding(h.Get("Content-Transfer-Encoding"), body)
-	ct := h.Get("Content-Type")
-	if ct == "" {
-		return strings.TrimSpace(string(decoded))
-	}
-	mediaType, params, err := mime.ParseMediaType(ct)
-	if err != nil {
-		return strings.TrimSpace(string(decoded))
-	}
 	if strings.HasPrefix(strings.ToLower(mediaType), "multipart/") {
 		boundary := params["boundary"]
 		if boundary == "" {
-			return strings.TrimSpace(string(decoded))
+			return "", 0, errors.New("missing multipart boundary")
 		}
-		return extractMultipartBody(boundary, decoded)
-	}
-	return strings.TrimSpace(string(decoded))
-}
-
-func extractMultipartBody(boundary string, raw []byte) string {
-	r := multipart.NewReader(bytes.NewReader(raw), boundary)
-	var htmlFallback string
-	for {
-		p, err := r.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			break
-		}
-		pb, _ := io.ReadAll(p)
-		sub := decodeByTransferEncoding(p.Header.Get("Content-Transfer-Encoding"), pb)
-		ct := p.Header.Get("Content-Type")
-		mt, sp, err := mime.ParseMediaType(ct)
-		if err != nil {
-			mt = "text/plain"
-		}
-		if strings.HasPrefix(strings.ToLower(mt), "multipart/") {
-			if b := sp["boundary"]; b != "" {
-				nested := extractMultipartBody(b, sub)
-				if nested != "" {
-					return nested
-				}
+		reader := multipart.NewReader(bytes.NewReader(decoded), boundary)
+		var best string
+		var firstDecodeError error
+		bestRank := 0
+		for {
+			part, err := reader.NextRawPart()
+			if err == io.EOF {
+				break
 			}
-			continue
+			if err != nil {
+				return "", 0, fmt.Errorf("read MIME part: %w", err)
+			}
+			partBody, err := io.ReadAll(part)
+			if err != nil {
+				return "", 0, fmt.Errorf("read MIME body: %w", err)
+			}
+			text, rank, err := decodeBodyPart(mail.Header(part.Header), partBody)
+			if err != nil {
+				if firstDecodeError == nil {
+					firstDecodeError = err
+				}
+				continue
+			}
+			if rank > bestRank {
+				best, bestRank = text, rank
+			}
 		}
-		if strings.EqualFold(mt, "text/plain") {
-			return strings.TrimSpace(string(sub))
+		if bestRank == 0 && firstDecodeError != nil {
+			return "", 0, firstDecodeError
 		}
-		if strings.EqualFold(mt, "text/html") && htmlFallback == "" {
-			htmlFallback = strings.TrimSpace(string(sub))
-		}
+		return best, bestRank, nil
 	}
-	return htmlFallback
+	rank := 0
+	switch strings.ToLower(mediaType) {
+	case "text/plain":
+		rank = 2
+	case "text/html":
+		rank = 1
+	default:
+		return "", 0, nil
+	}
+	text, err := decodeTextCharset(params["charset"], decoded)
+	return text, rank, err
 }
 
 func decodeByTransferEncoding(encoding string, data []byte) []byte {
@@ -579,4 +702,182 @@ func decodeByTransferEncoding(encoding string, data []byte) []byte {
 		}
 	}
 	return data
+}
+
+func validateUID(uid string) error {
+	if len(uid) == 0 || uid[0] < '1' || uid[0] > '9' {
+		return fmt.Errorf("invalid UID %q: expected one positive 32-bit integer", uid)
+	}
+	for _, ch := range uid {
+		if ch < '0' || ch > '9' {
+			return fmt.Errorf("invalid UID %q: expected one positive 32-bit integer", uid)
+		}
+	}
+	if _, err := strconv.ParseUint(uid, 10, 32); err != nil {
+		return fmt.Errorf("invalid UID %q: expected one positive 32-bit integer", uid)
+	}
+	return nil
+}
+
+func validateIMAPString(value string) error {
+	for _, ch := range value {
+		if ch < 32 || ch == 127 {
+			return errors.New("control characters are not allowed")
+		}
+	}
+	return nil
+}
+
+func validateIMAPAtom(value string) error {
+	if value == "" {
+		return errors.New("empty atom")
+	}
+	for _, ch := range value {
+		if ch <= 32 || ch >= 127 || strings.ContainsRune(`(){%*"\]`, ch) {
+			return errors.New("expected an IMAP atom")
+		}
+	}
+	return nil
+}
+
+// Search criteria are generated by the app. Accept that grammar explicitly so
+// quoted search text cannot escape into another key or a protocol literal.
+func validateSearchCriteria(criteria string) error {
+	if err := validateIMAPString(criteria); err != nil {
+		return fmt.Errorf("invalid search criteria: %w", err)
+	}
+	type token struct {
+		text   string
+		quoted bool
+	}
+	var tokens []token
+	for i := 0; i < len(criteria); {
+		if criteria[i] == ' ' {
+			i++
+			continue
+		}
+		if criteria[i] != '"' {
+			start := i
+			for i < len(criteria) && criteria[i] != ' ' {
+				if strings.ContainsRune(`"\(){`, rune(criteria[i])) {
+					return errors.New("invalid search token")
+				}
+				i++
+			}
+			tokens = append(tokens, token{text: criteria[start:i]})
+			continue
+		}
+		i++
+		var value strings.Builder
+		closed := false
+		for i < len(criteria) {
+			ch := criteria[i]
+			i++
+			if ch == '"' {
+				closed = true
+				break
+			}
+			if ch == '\\' {
+				if i == len(criteria) || (criteria[i] != '\\' && criteria[i] != '"') {
+					return errors.New("invalid quoted search escape")
+				}
+				ch = criteria[i]
+				i++
+			}
+			value.WriteByte(ch)
+		}
+		if !closed || (i < len(criteria) && criteria[i] != ' ') {
+			return errors.New("invalid quoted search string")
+		}
+		tokens = append(tokens, token{text: value.String(), quoted: true})
+	}
+	if len(tokens) == 0 {
+		return errors.New("empty search criteria")
+	}
+	for i := 0; i < len(tokens); i++ {
+		key := tokens[i]
+		if key.quoted {
+			return errors.New("invalid search key")
+		}
+		switch strings.ToUpper(key.text) {
+		case "ALL", "UNSEEN":
+		case "KEYWORD":
+			i++
+			if i >= len(tokens) || tokens[i].quoted {
+				return errors.New("search keyword must be an atom")
+			}
+			if err := ValidateKeyword(tokens[i].text); err != nil {
+				return err
+			}
+		case "TEXT", "SUBJECT", "FROM", "TO":
+			i++
+			if i >= len(tokens) || !tokens[i].quoted {
+				return errors.New("search text must be quoted")
+			}
+		case "HEADER":
+			i++
+			if i >= len(tokens) || tokens[i].quoted || validateIMAPAtom(tokens[i].text) != nil {
+				return errors.New("invalid search header name")
+			}
+			i++
+			if i >= len(tokens) || !tokens[i].quoted {
+				return errors.New("search header text must be quoted")
+			}
+		case "UID":
+			i++
+			if i >= len(tokens) || tokens[i].quoted {
+				return errors.New("invalid UID search")
+			}
+			uid := strings.TrimSuffix(tokens[i].text, ":*")
+			if err := validateUID(uid); err != nil {
+				return err
+			}
+		case "SINCE", "BEFORE":
+			i++
+			if i >= len(tokens) || tokens[i].quoted {
+				return errors.New("invalid search date")
+			}
+			if _, err := time.Parse("02-Jan-2006", tokens[i].text); err != nil {
+				return errors.New("invalid search date")
+			}
+		default:
+			return fmt.Errorf("unsupported search key %q", key.text)
+		}
+	}
+	return nil
+}
+
+func charsetReader(charset string, input io.Reader) (io.Reader, error) {
+	encoding, err := ianaindex.MIME.Encoding(charset)
+	if err != nil || encoding == nil {
+		return nil, fmt.Errorf("unsupported MIME charset %q", charset)
+	}
+	return encoding.NewDecoder().Reader(input), nil
+}
+
+func decodeTextCharset(charset string, body []byte) (string, error) {
+	if charset == "" {
+		return string(body), nil
+	}
+	reader, err := charsetReader(charset, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("decode MIME charset %q: %w", charset, err)
+	}
+	return string(decoded), nil
+}
+
+func unescapeIMAPQuoted(value string) string {
+	return strings.NewReplacer(`\"`, `"`, `\\`, `\`).Replace(value)
+}
+
+// ValidateKeyword accepts a user-defined IMAP flag atom, excluding system flags.
+func ValidateKeyword(keyword string) error {
+	if err := validateIMAPAtom(keyword); err != nil {
+		return fmt.Errorf("invalid IMAP keyword: %w", err)
+	}
+	return nil
 }

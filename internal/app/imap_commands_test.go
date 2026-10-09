@@ -18,7 +18,7 @@ func TestBuildIMAPCriteriaDatesAndFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	for _, want := range []string{"TEXT \"invoice\"", "SUBJECT \"billing subject\"", "FROM \"billing@example.com\"", "TO \"me@example.com\"", "KEYWORD \"finance\"", "UNSEEN", "UID 120:*", "SINCE 01-Jan-2026", "BEFORE 01-Feb-2026"} {
+	for _, want := range []string{"TEXT \"invoice\"", "SUBJECT \"billing subject\"", "FROM \"billing@example.com\"", "TO \"me@example.com\"", "KEYWORD finance", "UNSEEN", "UID 120:*", "SINCE 01-Jan-2026", "BEFORE 01-Feb-2026"} {
 		if !strings.Contains(criteria, want) {
 			t.Fatalf("criteria missing %q: %s", want, criteria)
 		}

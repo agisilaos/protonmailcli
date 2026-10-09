@@ -219,6 +219,13 @@ func sortedUserKeywords(msgs []bridge.DraftMessage) []string {
 }
 
 func buildIMAPCriteria(query, subject, from, to, hasTag string, unread bool, sinceID, after, before string) (string, error) {
+	for _, value := range []string{query, subject, from, to, hasTag, sinceID, after, before} {
+		for _, c := range value {
+			if c < 32 || c == 127 {
+				return "", fmt.Errorf("search fields must not contain control characters")
+			}
+		}
+	}
 	parts := []string{}
 	if strings.TrimSpace(query) != "" {
 		parts = append(parts, fmt.Sprintf(`TEXT "%s"`, escapeSearch(query)))
@@ -233,7 +240,10 @@ func buildIMAPCriteria(query, subject, from, to, hasTag string, unread bool, sin
 		parts = append(parts, fmt.Sprintf(`TO "%s"`, escapeSearch(to)))
 	}
 	if strings.TrimSpace(hasTag) != "" {
-		parts = append(parts, fmt.Sprintf(`KEYWORD "%s"`, escapeSearch(hasTag)))
+		if err := bridge.ValidateKeyword(strings.TrimSpace(hasTag)); err != nil {
+			return "", err
+		}
+		parts = append(parts, "KEYWORD "+strings.TrimSpace(hasTag))
 	}
 	if unread {
 		parts = append(parts, "UNSEEN")
@@ -262,7 +272,7 @@ func buildIMAPCriteria(query, subject, from, to, hasTag string, unread bool, sin
 }
 
 func escapeSearch(s string) string {
-	return strings.ReplaceAll(strings.TrimSpace(s), `"`, `\"`)
+	return strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(strings.TrimSpace(s))
 }
 
 func sortByUIDDesc(msgs []bridge.DraftMessage) {
