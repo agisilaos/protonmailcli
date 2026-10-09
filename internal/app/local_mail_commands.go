@@ -2,13 +2,10 @@ package app
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 	"protonmailcli/internal/model"
 )
@@ -47,11 +44,11 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if !ok {
 			return nil, false, cliError{exit: 5, code: "not_found", msg: "draft not found"}
 		}
-		if opts.subject != "" {
+		if flagWasSet(fs, "subject") {
 			d.Subject = opts.subject
 		}
-		if opts.body != "" || opts.bodyFile != "" || opts.stdinBody {
-			nextBody, err := loadBody(opts.body, opts.bodyFile, opts.stdinBody)
+		if flagWasSet(fs, "body") || opts.bodyFile != "" || opts.stdinBody {
+			nextBody, err := loadDraftUpdateBody(fs, opts)
 			if err != nil {
 				return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 			}
@@ -126,6 +123,21 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
 				continue
 			}
+			payload := map[string]any{"to": it.To, "subject": it.Subject, "body": b}
+			if found, cached, err := idempotencyLookup(st, it.IdempotencyKey, "local.draft.create-item", payload); err != nil {
+				results = append(results, batchItemResponse{Index: i, ErrorCode: errorCodeFromErr(err, "idempotency_conflict"), Error: err.Error()})
+				continue
+			} else if found {
+				item, err := replayBatchItem(cached, i)
+				if err != nil {
+					return nil, false, err
+				}
+				results = append(results, item)
+				if item.OK {
+					success++
+				}
+				continue
+			}
 			if g.dryRun {
 				results = append(results, batchItemResponse{Index: i, OK: true, DryRun: true, To: it.To, Subject: it.Subject})
 				success++
@@ -135,7 +147,11 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 			id := fmt.Sprintf("d_%d", now.UnixNano())
 			d := model.Draft{ID: id, To: it.To, Subject: it.Subject, Body: b, CreatedAt: now, UpdatedAt: now}
 			st.Drafts[id] = d
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: id, CreatePath: "local_state"})
+			result := batchItemResponse{Index: i, OK: true, DraftID: id, CreatePath: "local_state"}
+			if err := idempotencyStore(st, it.IdempotencyKey, "local.draft.create-item", payload, result); err != nil {
+				return nil, false, err
+			}
+			results = append(results, result)
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}
@@ -187,25 +203,10 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		if opts.force {
 			fmt.Fprintln(runtimeStderr, "warning: forcing send by policy override")
 		}
-		password := strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD"))
-		candidatePasswordFile := firstNonEmpty(opts.passwordFile, st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
-		if password == "" && candidatePasswordFile != "" {
-			b, err := os.ReadFile(filepath.Clean(config.Expand(candidatePasswordFile)))
-			if err != nil {
-				return nil, false, cliError{exit: 2, code: "validation_error", msg: "cannot read smtp password file"}
-			}
-			password = strings.TrimSpace(string(b))
-		}
 		if g.dryRun {
-			return sendPlanResponse{Action: "send", DraftID: d.ID, WouldSend: true, DryRun: true, SendPath: "local_state", Source: "local"}, true, nil
+			return sendPlanResponse{Action: "send", DraftID: d.ID, WouldSend: true, DryRun: true, SendPath: "local_state", Source: "local"}, false, nil
 		}
-		from := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username)
-		if from == "" {
-			return nil, false, cliError{exit: 3, code: "config_error", msg: "bridge username is missing", hint: "Run setup or auth login and set username"}
-		}
-		if err := bridge.Send(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: from, Password: password}, bridge.SendInput{From: from, To: d.To, Subject: d.Subject, Body: d.Body}); err != nil {
-			return nil, false, cliError{exit: 4, code: "send_failed", msg: err.Error()}
-		}
+		from := firstNonEmpty(st.Auth.Username, cfg.Bridge.Username, "local@example.invalid")
 		now := time.Now().UTC()
 		d.SentAt = &now
 		msgID := fmt.Sprintf("m_%d", now.UnixNano())
@@ -246,6 +247,21 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: code, Error: code, DraftID: it.DraftID})
 				continue
 			}
+			payload := map[string]any{"draftId": d.ID, "to": d.To, "subject": d.Subject, "body": d.Body}
+			if found, cached, err := idempotencyLookup(st, it.IdempotencyKey, "local.message.send-item", payload); err != nil {
+				results = append(results, batchItemResponse{Index: i, DraftID: it.DraftID, ErrorCode: errorCodeFromErr(err, "idempotency_conflict"), Error: err.Error()})
+				continue
+			} else if found {
+				item, err := replayBatchItem(cached, i)
+				if err != nil {
+					return nil, false, err
+				}
+				results = append(results, item)
+				if item.OK {
+					success++
+				}
+				continue
+			}
 			if g.dryRun {
 				results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, DryRun: true, SendPath: "local_state"})
 				success++
@@ -261,7 +277,11 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			m := model.Message{ID: msgID, DraftID: d.ID, From: from, To: d.To, Subject: d.Subject, Body: d.Body, Tags: d.Tags, SentAt: now}
 			st.Messages[msgID] = m
 			st.Drafts[d.ID] = d
-			results = append(results, batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SendPath: "local_state", SentAt: now.Format(time.RFC3339)})
+			result := batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SendPath: "local_state", SentAt: now.Format(time.RFC3339)}
+			if err := idempotencyStore(st, it.IdempotencyKey, "local.message.send-item", payload, result); err != nil {
+				return nil, false, err
+			}
+			results = append(results, result)
 			success++
 		}
 		resp := batchResultResponse{Results: results, Count: len(results), Success: success, Failed: len(results) - success, Source: "local"}

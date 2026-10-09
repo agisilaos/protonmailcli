@@ -113,9 +113,6 @@ func (a App) runCommand(args []string) int {
 		printHelp(a.Stdout)
 		return 0
 	}
-	if err := validateNoLateGlobalFlags(rest); err != nil {
-		return a.exitWithError(err, fallbackMode(g.mode), g.profile, requestID, start)
-	}
 
 	if data, handled, err := offlineHelp(rest, g); handled {
 		if err != nil {
@@ -127,6 +124,9 @@ func (a App) runCommand(args []string) int {
 			return 1
 		}
 		return 0
+	}
+	if err := validateLeafArguments(rest); err != nil {
+		return a.exitWithError(err, fallbackMode(g.mode), g.profile, requestID, start)
 	}
 
 	cfgPath := g.config
@@ -148,7 +148,7 @@ func (a App) runCommand(args []string) int {
 		if err := a.cmdSetup(rest[1:], g, cfgPath); err != nil {
 			return a.exitWithError(err, fallbackMode(g.mode), g.profile, requestID, start)
 		}
-		_ = output.PrintSuccess(a.Stdout, fallbackMode(g.mode), setupResponse{Configured: true, ConfigPath: cfgPath}, g.profile, requestID, start)
+		_ = output.PrintSuccess(a.Stdout, fallbackMode(g.mode), setupResponse{Configured: !g.dryRun, ConfigPath: cfgPath, DryRun: g.dryRun}, g.profile, requestID, start)
 		return 0
 	}
 
@@ -298,27 +298,6 @@ func parseGlobal(args []string) (globalOptions, []string, error) {
 	return g, args[i:], nil
 }
 
-func validateNoLateGlobalFlags(rest []string) error {
-	lateGlobals := map[string]bool{
-		"--json":     true,
-		"--plain":    true,
-		"--no-input": true,
-		"--dry-run":  true,
-		"-n":         true,
-	}
-	for _, a := range rest[1:] {
-		if lateGlobals[a] {
-			return cliError{
-				exit: 2,
-				code: "usage_error",
-				msg:  fmt.Sprintf("global flag %s must appear before the resource", a),
-				hint: "Example: protonmailcli --json draft list",
-			}
-		}
-	}
-	return nil
-}
-
 func printHelp(w io.Writer) {
 	fmt.Fprintln(w, `protonmailcli - Proton Mail Bridge CLI
 
@@ -387,6 +366,9 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 		if cfg.Bridge.Username == "" {
 			return cliError{exit: 2, code: "validation_error", msg: "--username is required in non-interactive setup", hint: "Pass --username or use --interactive"}
 		}
+	}
+	if g.dryRun {
+		return nil
 	}
 	return config.Save(cfgPath, cfg)
 }

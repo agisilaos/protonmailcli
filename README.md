@@ -40,6 +40,12 @@ Bridge-first CLI for Proton Mail workflows with a strong automation contract.
 - `filter`: local state engine (not yet IMAP-server-side rules)
 - local-state mode parity: supports `draft create-many` and `message send-many` for offline/agent contract testing
 
+With `PMAIL_USE_LOCAL_STATE=1`, all sends are local simulations and make no SMTP
+connection. Live draft operations discover the server's Drafts mailbox. Reads
+preserve unread state, and deletion expunges only the requested UID. See
+[IMAP workflow behavior](docs/imap-workflows.md) and
+[IMAP safety and decoding](docs/imap-behavior.md) for identity and recovery rules.
+
 ## Install
 
 ```bash
@@ -114,6 +120,9 @@ Bridge health checks:
 - `summary.config`
 - `doctor.bridge.checks` (IMAP/SMTP TCP checks)
 
+These details remain in `data` when a diagnostic fails, alongside the error and
+nonzero exit code. Login requires a readable password file with nonempty content.
+
 ## Usage
 
 ### IMAP draft identity and diagnostics
@@ -143,7 +152,7 @@ missing items). There is no automatic reset or resume of an unfinished batch.
 
 Use one state-writing process at a time. Do not reuse recovery-bearing state with
 older binaries that ignore pending records. Unkeyed commands have no durable replay
-protection. Batch payload identity retains the existing manifest hash: body-file
+protection. Command-level batch payload identity retains the existing manifest hash: body-file
 paths, rather than their resolved bytes, participate in that hash. Dry runs do not
 reserve keys. This does not provide cross-process locking or power-loss guarantees.
 
@@ -265,6 +274,16 @@ Generate shell completion:
 - `--dry-run` returns planned behavior without state changes.
 - Errors return stable exit codes and structured JSON when `--json` is set.
 
+Put global options before the resource. Unexpected trailing arguments are
+rejected before state or mailbox changes. Literal option values such as
+`--body --json` remain text. `--dry-run setup` leaves config unchanged and reports
+`configured: false`; previews do not initialize missing state directories.
+
+Draft updates accept `--subject ''` and `--body ''` to clear those fields.
+Batch manifest item keys prevent repeated successful items from creating or
+sending again; reuse the same state file and keep each operation's keys distinct.
+See [local command behavior](docs/local-command-behavior.md).
+
 ## Config and state
 
 Configuration updates are written to a private temporary file beside the target,
@@ -284,6 +303,13 @@ Selected env vars:
 - `PMAIL_PROFILE`
 - `PMAIL_OUTPUT`
 - `PMAIL_TIMEOUT`
+
+Nonempty environment defaults override the config file; explicit output/profile
+flags take precedence. TOML syntax, output modes, and durations are validated.
+SMTP operations honor the timeout. For Bridge certificates outside system trust,
+set `bridge.tls_cert_file` to an explicitly trusted public PEM certificate; TLS
+hostname verification remains enabled. See
+[configuration and SMTP behavior](docs/config-and-smtp-fixes.md).
 
 ## Output and exit codes
 

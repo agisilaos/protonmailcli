@@ -27,6 +27,7 @@ smtp_port = 1025
 tls = true
 username = ""
 password_file = ""
+tls_cert_file = "" # optional trusted public SMTP certificate in PEM format
 
 [safety]
 require_confirm_send_non_tty = true
@@ -40,7 +41,8 @@ Bridge credentials are resolved in this order:
 1. `PMAIL_SMTP_PASSWORD` environment variable
 2. password file path from flag/auth/config (`--smtp-password-file`, auth state, or config)
 
-Username is resolved from auth state then config.
+Username is resolved from the selected Bridge account, then auth state, then
+config. Doctor uses the same precedence.
 
 ## Environment variables in active use
 
@@ -49,6 +51,19 @@ Username is resolved from auth state then config.
 - `PMAIL_OUTPUT`
 - `PMAIL_TIMEOUT`
 - `PMAIL_USE_LOCAL_STATE` (test/local backend mode)
+
+Nonempty profile/output/timeout environment values override file defaults;
+explicit CLI profile/output flags override those values. `PMAIL_TIMEOUT` must be
+a positive duration and applies to SMTP as well as IMAP. Invalid TOML or defaults
+return `config_error`, while a missing file returns `config_missing`. TOML inline
+comments do not alter boolean safety settings. See
+[configuration and SMTP behavior](config-and-smtp-fixes.md) for certificate trust
+and accepted-send handling.
+
+Local-state mode simulates single and bulk sends entirely in the local store.
+Login validates that a password file is regular, readable, no larger than 64 KiB,
+and contains nonempty content. Named pipes and devices are rejected without
+waiting for their contents. Credential resolution and doctor use the same reader.
 
 ## Secrets policy
 
@@ -61,6 +76,8 @@ Username is resolved from auth state then config.
 - Non-interactive `message send` requires `--confirm-send` unless `--force`.
 - `--force` is allowed only when `allow_force_send = true`.
 - Use `--dry-run` in automations before mutating commands.
+- Setup previews preserve existing config, and read/preview commands do not
+  initialize absent state files or directories.
 
 ## Idempotency
 
@@ -70,6 +87,11 @@ Behavior:
 
 - Same key + same payload -> returns cached response.
 - Same key + different payload -> conflict response (`exit 6`).
+
+Batch manifests also honor item-level keys. An item conflict is reported in that
+item's result; mixed batches exit 10. See [IMAP workflow behavior](imap-workflows.md)
+for durable receipt handling and its limits, and
+[local command behavior](local-command-behavior.md) for offline simulation.
 
 ## Release safety
 

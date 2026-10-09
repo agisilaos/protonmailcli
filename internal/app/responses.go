@@ -161,6 +161,7 @@ func (r batchResultResponse) ExitCode() int {
 }
 
 type setupResponse struct {
+	DryRun     bool   `json:"dryRun,omitempty"`
 	Configured bool   `json:"configured"`
 	ConfigPath string `json:"configPath"`
 }
