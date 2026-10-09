@@ -100,3 +100,11 @@ func parseMailboxUID(id, defaultMailbox string) (string, string, error) {
 	}
 	return box, v, nil
 }
+
+func bridgeSMTPConfig(cfg config.Config, username, password string) bridge.SMTPConfig {
+	timeout := 30 * time.Second
+	if parsed, err := time.ParseDuration(cfg.Timeout); err == nil && parsed > 0 {
+		timeout = parsed
+	}
+	return bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: password, Timeout: timeout, TLSCertFile: config.Expand(cfg.Bridge.TLSCertFile)}
+}

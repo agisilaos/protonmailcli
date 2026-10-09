@@ -154,7 +154,10 @@ func (a App) runCommand(args []string) int {
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return a.exitWithError(cliError{exit: 3, code: "config_missing", msg: "configuration not found", hint: "Run protonmailcli setup first"}, fallbackMode(g.mode), g.profile, requestID, start)
+		if os.IsNotExist(err) {
+			return a.exitWithError(cliError{exit: 3, code: "config_missing", msg: "configuration not found", hint: "Run protonmailcli setup first"}, fallbackMode(g.mode), g.profile, requestID, start)
+		}
+		return a.exitWithError(cliError{exit: 3, code: "config_error", msg: "cannot load configuration: " + err.Error(), hint: "Check the configuration file and PMAIL_OUTPUT/PMAIL_TIMEOUT settings"}, fallbackMode(g.mode), g.profile, requestID, start)
 	}
 	if g.profile == "" {
 		g.profile = cfg.Profile

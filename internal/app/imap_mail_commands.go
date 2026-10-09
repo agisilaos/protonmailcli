@@ -307,7 +307,7 @@ func createDraftViaMoveFallback(cfg config.Config, st *model.State, username str
 	for k, v := range extraHeaders {
 		headers[k] = v
 	}
-	if err := smtpSendFn(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: password}, bridge.SendInput{
+	if err := smtpSendFn(bridgeSMTPConfig(cfg, username, password), bridge.SendInput{
 		From:         username,
 		To:           []string{username},
 		Subject:      subject,
@@ -441,7 +441,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			}
 			pass = p
 		}
-		err = bridge.Send(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: pass}, bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body})
+		err = bridge.Send(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body})
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "send_failed", msg: err.Error()}
 		}
@@ -508,7 +508,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				success++
 				continue
 			}
-			if err := smtpSendFn(bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: pass}, bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body}); err != nil {
+			if err := smtpSendFn(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body}); err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "send_failed", Error: err.Error(), DraftID: it.DraftID})
 				continue
 			}
