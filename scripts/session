@@ -91,6 +91,26 @@ def checkout_inspection(cwd=ROOT):
     return [*hooks_disabled(cwd), "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"]
 
 
+def checkout_conversion(cwd):
+    config = git("config", "--null", "--list", "--includes", cwd=cwd)
+    return {
+        key: value for key, value in config_entries(config)
+        if key.startswith("filter.") or key in {
+            "core.attributesfile", "core.autocrlf", "core.checkroundtripencoding",
+            "core.eol", "core.safecrlf",
+        }
+    }
+
+
+def require_matching_conversion(candidate):
+    conversion = checkout_conversion(ROOT)
+    if conversion != checkout_conversion(candidate):
+        raise SessionError("checkout conversion settings differ between the session and disposable worktree")
+    attributes = conversion.get("core.attributesfile")
+    if attributes and not Path(attributes).expanduser().is_absolute():
+        raise SessionError("use an absolute Git attributes file path before rebasing a session")
+
+
 def default_tip(remote, config):
     env = transport_environment(config, session_environment(), remote)
     rows = git(
@@ -242,6 +262,7 @@ def locked_index(path):
 
 
 def install_candidate(candidate, head, original_head, branch_ref, previous_base, base):
+    require_matching_conversion(candidate)
     options = checkout_inspection(candidate)
     metadata = git("rev-parse", "--absolute-git-dir", cwd=candidate)
     live_index = Path(git("rev-parse", "--path-format=absolute", "--git-path", "index"))
@@ -334,6 +355,7 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
             candidate, original_head)
         options = checkout_inspection(candidate)
         try:
+            require_matching_conversion(candidate)
             git(*options, "restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=candidate)
             try:
                 git(
@@ -362,7 +384,8 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
         finally:
             if not retained:
                 try:
-                    git(*checkout_inspection(), "worktree", "remove", candidate)
+                    remove_flags = ["--force"] if {path.name for path in candidate.iterdir()} == {".git"} else []
+                    git(*checkout_inspection(), "worktree", "remove", *remove_flags, candidate)
                 except (OSError, subprocess.CalledProcessError) as error:
                     raise SessionError(f"temporary rebase worktree retained at {candidate}") from error
     finally:

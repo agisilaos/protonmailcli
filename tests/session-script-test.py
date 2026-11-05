@@ -1065,6 +1065,23 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         self.assertEqual((self.worktree / "conflict").read_text(), "conflict")
         self.assertEqual(self.remote_tip(), base)
 
+    def test_rebase_refuses_different_worktree_checkout_conversions(self):
+        original = self.change(self.worktree, "session-change")
+        base = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        metadata = self.git(self.worktree, "rev-parse", "--absolute-git-dir")
+        config = self.root / "gitconfig"
+        included = self.root / "conditional-gitconfig"
+        self.git(self.repo, "config", "--file", included, "core.autocrlf", "true")
+        self.git(self.repo, "config", "--file", config, f"includeIf.gitdir:{metadata}.path", included)
+        self.assertIn("checkout conversion settings differ", self.session(
+            self.worktree, "land", status=1, TMPDIR=str(self.root), GIT_CONFIG_GLOBAL=str(config),
+        ))
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertFalse((self.worktree / "remote-change").exists())
+        self.assertFalse(list(self.root.glob("protonmailcli-rebase-*")))
+        self.assertEqual(self.remote_tip(), base)
+
     def test_landing_does_not_recreate_a_branch_deleted_just_before_push(self):
         self.change(self.worktree, "session-change")
         env = self.git_wrapper("""
