@@ -473,7 +473,11 @@ if sys.argv[3:5] == ["worktree", "remove"]:
         head = self.change(self.worktree, "session-change")
         self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/master")
         self.git(self.repo, "remote", "set-url", "origin", "../remote.git")
-        self.session(self.worktree, "end")
+        env = self.git_wrapper("""
+if sys.argv[1:2] == ["-C"] and "ls-remote" in sys.argv[3:]:
+    assert sys.argv[2] == os.environ["SESSION_TEST_WORKTREE"]
+""")
+        self.session(self.worktree, "end", **env)
         self.assertEqual(self.git(self.repo, "rev-parse", "fix/mailbox-preview"), head)
 
     def test_hidden_tracked_edits_are_preserved(self):
@@ -695,7 +699,7 @@ if "checkout" in sys.argv[3:] and "--no-overwrite-ignore" in sys.argv[3:]:
         advance = self.change(self.repo, "remote-change")
         self.git(self.repo, "push", "--quiet", "origin", "master")
         env = self.git_wrapper("""
-if "checkout" in sys.argv[3:] and "--detach" in sys.argv[3:]:
+if sys.argv[3:] == ["rev-parse", "--path-format=absolute", "--git-path", "index"]:
     worktree = Path(os.environ["SESSION_TEST_WORKTREE"])
     (worktree / "concurrent-change").write_text("preserve")
     subprocess.run([real_git, "-C", str(worktree), "add", "concurrent-change"], check=True)
@@ -710,6 +714,26 @@ if "checkout" in sys.argv[3:] and "--detach" in sys.argv[3:]:
         self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
                          self.base)
         self.assertEqual(self.remote_tip(), advance)
+
+    def test_rebase_install_locks_the_live_index_against_concurrent_commits(self):
+        self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        marker = self.root / "index-lock"
+        env = self.git_wrapper("""
+if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
+    worktree = os.environ["SESSION_TEST_WORKTREE"]
+    result = subprocess.run(
+        [real_git, "-C", worktree, "commit", "--quiet", "--allow-empty", "-m", "Concurrent commit"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert result.returncode and "index.lock" in result.stderr
+    Path(os.environ["SESSION_TEST_INDEX_LOCK"]).touch()
+""")
+        self.session(self.worktree, "land", SESSION_TEST_INDEX_LOCK=str(marker), **env)
+        self.assertTrue(marker.is_file())
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), advance)
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
 
     def test_rebase_install_keeps_the_session_branch_reserved(self):
         self.change(self.worktree, "session-change")
@@ -738,8 +762,13 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         self.git(self.repo, "push", "--quiet", "origin", "master")
         env = self.git_wrapper("""
 if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
+    worktree = os.environ["SESSION_TEST_WORKTREE"]
     subprocess.run(
-        [real_git, "-C", os.environ["SESSION_TEST_WORKTREE"], "switch", "--quiet", "-c", "fix/other"],
+        [real_git, "-C", worktree, "branch", "fix/other"],
+        check=True,
+    )
+    subprocess.run(
+        [real_git, "-C", worktree, "symbolic-ref", "HEAD", "refs/heads/fix/other"],
         check=True,
     )
 """)
@@ -751,6 +780,10 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
         self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
         self.assertEqual(self.remote_tip(), advance)
+
+    def test_land_refuses_a_split_index(self):
+        self.git(self.worktree, "update-index", "--split-index")
+        self.assertIn("disable the split index", self.session(self.worktree, "land", status=1))
 
     def test_rehearsal_skips_hooks_configured_only_for_candidate_metadata(self):
         self.change(self.worktree, "session-change")

@@ -86,12 +86,12 @@ def checkout_inspection(cwd=ROOT):
     return [*hooks_disabled(cwd), "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"]
 
 
-def default_tip(remote, cwd=ROOT):
-    config = git("config", "--null", "--list", "--includes", cwd=cwd)
+def default_tip(remote):
+    config = git("config", "--null", "--list", "--includes")
     env = transport_environment(config, session_environment(), remote)
     rows = git(
         f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", LOOKUP_REMOTE, "HEAD",
-        cwd=cwd, extra_env=env,
+        extra_env=env,
     ).splitlines()
     refs = [row for row in rows if row.endswith("\tHEAD")]
     if len(refs) == 2:
@@ -184,6 +184,8 @@ def current_session(main_checkout, cwd=ROOT):
     tracked = git(*inspection, "ls-files", "-v", "-z", cwd=cwd).split("\0")
     if any(entry.startswith("S ") or entry[:1].islower() for entry in tracked):
         raise SessionError("restore normal index tracking before continuing")
+    if git(*inspection, "rev-parse", "--shared-index-path", cwd=cwd):
+        raise SessionError("disable the split index in the session checkout before continuing")
     return branch, base
 
 
@@ -217,25 +219,49 @@ fi
 def install_candidate(candidate, head, original_head, branch_ref, branch_update):
     options = checkout_inspection(candidate)
     metadata = git("rev-parse", "--absolute-git-dir", cwd=candidate)
-    live_index = git("rev-parse", "--path-format=absolute", "--git-path", "index")
-    # Use the candidate's detached HEAD with the live index and files. The
-    # session's own HEAD remains attached and keeps its branch reserved.
+    live_index = Path(git("rev-parse", "--path-format=absolute", "--git-path", "index"))
+    prepared_index = candidate.parent / "installation-index"
+    index_lock = live_index.with_name("index.lock")
+    # Hold Git's live index lock while the candidate's detached checkout
+    # updates the live files against a private copy of the index.
     checkout = [
-        *options, f"--git-dir={metadata}", f"--work-tree={ROOT}",
+        *options, "-c", "core.splitIndex=false", f"--git-dir={metadata}", f"--work-tree={ROOT}",
         "checkout", "--no-overwrite-ignore", "--detach",
     ]
-    env = {"GIT_INDEX_FILE": live_index}
+    env = {"GIT_INDEX_FILE": str(prepared_index)}
     git(*options, "update-ref", "--no-deref", "HEAD", original_head, head, cwd=candidate)
     try:
-        git(*checkout, head, extra_env=env, capture=False)
-        update_session_refs(branch_ref, branch_update)
-    except (OSError, subprocess.CalledProcessError, KeyboardInterrupt):
-        if git("rev-parse", "HEAD", cwd=candidate) == head:
-            current = git("rev-parse", "HEAD")
-            if current != head:
-                git(*checkout, current, extra_env=env, capture=False)
-        raise
+        with index_lock.open("xb") as lock:
+            def owns_lock():
+                try:
+                    return os.path.samestat(index_lock.stat(), os.fstat(lock.fileno()))
+                except FileNotFoundError:
+                    return False
+
+            ready = False
+            try:
+                if live_index.exists():
+                    shutil.copy2(live_index, prepared_index)
+                git(*checkout, head, extra_env=env, capture=False)
+                with prepared_index.open("rb") as source:
+                    shutil.copyfileobj(source, lock)
+                lock.flush()
+                os.fsync(lock.fileno())
+                ready = True
+                update_session_refs(branch_ref, branch_update)
+                index_lock.replace(live_index)
+            except (OSError, subprocess.CalledProcessError, KeyboardInterrupt):
+                current = git("rev-parse", "HEAD")
+                if ready and current == head and owns_lock():
+                    index_lock.replace(live_index)
+                elif current != head and git("rev-parse", "HEAD", cwd=candidate) == head:
+                    git(*checkout, current, extra_env=env, capture=False)
+                raise
+            finally:
+                if owns_lock():
+                    index_lock.unlink()
     finally:
+        prepared_index.unlink(missing_ok=True)
         git(*options, "update-ref", "--no-deref", "HEAD", head, cwd=candidate)
 
 
@@ -518,6 +544,8 @@ def end(main_checkout):
     require_ancestor(head, base, f"session HEAD is not on origin/{branch}")
     if current_session(main_checkout) != (session, session_base) or git("rev-parse", "HEAD") != head:
         raise SessionError("the session changed during cleanup; run end again")
+    if default_tip(remote) != (branch, base):
+        raise SessionError("origin's default branch changed during cleanup; run end again")
     # Move the checkout away from its working path before the last inspection.
     # A refused cleanup restores the original path or leaves the files at the
     # holding path if something else has occupied the original one.
@@ -528,8 +556,6 @@ def end(main_checkout):
     gitfile = holding / "worktree-gitfile"
     try:
         git("worktree", "move", ROOT, moved, cwd=main_checkout)
-        if default_tip(remote, cwd=moved) != (branch, base):
-            raise SessionError("origin's default branch changed during cleanup; run end again")
         if (current_session(main_checkout, cwd=moved) != (session, session_base)
                 or git("rev-parse", "HEAD", cwd=moved) != head):
             raise SessionError("the session changed before removal")

@@ -30,7 +30,8 @@ this prompt:
 
 1. When authorized, commit the changes as a linear series and confirm the
    worktree is clean. Move any ignored local files, such as credentials or
-   build artifacts, out of the checkout before landing.
+   build artifacts, out of the checkout before landing. Use a regular Git
+   index for the session checkout.
 2. Run `scripts/session land --dry-run` to rehearse a landing, or
    `scripts/session land` to publish an authorized landing. Both rebase the
    local branch after checking the fetched commit against the resolved
