@@ -19,7 +19,8 @@ this prompt:
    overlapping ownership. Resume an existing checkout if it owns this work.
 2. Run `scripts/session start <short-name>` and switch to the printed sibling
    checkout. It starts at the fetched tip of GitHub's default branch
-   (currently `master`) on `fix/<short-name>`.
+   (currently `master`) on `fix/<short-name>`. Setup restores tracked files
+   with checkout hooks disabled.
 3. Make the scoped change and run focused checks as you work. Stage changed
    files by explicit path. Keep another session's changes in its checkout.
 
@@ -35,6 +36,9 @@ this prompt:
    landing fast-forwards the same remote default branch from the exact tip used
    during qualification. Landings take turns across worktrees of the same clone.
    The configured pre-push hook runs for a real landing.
+   The session checks the default branch again inside the pre-push hook.
+   Git's ref update guards the branch tip, and a server-side default-branch
+   switch can still happen after that last check.
 3. If the rebase stops, resolve the conflict or abort it, then rerun the
    command. If review reports findings, address them and commit before
    retrying. If the gate fails or the remote advances, inspect the
@@ -47,6 +51,17 @@ this prompt:
    the archived checkout files. Discard the archive once any processes
    using that checkout have finished. Move ignored local files, such as
    credentials, out of the checkout before ending.
+   If another worktree holds the branch, its owner can delete the branch
+   once they finish and their local default branch includes the landing.
+
+## Partial checkout recovery
+
+If `start` prints a checkout path and base after setup stops, fix the
+underlying Git error and inspect the checkout before restoring files.
+Record the printed base with
+`git update-ref refs/worktree/protonmailcli/session-base <base>` from the
+session checkout. In a still-empty checkout, finish with
+`git restore --source=HEAD --staged --worktree -- .`.
 
 Landing requires Git, Python 3, the project's macOS release toolchain and an
 authenticated Codex CLI. Set `PROTONMAILCLI_CODEX` to select a different

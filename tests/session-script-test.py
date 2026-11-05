@@ -38,7 +38,7 @@ assert sys.argv[1:] == ["--ci"]
 assert not any(key.startswith("PMAIL_") for key in os.environ)
 assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT"} & os.environ.keys()
 assert not {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"} & os.environ.keys()
-assert not {"BASH_ENV", "ENV", "GOFLAGS"} & os.environ.keys()
+assert not {"BASH_ENV", "BASHOPTS", "CDPATH", "ENV", "SHELLOPTS", "GOFLAGS"} & os.environ.keys()
 assert os.environ["GOENV"] == "off"
 assert os.environ["GOWORK"] == "off"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
@@ -47,7 +47,10 @@ assert not subprocess.check_output(["git", "status", "--porcelain"])
 out = Path(os.environ["PROTONMAILCLI_RELEASE_CHECK_DIR"])
 assert not out.is_relative_to(Path.cwd())
 out.mkdir()
-(out / "protonmailcli").touch()
+if not os.environ.get("SESSION_TEST_SKIP_BUILD"):
+    binary = out / "protonmailcli"
+    binary.touch()
+    binary.chmod(0o755)
 if os.environ.get("SESSION_TEST_MOVE_REMOTE"):
     subprocess.run(
         ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "push", os.environ["SESSION_TEST_REMOTE"],
@@ -126,7 +129,9 @@ class SessionTests(unittest.TestCase):
 
     def session(self, cwd, *args, status=0, **env):
         result = subprocess.run(
-            ["scripts/session", *args], cwd=cwd, env={**self.env, **env},
+            ["scripts/session", *args], cwd=cwd, env={
+                **self.env, "SHELLOPTS": "noexec", "BASHOPTS": "extglob", "CDPATH": "/fixture", **env,
+            },
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         self.assertEqual(result.returncode, status, result.stdout)
@@ -292,7 +297,7 @@ if sys.argv[3:4] == ["fetch"]:
 
     def test_end_preserves_the_branch_if_another_worktree_checks_it_out(self):
         env = self.git_wrapper("""
-if sys.argv[7:9] == ["branch", "--delete"]:
+if ["branch", "--delete"] == sys.argv[9:11]:
     repo = Path(sys.argv[2])
     subprocess.run(
         [real_git, "-C", str(repo), "worktree", "add", str(repo.parent / "other"), "fix/mailbox-preview"],
@@ -304,6 +309,15 @@ if sys.argv[7:9] == ["branch", "--delete"]:
         ))
         self.assertEqual(self.git(self.root / "other", "branch", "--show-current"), "fix/mailbox-preview")
         self.assertTrue(list(self.root.glob(".repo-mailbox-preview-end-*/files/scripts/session")))
+
+    def test_end_can_delete_a_landed_branch_in_a_single_branch_clone(self):
+        self.change(self.worktree, "session-change")
+        self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/main")
+        self.git(self.remote, "symbolic-ref", "HEAD", "refs/heads/main")
+        self.git(self.repo, "config", "--replace-all", "remote.origin.fetch",
+                 "+refs/heads/master:refs/remotes/origin/master")
+        self.session(self.worktree, "end")
+        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
 
     def test_hidden_tracked_edits_are_preserved(self):
         path = self.worktree / ".gitignore"
@@ -334,6 +348,13 @@ if sys.argv[7:9] == ["branch", "--delete"]:
         ))
         self.assertEqual(self.remote_tip(), self.base)
 
+    def test_success_without_the_build_artifact_refuses_landing(self):
+        self.change(self.worktree, "gate-without-build")
+        self.assertIn("did not produce an executable", self.session(
+            self.worktree, "land", status=1, SESSION_TEST_SKIP_BUILD="1",
+        ))
+        self.assertEqual(self.remote_tip(), self.base)
+
     def test_remote_advance_during_qualification_blocks_push(self):
         self.change(self.worktree, "session-change")
         self.git(self.repo, "switch", "--quiet", "-c", "advance")
@@ -360,6 +381,20 @@ if sys.argv[7:9] == ["branch", "--delete"]:
         ))
         self.assertEqual(self.remote_tip(), self.base)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
+
+    def test_push_refuses_a_default_change_in_the_configured_hook(self):
+        self.change(self.worktree, "session-change")
+        self.git(self.remote, "update-ref", "refs/heads/main", self.base)
+        hook = self.repo / ".git/hooks/pre-push"
+        hook.write_text("""#!/bin/sh
+git --git-dir="$SESSION_TEST_REMOTE" symbolic-ref HEAD refs/heads/main
+""")
+        hook.chmod(0o755)
+        self.assertIn("default branch changed before the push", self.session(
+            self.worktree, "land", status=1,
+        ))
+        self.assertEqual(self.remote_tip(), self.base)
+        self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/main"), self.base)
 
     def test_branch_switch_during_fetch_stops_before_rebase(self):
         original = self.change(self.worktree, "session-change")
@@ -407,7 +442,7 @@ if sys.argv[3:4] == ["fetch"]:
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), merge)
         self.assertEqual(self.remote_tip(), self.base)
 
-    def test_lease_prevents_recreating_a_branch_deleted_just_before_push(self):
+    def test_landing_does_not_recreate_a_branch_deleted_just_before_push(self):
         self.change(self.worktree, "session-change")
         env = self.git_wrapper("""
 if sys.argv[3:4] == ["-c"] and sys.argv[5:6] == ["push"]:
@@ -416,7 +451,7 @@ if sys.argv[3:4] == ["-c"] and sys.argv[5:6] == ["push"]:
         check=True,
     )
 """)
-        self.assertIn("stale info", self.session(self.worktree, "land", status=1, **env))
+        self.session(self.worktree, "land", status=1, **env)
         self.assertEqual(self.git(self.remote, "for-each-ref", "refs/heads/master"), "")
 
     def test_smoke_binary_is_built_outside_the_checkout(self):
@@ -466,6 +501,28 @@ exit 23
         )
         self.assertEqual(self.git(self.repo, "remote", "get-url", "origin"), str(self.remote))
         self.assertEqual(self.remote_tip(), head)
+
+    def test_start_and_qualification_do_not_run_checkout_hooks(self):
+        hooks = self.root / "hooks"
+        hooks.mkdir()
+        hook = hooks / "post-checkout"
+        hook.write_text("""#!/bin/sh
+if [ "$PWD" != "$SESSION_TEST_WORKTREE" ]; then
+    printf '%s\\n' "$PWD" > "$SESSION_TEST_CHECKOUT_HOOK"
+    exit 17
+fi
+""")
+        hook.chmod(0o755)
+        config = self.root / "gitconfig"
+        self.git(self.repo, "config", "--file", config, "core.hooksPath", hooks)
+        marker = self.root / "checkout-hook"
+        env = {"GIT_CONFIG_GLOBAL": str(config), "SESSION_TEST_CHECKOUT_HOOK": str(marker)}
+        self.session(self.repo, "start", "no-hook", **env)
+        self.assertTrue((self.root / "repo-no-hook/scripts/session").is_file())
+        head = self.change(self.worktree, "session-change")
+        self.session(self.worktree, "land", **env)
+        self.assertEqual(self.remote_tip(), head)
+        self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":

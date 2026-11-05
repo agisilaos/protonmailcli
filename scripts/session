@@ -16,8 +16,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SESSION_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 SESSION_BASE = "refs/worktree/protonmailcli/session-base"
+SHELL_ENV = {"BASH_ENV", "BASHOPTS", "CDPATH", "ENV", "SHELLOPTS"}
 QUALIFICATION_ENV = {
-    "BASH_ENV", "ENV", "GOENV", "GOFLAGS", "GOWORK", "GNUMAKEFLAGS",
+    "GOENV", "GOFLAGS", "GOWORK", "GNUMAKEFLAGS",
     "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS",
 }
 
@@ -33,10 +34,10 @@ def session_environment():
     )
     if result.returncode:
         raise SessionError("could not determine Git's repository-local environment variables")
-    local = set(result.stdout.splitlines()) | {"GIT_NAMESPACE", "GIT_QUARANTINE_PATH"}
+    local = set(result.stdout.splitlines()) | SHELL_ENV | {"GIT_NAMESPACE", "GIT_QUARANTINE_PATH"}
     return {
         key: value for key, value in os.environ.items()
-        if key not in local and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+        if key not in local and not key.startswith(("BASH_FUNC_", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
     }
 
 
@@ -85,8 +86,18 @@ def start(main_checkout, name):
         raise SessionError("use a session name such as mailbox-preview")
     branch, base = fetch_default()
     path = worktree_path(main_checkout, name)
-    git("worktree", "add", "--no-track", "-b", f"fix/{name}", path, base)
-    git("update-ref", SESSION_BASE, base, cwd=path)
+    git("worktree", "add", "--no-checkout", "--no-track", "-b", f"fix/{name}", path, base)
+    try:
+        git("update-ref", SESSION_BASE, base, cwd=path)
+        git(
+            "-c", f"core.hooksPath={os.devnull}",
+            "restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=path,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise SessionError(
+            f"setup stopped with the checkout preserved at {path} and base {base}; "
+            "see partial checkout recovery in docs/development-sessions.md"
+        ) from error
     print(f"Session checkout: {path} (origin/{branch} at {base})")
 
 
@@ -177,11 +188,15 @@ def review(base, head, evidence, checkout):
 def qualify(session, base, head, evidence):
     with tempfile.TemporaryDirectory(prefix="protonmailcli-qualification-") as directory:
         checkout = Path(directory) / "checkout"
-        git("clone", "--quiet", "--no-local", "--single-branch", "--no-tags", "--branch", session,
-            ROOT, checkout)
+        git(
+            "clone", "--quiet", "--template=", "--config", f"core.hooksPath={os.devnull}",
+            "--no-local", "--single-branch", "--no-tags", "--branch", session, ROOT, checkout,
+        )
         git("remote", "remove", "origin", cwd=checkout)
         if git("rev-parse", "HEAD", cwd=checkout) != head:
             raise SessionError("the session changed before qualification; run land again")
+        if git("status", "--porcelain", "--untracked-files=all", "--ignored=matching", cwd=checkout):
+            raise SessionError("the qualification checkout is dirty")
         review(base, head, evidence, checkout)
         run_logged(
             ["scripts/release-check.sh", "--ci"], evidence / "release-check.log", cwd=checkout,
@@ -190,6 +205,9 @@ def qualify(session, base, head, evidence):
                 "PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build"),
             },
         )
+        binary = evidence / "build" / "protonmailcli"
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise SessionError(f"the release check did not produce an executable; see {evidence / 'release-check.log'}")
 
 
 def push_qualified(remote, branch, base, head, dry_run):
@@ -203,7 +221,15 @@ if [ "$2" != "$PROTONMAILCLI_QUALIFIED_URL" ]; then
     exit 1
 fi
 if [ -x "$PROTONMAILCLI_PRE_PUSH" ]; then
-    exec "$PROTONMAILCLI_PRE_PUSH" origin "$2"
+    "$PROTONMAILCLI_PRE_PUSH" origin "$2" || exit "$?"
+fi
+advertisement=$(git ls-remote --symref -- "$2" HEAD) || exit "$?"
+expected_ref=$(printf 'ref: refs/heads/%s\\tHEAD' "$PROTONMAILCLI_QUALIFIED_BRANCH")
+expected_tip=$(printf '%s\\tHEAD' "$PROTONMAILCLI_QUALIFIED_BASE")
+if ! printf '%s\\n' "$advertisement" | grep -Fqx -- "$expected_ref" ||
+   ! printf '%s\\n' "$advertisement" | grep -Fqx -- "$expected_tip"; then
+    echo "session: the remote default branch changed before the push" >&2
+    exit 1
 fi
 """)
         hook.chmod(0o700)
@@ -217,6 +243,8 @@ fi
                 remote, f"{head}:refs/heads/{branch}", capture=False,
                 extra_env={
                     "PROTONMAILCLI_QUALIFIED_URL": remote,
+                    "PROTONMAILCLI_QUALIFIED_BRANCH": branch,
+                    "PROTONMAILCLI_QUALIFIED_BASE": base,
                     "PROTONMAILCLI_PRE_PUSH": "" if dry_run else original_hook,
                 },
             )
@@ -301,6 +329,7 @@ def end(main_checkout):
         raise SessionError("the session branch changed during cleanup and was retained")
     try:
         git(
+            "-c", f"remote.origin.fetch=+refs/heads/{branch}:refs/remotes/origin/{branch}",
             "-c", f"branch.{session}.remote=origin", "-c", f"branch.{session}.merge=refs/heads/{branch}",
             "branch", "--delete", "--", session, cwd=main_checkout, capture=False,
         )
