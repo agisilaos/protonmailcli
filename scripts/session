@@ -251,6 +251,8 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
     git(*options, "update-ref", "--no-deref", "HEAD", original_head, head, cwd=candidate)
     try:
         with locked_index(index_lock) as lock:
+            if git("symbolic-ref", "--quiet", "HEAD") != branch_ref or git("rev-parse", "HEAD") != original_head:
+                raise SessionError("the session changed before applying the candidate")
             ready = False
             try:
                 if live_index.exists():
@@ -267,8 +269,8 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
                 current = git("rev-parse", "HEAD")
                 if ready and current == head and owns_index_lock(index_lock, lock):
                     index_lock.replace(live_index)
-                elif current != head and git("rev-parse", "HEAD", cwd=candidate) == head:
-                    git(*checkout, current, extra_env=env, capture=False)
+                elif git("rev-parse", "HEAD", cwd=candidate) == head:
+                    git(*checkout, original_head, extra_env=env, capture=False)
                 raise
     finally:
         prepared_index.unlink(missing_ok=True)

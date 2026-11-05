@@ -18,7 +18,7 @@ def endpoint_settings(config, alias, remote):
     for key, value in config_entries(config):
         if key in {
             "remote.origin.proxy", "remote.origin.proxyauthmethod",
-            "remote.origin.uploadpack", "remote.origin.receivepack",
+            "remote.origin.uploadpack", "remote.origin.receivepack", "remote.origin.serveroption",
         }:
             yield f"remote.{alias}.{key.rsplit('.', 1)[1]}", value
 

@@ -746,12 +746,33 @@ if sys.argv[3:] == ["rev-parse", "--path-format=absolute", "--git-path", "index"
         [real_git, "-C", str(worktree), "commit", "--quiet", "-m", "Concurrent commit"], check=True,
     )
 """)
-        self.assertIn("cannot lock ref", self.session(self.worktree, "land", status=1, **env))
+        self.assertIn("session changed before applying the candidate", self.session(
+            self.worktree, "land", status=1, **env,
+        ))
         self.assertEqual(self.git(self.worktree, "branch", "--show-current"), "fix/mailbox-preview")
         self.assertEqual(self.git(self.worktree, "log", "-1", "--format=%s"), "Concurrent commit")
         self.assertEqual((self.worktree / "concurrent-change").read_text(), "preserve")
         self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
                          self.base)
+        self.assertEqual(self.remote_tip(), advance)
+
+    def test_rebase_rollback_preserves_the_pre_installation_files_after_a_soft_reset(self):
+        self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_WORKTREE"], "reset", "--soft",
+         os.environ["SESSION_TEST_SOFT_RESET"]],
+        check=True,
+    )
+""")
+        self.session(self.worktree, "land", status=1, SESSION_TEST_SOFT_RESET=self.base, **env)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), self.base)
+        self.assertEqual((self.worktree / "session-change").read_text(), "session-change")
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "A  session-change")
+        self.assertFalse((self.worktree / "remote-change").exists())
         self.assertEqual(self.remote_tip(), advance)
 
     def test_rebase_install_locks_the_live_index_against_concurrent_commits(self):
@@ -978,6 +999,20 @@ if sys.argv[3:] == ["version"]:
                 cwd=self.repo, env=env, text=True,
             )
             self.assertEqual(result.strip(), "false")
+
+    def test_pinned_connections_preserve_server_option_order(self):
+        for option in ("first=one", "second=two", "first=three"):
+            self.git(self.repo, "config", "--add", "remote.origin.serverOption", option)
+        config = self.git(self.repo, "config", "--null", "--list", "--includes")
+        url = "https://fixture.invalid/repo.git"
+        push = TRANSPORT["with_config"](self.env, list(TRANSPORT["push_settings"](config, "pinned", url)))
+        lookup = TRANSPORT["transport_environment"](config, self.env, url)
+        for env, alias in ((push, "pinned"), (lookup, TRANSPORT["LOOKUP_REMOTE"])):
+            result = subprocess.check_output(
+                ["git", "config", "--get-all", f"remote.{alias}.serverOption"],
+                cwd=self.repo, env=env, text=True,
+            )
+            self.assertEqual(result.splitlines(), ["first=one", "second=two", "first=three"])
 
     def test_fetch_from_a_changed_origin_preserves_the_shared_tracking_ref(self):
         self.change(self.worktree, "session-change")
