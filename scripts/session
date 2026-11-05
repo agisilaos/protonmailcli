@@ -120,6 +120,16 @@ def absolute_endpoint(url):
     return str((ROOT / Path(url).expanduser()).resolve())
 
 
+def origin_endpoint(push=False):
+    config = git("config", "--null", "--list", "--includes")
+    if any(key == "remote.origin.vcs" and value for key, value in config_entries(config)):
+        raise SessionError("origin must use a standard Git transport without remote.origin.vcs")
+    remote = git("remote", "get-url", "origin")
+    if push and remote != git("remote", "get-url", "--push", "--all", "origin"):
+        raise SessionError("origin must use the same single URL for fetch and push")
+    return absolute_endpoint(remote)
+
+
 def worktree_path(main_checkout, name):
     return main_checkout.with_name(f"{main_checkout.name}-{name}")
 
@@ -127,7 +137,7 @@ def worktree_path(main_checkout, name):
 def start(main_checkout, name):
     if not SESSION_NAME.fullmatch(name):
         raise SessionError("use a session name such as mailbox-preview")
-    remote = absolute_endpoint(git("remote", "get-url", "origin"))
+    remote = origin_endpoint()
     branch, base = fetch_default(remote)
     session = f"fix/{name}"
     if session == branch:
@@ -184,8 +194,28 @@ def require_ancestor(ancestor, descendant, message):
         raise SessionError(message) from error
 
 
-def install_candidate(candidate, head, original_head, branch_update):
-    options = checkout_inspection()
+def update_session_refs(branch_ref, updates):
+    with tempfile.TemporaryDirectory(prefix="protonmailcli-ref-guard-") as directory:
+        hook = Path(directory) / "reference-transaction"
+        hook.write_text("""#!/bin/sh
+if [ "$1" = prepared ]; then
+    branch=$(git symbolic-ref --quiet HEAD) || exit 1
+    if [ "$branch" != "$PROTONMAILCLI_EXPECTED_BRANCH" ]; then
+        echo "session: the checked-out branch changed during installation" >&2
+        exit 1
+    fi
+fi
+""")
+        hook.chmod(0o700)
+        git(
+            *checkout_inspection(), "-c", "hook.reference-transaction.enabled=true",
+            "-c", f"core.hooksPath={directory}", "update-ref", "--stdin",
+            input_text=updates, extra_env={"PROTONMAILCLI_EXPECTED_BRANCH": branch_ref},
+        )
+
+
+def install_candidate(candidate, head, original_head, branch_ref, branch_update):
+    options = checkout_inspection(candidate)
     metadata = git("rev-parse", "--absolute-git-dir", cwd=candidate)
     live_index = git("rev-parse", "--path-format=absolute", "--git-path", "index")
     # Use the candidate's detached HEAD with the live index and files. The
@@ -198,7 +228,7 @@ def install_candidate(candidate, head, original_head, branch_update):
     git(*options, "update-ref", "--no-deref", "HEAD", original_head, head, cwd=candidate)
     try:
         git(*checkout, head, extra_env=env, capture=False)
-        git(*options, "update-ref", "--stdin", input_text=branch_update)
+        update_session_refs(branch_ref, branch_update)
     except (OSError, subprocess.CalledProcessError, KeyboardInterrupt):
         if git("rev-parse", "HEAD", cwd=candidate) == head:
             current = git("rev-parse", "HEAD")
@@ -213,10 +243,7 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
     branch_ref = f"refs/heads/{session}"
     base_update = f"update {SESSION_BASE} {base} {previous_base}\n"
     if git("merge-base", base, original_head) == base:
-        git(
-            *checkout_inspection(), "update-ref", "--stdin",
-            input_text=f"verify {branch_ref} {original_head}\n{base_update}",
-        )
+        update_session_refs(branch_ref, f"verify {branch_ref} {original_head}\n{base_update}")
         return original_head
 
     holding = Path(tempfile.mkdtemp(prefix="protonmailcli-rebase-"))
@@ -242,7 +269,10 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
             require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
             if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
                 raise SessionError("the session changed during rebase; run land again")
-            install_candidate(candidate, head, original_head, f"update {branch_ref} {head} {original_head}\n{base_update}")
+            install_candidate(
+                candidate, head, original_head, branch_ref,
+                f"update {branch_ref} {head} {original_head}\n{base_update}",
+            )
             if git("branch", "--show-current") != session or git("rev-parse", "HEAD") != head:
                 raise SessionError("the session changed during candidate installation; run land again")
             return head
@@ -445,10 +475,7 @@ if not expected.issubset(advertisement.stdout.splitlines()):
 def land(main_checkout, dry_run):
     session, previous_base = current_session(main_checkout)
     original_head = git("rev-parse", "HEAD")
-    remote = git("remote", "get-url", "origin")
-    if remote != git("remote", "get-url", "--push", "--all", "origin"):
-        raise SessionError("origin must use the same single URL for fetch and push")
-    remote = absolute_endpoint(remote)
+    remote = origin_endpoint(push=True)
     no_hooks = checkout_inspection() if dry_run else []
     branch, base = fetch_default(remote, git_options=no_hooks)
     if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
@@ -484,7 +511,7 @@ def registered_worktree(path, main_checkout):
 def end(main_checkout):
     session, session_base = current_session(main_checkout)
     head = git("rev-parse", "HEAD")
-    remote = absolute_endpoint(git("remote", "get-url", "origin"))
+    remote = origin_endpoint()
     branch, base = fetch_default(remote)
     if session == branch:
         raise SessionError("the default branch cannot be ended")

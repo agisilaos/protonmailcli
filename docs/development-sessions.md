@@ -1,7 +1,8 @@
 # Development sessions
 
-Use one branch and worktree per implementation chat in a standard clone with a
-trusted remote and trusted Git hooks. The primary checkout is
+Use one branch and worktree per implementation chat in a standard clone with
+trusted Git hooks and a trusted `origin` that uses a standard Git transport.
+The primary checkout is
 the place to start or list sessions. Read-only investigations can use an
 existing checkout.
 

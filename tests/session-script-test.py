@@ -685,6 +685,46 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), advance)
         self.assertEqual(self.remote_tip(), self.git(self.worktree, "rev-parse", "HEAD"))
 
+    def test_install_transaction_rejects_switching_to_another_branch_at_the_same_commit(self):
+        original = self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_WORKTREE"], "switch", "--quiet", "-c", "fix/other"],
+        check=True,
+    )
+""")
+        self.assertIn("checked-out branch changed during installation", self.session(
+            self.worktree, "land", status=1, **env,
+        ))
+        self.assertEqual(self.git(self.worktree, "branch", "--show-current"), "fix/other")
+        self.assertEqual(self.git(self.worktree, "rev-parse", "fix/mailbox-preview"), original)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
+        self.assertEqual(self.remote_tip(), advance)
+
+    def test_rehearsal_skips_hooks_configured_only_for_candidate_metadata(self):
+        self.change(self.worktree, "session-change")
+        self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        hook = self.root / "candidate-hook"
+        hook.write_text('#!/bin/sh\ntouch "$SESSION_TEST_CANDIDATE_HOOK"\nexit 17\n')
+        hook.chmod(0o755)
+        config = self.root / "gitconfig"
+        included = self.root / "conditional-gitconfig"
+        self.git(self.repo, "config", "--file", included, "hook.fixture-candidate.event", "post-checkout")
+        self.git(self.repo, "config", "--file", included, "hook.fixture-candidate.command", hook)
+        self.git(self.repo, "config", "--file", config,
+                 "includeIf.gitdir:**/worktrees/checkout.path", included)
+        marker = self.root / "candidate-hook-ran"
+        self.session(
+            self.worktree, "land", "--dry-run", GIT_CONFIG_GLOBAL=str(config),
+            SESSION_TEST_CANDIDATE_HOOK=str(marker),
+        )
+        self.assertFalse(marker.exists())
+
     def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):
         self.change(self.worktree, "session-change")
         prior_tip = self.change(self.repo, "remote-change")
@@ -774,6 +814,11 @@ exit 23
         ))
         self.assertEqual(self.git(self.repo, "branch", "--list", "fix/collision"), "")
         self.assertFalse((self.root / "repo-collision").exists())
+
+    def test_start_refuses_an_origin_with_a_custom_remote_helper_setting(self):
+        self.git(self.repo, "config", "remote.origin.vcs", "fixture")
+        self.assertIn("standard Git transport", self.session(self.repo, "start", "custom", status=1))
+        self.assertFalse((self.root / "repo-custom").exists())
 
     def test_older_git_runs_an_executable_file_hook_without_a_shebang(self):
         head = self.change(self.worktree, "session-change")
