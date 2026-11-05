@@ -408,6 +408,24 @@ git config "url.$SESSION_TEST_FORK.insteadOf" "$SESSION_TEST_REMOTE"
         self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/main"), self.base)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
+    def test_final_remote_lookup_preserves_configured_authentication(self):
+        head = self.change(self.worktree, "session-change")
+        self.git(self.repo, "config", "http.https://fixture.invalid.extraHeader", "Authorization: fixture")
+        for helper in ("first", "", "last"):
+            self.git(self.repo, "config", "--add", "credential.helper", helper)
+        marker = self.root / "transport-checked"
+        env = self.git_wrapper("""
+if sys.argv[1:3] == ["--git-dir=/dev/null", "ls-remote"]:
+    def config(*args):
+        return subprocess.check_output([real_git, "--git-dir=/dev/null", "config", *args], text=True)
+    assert config("--get", "http.https://fixture.invalid.extraHeader") == "Authorization: fixture\\n"
+    assert config("--get-all", "credential.helper").splitlines() == ["first", "", "last"]
+    Path(os.environ["SESSION_TEST_TRANSPORT_CHECK"]).touch()
+""")
+        self.session(self.worktree, "land", SESSION_TEST_TRANSPORT_CHECK=str(marker), **env)
+        self.assertTrue(marker.is_file())
+        self.assertEqual(self.remote_tip(), head)
+
     def test_branch_switch_during_fetch_stops_before_rebase(self):
         original = self.change(self.worktree, "session-change")
         advance = self.change(self.repo, "remote-change")

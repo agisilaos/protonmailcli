@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -218,29 +219,55 @@ def qualify(session, base, head, evidence):
 
 def push_qualified(remote, branch, base, head, dry_run):
     original_hook = git("rev-parse", "--path-format=absolute", "--git-path", "hooks/pre-push")
+    git_executable = shutil.which("git")
+    if not git_executable:
+        raise SessionError("could not locate Git for the pre-push check")
     flags = ["--dry-run"] if dry_run else []
     with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
         hook = Path(directory) / "pre-push"
-        hook.write_text("""#!/bin/sh
-if [ "$2" != "$PROTONMAILCLI_QUALIFIED_URL" ]; then
-    echo "session: Git resolved an unexpected push destination" >&2
-    exit 1
-fi
-if [ -x "$PROTONMAILCLI_PRE_PUSH" ]; then
-    "$PROTONMAILCLI_PRE_PUSH" origin "$2" || exit "$?"
-fi
-advertisement=$(
-    unset GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_COMMON_DIR GIT_WORK_TREE
-    export GIT_CONFIG_COUNT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-    git --git-dir=/dev/null ls-remote --symref -- "$2" HEAD
-) || exit "$?"
-expected_ref=$(printf 'ref: refs/heads/%s\\tHEAD' "$PROTONMAILCLI_QUALIFIED_BRANCH")
-expected_tip=$(printf '%s\\tHEAD' "$PROTONMAILCLI_QUALIFIED_BASE")
-if ! printf '%s\\n' "$advertisement" | grep -Fqx -- "$expected_ref" ||
-   ! printf '%s\\n' "$advertisement" | grep -Fqx -- "$expected_tip"; then
-    echo "session: the remote default branch changed before the push" >&2
-    exit 1
-fi
+        hook.write_text("""#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+destination = sys.argv[2]
+if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
+    sys.exit("session: Git resolved an unexpected push destination")
+
+original = os.environ["PROTONMAILCLI_PRE_PUSH"]
+if os.path.isfile(original) and os.access(original, os.X_OK):
+    status = subprocess.run([original, "origin", destination]).returncode
+    if status:
+        sys.exit(status)
+
+# Reuse the transport settings without re-resolving the push URL.
+git = os.environ["PROTONMAILCLI_GIT"]
+config = subprocess.check_output([git, "config", "--null", "--list", "--includes"], text=True)
+transport = []
+for setting in config.split("\\0"):
+    key, separator, value = setting.partition("\\n")
+    if (key.startswith(("credential.", "http.", "https.", "protocol.", "ssh."))
+            or key in {"core.sshcommand", "core.gitproxy"}):
+        transport.append((key, value if separator else "true"))
+
+env = os.environ.copy()
+for key in ("GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_COMMON_DIR", "GIT_WORK_TREE"):
+    env.pop(key, None)
+env.update(GIT_CONFIG_COUNT=str(len(transport)), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+for index, (key, value) in enumerate(transport):
+    env[f"GIT_CONFIG_KEY_{index}"] = key
+    env[f"GIT_CONFIG_VALUE_{index}"] = value
+advertisement = subprocess.run(
+    [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", destination, "HEAD"],
+    stdout=subprocess.PIPE, text=True, env=env,
+)
+if advertisement.returncode:
+    sys.exit(advertisement.returncode)
+branch = os.environ["PROTONMAILCLI_QUALIFIED_BRANCH"]
+base = os.environ["PROTONMAILCLI_QUALIFIED_BASE"]
+expected = {f"ref: refs/heads/{branch}\\tHEAD", f"{base}\\tHEAD"}
+if not expected.issubset(advertisement.stdout.splitlines()):
+    sys.exit("session: the remote default branch changed before the push")
 """)
         hook.chmod(0o700)
         try:
@@ -255,6 +282,7 @@ fi
                     "PROTONMAILCLI_QUALIFIED_URL": remote,
                     "PROTONMAILCLI_QUALIFIED_BRANCH": branch,
                     "PROTONMAILCLI_QUALIFIED_BASE": base,
+                    "PROTONMAILCLI_GIT": os.path.abspath(git_executable),
                     "PROTONMAILCLI_PRE_PUSH": "" if dry_run else original_hook,
                 },
             )
