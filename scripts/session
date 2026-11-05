@@ -72,14 +72,14 @@ def git(*args, cwd=ROOT, capture=True, extra_env=None, input_text=None):
     return result.stdout.rstrip("\n") if capture else None
 
 
-def configured_hook_events(cwd=ROOT):
-    config = git("config", "--null", "--list", "--includes", cwd=cwd)
+def configured_hook_events(cwd=ROOT, extra_env=None):
+    config = git("config", "--null", "--list", "--includes", cwd=cwd, extra_env=extra_env)
     keys = (setting.partition("\n")[0] for setting in config.split("\0"))
     return dict.fromkeys(key for key in keys if key.startswith("hook.") and key.endswith(".event"))
 
 
-def hooks_disabled(cwd=ROOT):
-    return [part for key in configured_hook_events(cwd) for part in ("-c", f"{key}=")]
+def hooks_disabled(cwd=ROOT, extra_env=None):
+    return [part for key in configured_hook_events(cwd, extra_env) for part in ("-c", f"{key}=")]
 
 
 def checkout_inspection(cwd=ROOT):
@@ -451,7 +451,7 @@ if not expected.issubset(advertisement.stdout.splitlines()):
             # The explicit lease compares the remote tip during the push. The
             # caller has already checked that this update is a fast-forward.
             git(
-                *hooks_disabled(),
+                *hooks_disabled(extra_env=endpoint_env),
                 "-c", "hook.pre-push.enabled=true", "-c", f"core.hooksPath={directory}", "push", *flags,
                 "--no-follow-tags", "--recurse-submodules=no",
                 f"--force-with-lease=refs/heads/{branch}:{base}", "--",
@@ -521,6 +521,7 @@ def end(main_checkout):
     # Move the checkout away from its working path before the last inspection.
     # A refused cleanup restores the original path or leaves the files at the
     # holding path if something else has occupied the original one.
+    original_gitfile = (ROOT / ".git").read_bytes()
     holding = Path(tempfile.mkdtemp(prefix=f".{ROOT.name}-end-", dir=ROOT.parent))
     moved = holding / "checkout"
     archive = holding / "files"
@@ -543,13 +544,19 @@ def end(main_checkout):
     except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
         if archive.exists() or moved.exists():
             try:
-                if ROOT.exists() or ROOT.is_symlink() or not registered_worktree(moved, main_checkout):
+                if ROOT.exists() or ROOT.is_symlink():
                     raise SessionError("the original path or worktree registration is unavailable")
-                if archive.exists():
-                    archive.rename(moved)
-                if gitfile.exists():
-                    gitfile.rename(moved / ".git")
-                git("worktree", "move", moved, ROOT, cwd=main_checkout)
+                if registered_worktree(moved, main_checkout):
+                    if archive.exists():
+                        archive.rename(moved)
+                    if gitfile.exists():
+                        gitfile.rename(moved / ".git")
+                    git("worktree", "move", moved, ROOT, cwd=main_checkout)
+                elif (registered_worktree(ROOT, main_checkout) and moved.is_dir()
+                      and (moved / ".git").read_bytes() == original_gitfile):
+                    moved.rename(ROOT)
+                else:
+                    raise SessionError("the original worktree registration is unavailable")
                 if not registered_worktree(ROOT, main_checkout):
                     nested = ROOT / moved.name
                     if registered_worktree(nested, main_checkout):
@@ -570,32 +577,7 @@ def end(main_checkout):
         if not moved.exists() and not archive.exists():
             holding.rmdir()
     print(f"Checkout files retained at {archive}", flush=True)
-    if git("rev-parse", "--verify", f"refs/heads/{session}", cwd=main_checkout) != head:
-        raise SessionError("the session branch changed during cleanup and was retained")
-    alias = f"protonmailcli-cleanup-{holding.name.rsplit('-', 1)[-1]}"
-    verified_ref = f"refs/protonmailcli/cleanup/{alias}"
-    config = git("config", "--null", "--list", "--includes", cwd=main_checkout)
-    merge_targets = dict.fromkeys([
-        f"refs/heads/{branch}",
-        *(value for key, value in config_entries(config) if key == f"branch.{session}.merge"),
-    ])
-    refspecs = [
-        part for target in merge_targets
-        for part in ("-c", f"remote.{alias}.fetch=+{target}:{verified_ref}")
-    ]
-    git("update-ref", verified_ref, base, "", cwd=main_checkout)
-    try:
-        git(
-            "-c", f"remote.{alias}.url=unused",
-            *refspecs,
-            "-c", f"branch.{session}.remote={alias}", "-c", f"branch.{session}.merge=refs/heads/{branch}",
-            "branch", "--delete", "--", session, cwd=main_checkout, capture=False,
-        )
-    except subprocess.CalledProcessError as error:
-        raise SessionError("Git could not delete the session branch") from error
-    finally:
-        git("update-ref", "-d", verified_ref, base, cwd=main_checkout)
-    print(f"Ended {session}")
+    print(f"Ended {session}; the local branch is retained")
 
 
 def main():

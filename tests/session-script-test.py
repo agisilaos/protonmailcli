@@ -241,7 +241,7 @@ cat > "$SESSION_TEST_HOOK_REFS"
         self.assertEqual(self.remote_tip(), rebased)
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
-        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
+        self.assertEqual(self.git(self.repo, "rev-parse", "fix/mailbox-preview"), rebased)
         self.assertEqual(len(list(self.root.glob(".repo-mailbox-preview-end-*/files/session-change"))), 1)
 
     def test_dirty_and_unlanded_sessions_are_preserved(self):
@@ -315,6 +315,18 @@ if sys.argv[3:5] == ["worktree", "remove"]:
             self.worktree, "end", status=1, **env,
         ))
         self.assertTrue((self.worktree / "scripts/session").is_file())
+        self.session(self.worktree, "end")
+        self.assertFalse(self.worktree.exists())
+
+    def test_end_restores_an_interrupted_move_before_git_updates_the_registration(self):
+        env = self.git_wrapper("""
+if sys.argv[3:5] == ["worktree", "move"] and sys.argv[5] == os.environ["SESSION_TEST_WORKTREE"]:
+    Path(sys.argv[5]).rename(sys.argv[6])
+    sys.exit(17)
+""")
+        self.session(self.worktree, "end", status=1, **env)
+        self.assertTrue((self.worktree / "scripts/session").is_file())
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
 
@@ -423,23 +435,29 @@ if sys.argv[3:4] == ["fetch"]:
         self.session(self.worktree, "land")
         self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/main"), original)
 
-    def test_end_preserves_the_branch_if_another_worktree_checks_it_out(self):
+    def test_end_preserves_the_branch_if_another_worktree_advances_it(self):
         env = self.git_wrapper("""
-if "branch" in sys.argv[3:] and "--delete" in sys.argv[3:]:
+if sys.argv[3:5] == ["worktree", "remove"]:
+    subprocess.run([real_git, *sys.argv[1:]], check=True)
     repo = Path(sys.argv[2])
+    other = repo.parent / "other"
     subprocess.run(
-        [real_git, "-C", str(repo), "worktree", "add", str(repo.parent / "other"), "fix/mailbox-preview"],
+        [real_git, "-C", str(repo), "worktree", "add", str(other), "fix/mailbox-preview"],
         check=True,
     )
+    subprocess.run(
+        [real_git, "-C", str(other), "commit", "--quiet", "--allow-empty", "-m", "Concurrent commit"],
+        check=True,
+    )
+    sys.exit(0)
 """)
-        self.assertIn("Git could not delete the session branch", self.session(
-            self.worktree, "end", status=1, **env,
-        ))
+        self.session(self.worktree, "end", **env)
         self.assertEqual(self.git(self.root / "other", "branch", "--show-current"), "fix/mailbox-preview")
+        self.assertEqual(self.git(self.root / "other", "log", "-1", "--format=%s"), "Concurrent commit")
         self.assertTrue(list(self.root.glob(".repo-mailbox-preview-end-*/files/scripts/session")))
 
-    def test_end_can_delete_a_landed_branch_in_a_single_branch_clone(self):
-        self.change(self.worktree, "session-change")
+    def test_end_can_archive_a_landed_worktree_in_a_single_branch_clone(self):
+        head = self.change(self.worktree, "session-change")
         self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/main")
         self.git(self.remote, "symbolic-ref", "HEAD", "refs/heads/main")
         self.git(self.repo, "branch", "protected-local", self.base)
@@ -448,15 +466,15 @@ if "branch" in sys.argv[3:] and "--delete" in sys.argv[3:]:
         self.git(self.repo, "config", "branch.fix/mailbox-preview.remote", "origin")
         self.git(self.repo, "config", "branch.fix/mailbox-preview.merge", "refs/heads/fix/mailbox-preview")
         self.session(self.worktree, "end")
-        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
+        self.assertEqual(self.git(self.repo, "rev-parse", "fix/mailbox-preview"), head)
         self.assertEqual(self.git(self.repo, "rev-parse", "protected-local"), self.base)
 
     def test_end_keeps_a_relative_origin_resolvable_after_moving_the_checkout(self):
-        self.change(self.worktree, "session-change")
+        head = self.change(self.worktree, "session-change")
         self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/master")
         self.git(self.repo, "remote", "set-url", "origin", "../remote.git")
         self.session(self.worktree, "end")
-        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
+        self.assertEqual(self.git(self.repo, "rev-parse", "fix/mailbox-preview"), head)
 
     def test_hidden_tracked_edits_are_preserved(self):
         path = self.worktree / ".gitignore"
@@ -529,6 +547,35 @@ if "branch" in sys.argv[3:] and "--delete" in sys.argv[3:]:
         self.assertFalse(marker.exists())
         self.assertEqual(self.remote_tip(), self.base)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
+
+    def test_rehearsal_skips_hooks_enabled_by_the_temporary_push_remote(self):
+        self.change(self.worktree, "session-change")
+        alias = self.root / "alias.git"
+        self.git(self.repo, "remote", "set-url", "origin", alias)
+        self.git(self.repo, "config", f"url.{self.remote}.insteadOf", alias)
+        hook = self.root / "conditional-pre-push"
+        hook.write_text('#!/bin/sh\ntouch "$SESSION_TEST_CONDITIONAL_HOOK"\nexit 17\n')
+        hook.chmod(0o755)
+        config = self.root / "gitconfig"
+        included = self.root / "conditional-gitconfig"
+        self.git(self.repo, "config", "--file", included, "hook.fixture-conditional.event", "pre-push")
+        self.git(self.repo, "config", "--file", included, "hook.fixture-conditional.command", hook)
+        self.git(self.repo, "config", "--file", config,
+                 f"includeIf.hasconfig:remote.*.url:{self.remote}.path", included)
+        marker = self.root / "conditional-pre-push-ran"
+        env = self.git_wrapper("""
+if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in sys.argv[3:]):
+    event = subprocess.check_output(
+        [real_git, "-C", sys.argv[2], "config", "--get", "hook.fixture-conditional.event"],
+        text=True,
+    )
+    assert event.strip() == "pre-push"
+""")
+        self.session(
+            self.worktree, "land", "--dry-run", GIT_CONFIG_GLOBAL=str(config),
+            SESSION_TEST_CONDITIONAL_HOOK=str(marker), **env,
+        )
+        self.assertFalse(marker.exists())
 
     def test_rebase_does_not_follow_a_second_url_rewrite(self):
         self.change(self.worktree, "session-change")

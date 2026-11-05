@@ -56,13 +56,13 @@ this prompt:
    past the recorded base, start a fresh session and bring over only the
    commits you still intend to land.
 4. Run `scripts/session end` when finished. It unregisters the worktree
-   and removes its branch after confirming the checkout is clean and its
-   commit is on the current remote default branch. It prints the path to
-   the archived checkout files. Discard the archive once any processes
+   after confirming the checkout is clean and its commit is on the current
+   remote default branch. The local branch is retained. The command
+   prints the path to the archived checkout files. Discard the archive once any processes
    using that checkout have finished. Move ignored local files, such as
    credentials, out of the checkout before ending.
-   If another worktree holds the branch, its owner can delete the branch
-   once they finish and their local default branch includes the landing.
+   Once your local default branch includes the landing, you can remove
+   the retained branch with `git branch --delete fix/<name>`.
    If cleanup is interrupted or Git refuses to unregister the worktree,
    the command restores the original path when possible and reports where
    the files are retained. An archive whose registration is already gone
