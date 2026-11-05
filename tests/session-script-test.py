@@ -318,6 +318,37 @@ if sys.argv[3:5] == ["worktree", "remove"]:
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
 
+    def test_end_does_not_nest_the_worktree_under_a_recreated_original_path(self):
+        env = self.git_wrapper("""
+if sys.argv[3:5] == ["worktree", "remove"]:
+    sys.exit(17)
+if sys.argv[3:5] == ["worktree", "move"] and sys.argv[6] == os.environ["SESSION_TEST_WORKTREE"]:
+    original = Path(sys.argv[6])
+    original.mkdir()
+    (original / "new-file").write_text("preserve")
+""")
+        self.assertIn("could not restore the checkout; files at", self.session(
+            self.worktree, "end", status=1, **env,
+        ))
+        self.assertEqual(sorted(path.name for path in self.worktree.iterdir()), ["new-file"])
+        retained = list(self.root.glob(".repo-mailbox-preview-end-*/checkout/scripts/session"))
+        self.assertEqual(len(retained), 1)
+
+    def test_end_leaves_the_archive_detached_when_registration_is_already_removed(self):
+        env = self.git_wrapper("""
+if sys.argv[3:5] == ["worktree", "remove"]:
+    subprocess.run([real_git, *sys.argv[1:]], check=True)
+    sys.exit(17)
+""")
+        self.assertIn("could not restore the checkout; files at", self.session(
+            self.worktree, "end", status=1, **env,
+        ))
+        retained = list(self.root.glob(".repo-mailbox-preview-end-*/files"))
+        self.assertEqual(len(retained), 1)
+        self.assertTrue((retained[0] / "scripts/session").is_file())
+        self.assertFalse((retained[0] / ".git").exists())
+        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "fix/mailbox-preview")
+
     def test_end_restores_the_gitfile_when_archive_rename_is_interrupted(self):
         script = """
 import os

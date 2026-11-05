@@ -59,7 +59,8 @@ this prompt:
    once they finish and their local default branch includes the landing.
    If cleanup is interrupted or Git refuses to unregister the worktree,
    the command restores the original path when possible and reports where
-   the files are retained.
+   the files are retained. An archive whose registration is already gone
+   remains detached from the repository.
 
 ## Partial checkout recovery
 

@@ -388,6 +388,11 @@ def land(main_checkout, dry_run):
     print(f"{action} {head} on origin/{branch}. Evidence: {evidence}")
 
 
+def registered_worktree(path, main_checkout):
+    records = git("worktree", "list", "--porcelain", "-z", cwd=main_checkout)
+    return f"worktree {path}" in records.split("\0")
+
+
 def end(main_checkout):
     session, session_base = current_session(main_checkout)
     head = git("rev-parse", "HEAD")
@@ -423,13 +428,22 @@ def end(main_checkout):
     except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
         if archive.exists() or moved.exists():
             try:
+                if ROOT.exists() or ROOT.is_symlink() or not registered_worktree(moved, main_checkout):
+                    raise SessionError("the original path or worktree registration is unavailable")
                 if archive.exists():
                     archive.rename(moved)
                 if gitfile.exists():
                     gitfile.rename(moved / ".git")
                 git("worktree", "move", moved, ROOT, cwd=main_checkout)
-            except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as restore_error:
+                if not registered_worktree(ROOT, main_checkout):
+                    nested = ROOT / moved.name
+                    if registered_worktree(nested, main_checkout):
+                        git("worktree", "move", nested, moved, cwd=main_checkout)
+                    raise SessionError("Git did not restore the worktree at its original path")
+            except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as restore_error:
                 location = archive if archive.exists() else moved
+                if not location.exists() and (ROOT / moved.name).exists():
+                    location = ROOT / moved.name
                 pointer = gitfile if gitfile.exists() else location / ".git"
                 raise SessionError(
                     f"could not restore the checkout; files at {location}, Git pointer at {pointer}"
