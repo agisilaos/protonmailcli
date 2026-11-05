@@ -12,9 +12,10 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SUPPORTS_CONFIG_HOOKS = runpy.run_path(str(ROOT / "scripts/session_transport.py"))[
-    "supports_config_hooks"
-](subprocess.check_output(["git", "version"], text=True))
+TRANSPORT = runpy.run_path(str(ROOT / "scripts/session_transport.py"))
+SUPPORTS_CONFIG_HOOKS = TRANSPORT["supports_config_hooks"](
+    subprocess.check_output(["git", "version"], text=True),
+)
 REVIEWER = """#!/usr/bin/env python3
 import os
 from pathlib import Path
@@ -22,7 +23,7 @@ import subprocess
 import sys
 
 assert not any(key.startswith("PMAIL_") for key in os.environ)
-assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT"} & os.environ.keys()
+assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_ATTR_SOURCE"} & os.environ.keys()
 assert sys.argv[sys.argv.index("--sandbox") + 1] == "read-only"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
@@ -49,7 +50,7 @@ import sys
 
 assert sys.argv[1:] == ["--ci"]
 assert not any(key.startswith("PMAIL_") for key in os.environ)
-assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT"} & os.environ.keys()
+assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_ATTR_SOURCE"} & os.environ.keys()
 assert not {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"} & os.environ.keys()
 assert not {"BASH_ENV", "BASHOPTS", "CDPATH", "ENV", "SHELLOPTS", "GOFLAGS"} & os.environ.keys()
 assert os.environ["GOENV"] == "off"
@@ -146,7 +147,8 @@ class SessionTests(unittest.TestCase):
     def session(self, cwd, *args, status=0, **env):
         result = subprocess.run(
             ["scripts/session", *args], cwd=cwd, env={
-                **self.env, "SHELLOPTS": "noexec", "BASHOPTS": "extglob", "CDPATH": "/fixture", **env,
+                **self.env, "SHELLOPTS": "noexec", "BASHOPTS": "extglob",
+                "CDPATH": "/fixture", "GIT_ATTR_SOURCE": "HEAD^", **env,
             },
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
@@ -199,6 +201,10 @@ cat > "$SESSION_TEST_HOOK_REFS"
         ref_hook = self.repo / ".git/hooks/reference-transaction"
         ref_hook.write_text('#!/bin/sh\nif [ -n "$SESSION_TEST_REF_HOOK" ]; then touch "$SESSION_TEST_REF_HOOK"; fi\n')
         ref_hook.chmod(0o755)
+        monitor = self.root / "fsmonitor"
+        monitor.write_text('#!/bin/sh\ntouch "$SESSION_TEST_FSMONITOR"\nexit 1\n')
+        monitor.chmod(0o755)
+        self.git(self.repo, "config", "core.fsmonitor", monitor)
         config_hook = self.root / "configured-pre-push"
         config_hook.write_text('#!/bin/sh\ncat > "$SESSION_TEST_CONFIG_HOOK"\n')
         config_hook.chmod(0o755)
@@ -211,6 +217,7 @@ cat > "$SESSION_TEST_HOOK_REFS"
             "SESSION_TEST_REBASE_HOOK": str(self.root / "rebase-hook-ran"),
             "SESSION_TEST_CONFIG_HOOK": str(self.root / "configured-hook-refs"),
             "SESSION_TEST_REF_HOOK": str(self.root / "reference-hook-ran"),
+            "SESSION_TEST_FSMONITOR": str(self.root / "fsmonitor-ran"),
         }
 
         self.assertIn("Dry run passed", self.session(self.worktree, "land", "--dry-run", **hook_env))
@@ -224,6 +231,7 @@ cat > "$SESSION_TEST_HOOK_REFS"
         self.assertFalse(Path(hook_env["SESSION_TEST_REBASE_HOOK"]).exists())
         self.assertFalse(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).exists())
         self.assertFalse(Path(hook_env["SESSION_TEST_REF_HOOK"]).exists())
+        self.assertFalse(Path(hook_env["SESSION_TEST_FSMONITOR"]).exists())
 
         self.session(self.worktree, "land", **hook_env)
         self.assertEqual(hook_args.read_text().splitlines(), ["origin", str(self.remote)])
@@ -296,6 +304,18 @@ if sys.argv[3:5] == ["worktree", "remove"]:
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0].read_text(), "fixture")
         self.assertFalse((files[0].parent / ".git").exists())
+        self.assertFalse(self.worktree.exists())
+
+    def test_end_restores_the_worktree_after_an_unregister_failure(self):
+        env = self.git_wrapper("""
+if sys.argv[3:5] == ["worktree", "remove"]:
+    sys.exit(17)
+""")
+        self.assertIn("could not unregister the checkout; restored", self.session(
+            self.worktree, "end", status=1, **env,
+        ))
+        self.assertTrue((self.worktree / "scripts/session").is_file())
+        self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
 
     def test_end_refuses_when_the_default_branch_changes_during_fetch(self):
@@ -618,11 +638,26 @@ exit 23
         advance = self.change(self.repo, "remote-change")
         self.git(self.repo, "push", "--quiet", "origin", "master")
         self.git(self.repo, "branch", "protected-local", self.base)
+        self.git(self.repo, "symbolic-ref", "refs/remotes/origin/master", "refs/heads/protected-local")
         self.git(self.repo, "config", "--replace-all", "remote.origin.fetch",
                  "+refs/heads/master:refs/heads/protected-local")
         self.session(self.repo, "start", "refmap")
         self.assertEqual(self.git(self.root / "repo-refmap", "rev-parse", "HEAD"), advance)
         self.assertEqual(self.git(self.repo, "rev-parse", "protected-local"), self.base)
+
+    def test_pinned_http_connections_override_url_specific_redirect_settings(self):
+        url = "https://fixture.invalid/repo.git"
+        self.git(self.repo, "config", "http.followRedirects", "true")
+        self.git(self.repo, "config", f"http.{url}.followRedirects", "true")
+        config = self.git(self.repo, "config", "--null", "--list", "--includes")
+        push = TRANSPORT["with_config"](self.env, list(TRANSPORT["push_settings"](config, "pinned", url)))
+        lookup = TRANSPORT["transport_environment"](config, self.env, url)
+        for env in (push, lookup):
+            result = subprocess.check_output(
+                ["git", "config", "--get-urlmatch", "http.followRedirects", url],
+                cwd=self.repo, env=env, text=True,
+            )
+            self.assertEqual(result.strip(), "false")
 
     def test_fetch_from_a_changed_origin_preserves_the_shared_tracking_ref(self):
         self.change(self.worktree, "session-change")

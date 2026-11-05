@@ -23,12 +23,19 @@ def endpoint_settings(config, alias, remote):
             yield f"remote.{alias}.{key.rsplit('.', 1)[1]}", value
 
 
+def redirect_settings(remote):
+    if remote.startswith(("http://", "https://")):
+        yield "http.followredirects", "false"
+        yield f"http.{remote}.followredirects", "false"
+
+
 def push_settings(config, alias, remote):
     yield from endpoint_settings(config, alias, remote)
     for key, value in config_entries(config):
         if (key in {"core.sshcommand", "core.gitproxy", "ssh.variant"}
                 or (key.startswith(("http.", "https.")) and key.endswith((".proxy", ".proxyauthmethod")))):
             yield key, value
+    yield from redirect_settings(remote)
 
 
 def with_config(environment, settings):
@@ -49,6 +56,7 @@ def transport_environment(config, environment, remote):
         if (key.startswith(("credential.", "http.", "https.", "protocol.", "ssh."))
                 or key in {"core.askpass", "core.sshcommand", "core.gitproxy"}):
             transport.append((key, value))
+    transport.extend(redirect_settings(remote))
 
     env = with_config(environment, transport)
     for key in ("GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_COMMON_DIR", "GIT_WORK_TREE"):

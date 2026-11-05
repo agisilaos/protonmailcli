@@ -1,6 +1,7 @@
 # Development sessions
 
-Use one branch and worktree per implementation chat. The primary checkout is
+Use one branch and worktree per implementation chat in a standard clone with a
+trusted remote and trusted Git hooks. The primary checkout is
 the place to start or list sessions. Read-only investigations can use an
 existing checkout.
 
@@ -39,6 +40,7 @@ this prompt:
    The configured pre-push hook runs for a real landing.
    The session checks the default branch again inside the pre-push hook
    using the resolved destination and its configured transport settings.
+   Pinned HTTP connections require a destination that works without redirects.
    Git's ref update guards the branch tip, and a server-side default-branch
    switch can still happen after that last check.
 3. If the rebase stops, resolve the conflict or abort it, then rerun the
@@ -55,6 +57,8 @@ this prompt:
    credentials, out of the checkout before ending.
    If another worktree holds the branch, its owner can delete the branch
    once they finish and their local default branch includes the landing.
+   If Git refuses to unregister the worktree, the command restores the
+   original path when possible and reports where the files are retained.
 
 ## Partial checkout recovery
 

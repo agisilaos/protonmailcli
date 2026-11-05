@@ -40,7 +40,9 @@ def session_environment():
     )
     if result.returncode:
         raise SessionError("could not determine Git's repository-local environment variables")
-    local = set(result.stdout.splitlines()) | SHELL_ENV | {"GIT_NAMESPACE", "GIT_QUARANTINE_PATH"}
+    local = set(result.stdout.splitlines()) | SHELL_ENV | {
+        "GIT_ATTR_SOURCE", "GIT_NAMESPACE", "GIT_QUARANTINE_PATH",
+    }
     return {
         key: value for key, value in os.environ.items()
         if key not in local and not key.startswith(("BASH_FUNC_", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
@@ -70,6 +72,10 @@ def hooks_disabled(cwd=ROOT):
     return [part for key in configured_hook_events(cwd) for part in ("-c", f"{key}=")]
 
 
+def checkout_inspection(cwd=ROOT):
+    return [*hooks_disabled(cwd), "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"]
+
+
 def default_tip(remote, cwd=ROOT):
     config = git("config", "--null", "--list", "--includes", cwd=cwd)
     env = transport_environment(config, session_environment(), remote)
@@ -90,13 +96,11 @@ def default_tip(remote, cwd=ROOT):
 def fetch_default(remote, git_options=()):
     branch, _ = default_tip(remote)
     ref = f"refs/heads/{branch}"
-    tracking = f"refs/remotes/origin/{branch}"
     git(*git_options, "fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--refmap=", "--",
         "origin", ref)
     base = git("rev-parse", "--verify", "FETCH_HEAD")
     if default_tip(remote) != (branch, base):
         raise SessionError("origin's default branch changed during fetch; retry")
-    git(*git_options, "update-ref", tracking, base)
     return branch, base
 
 
@@ -149,11 +153,12 @@ def current_session(main_checkout, cwd=ROOT):
         path = git("rev-parse", "--path-format=absolute", "--git-path", marker, cwd=cwd)
         if Path(path).exists():
             raise SessionError("finish the Git operation in this checkout first")
-    if git("status", "--porcelain", "--untracked-files=all", cwd=cwd):
+    inspection = checkout_inspection(cwd)
+    if git(*inspection, "status", "--porcelain", "--untracked-files=all", cwd=cwd):
         raise SessionError("commit the session's changes or set them aside before continuing")
-    if git("ls-files", "--others", "--ignored", "--exclude-standard", cwd=cwd):
+    if git(*inspection, "ls-files", "--others", "--ignored", "--exclude-standard", cwd=cwd):
         raise SessionError("move ignored files out of the session checkout before continuing")
-    tracked = git("ls-files", "-v", "-z", cwd=cwd).split("\0")
+    tracked = git(*inspection, "ls-files", "-v", "-z", cwd=cwd).split("\0")
     if any(entry.startswith("S ") or entry[:1].islower() for entry in tracked):
         raise SessionError("restore normal index tracking before continuing")
     return branch, base
@@ -200,8 +205,9 @@ def review(base, head, evidence, checkout, env):
         f"Statically review the committed change from {base} to {head} in this checkout. "
         "Inspect the diff and relevant tracked code in this checkout. The caller runs "
         "tests and records any checkpoint separately. Keep your work read-only. "
-        "Report actionable regressions, safety issues, or missed requirements introduced "
-        "by the change. Give a path and line for each finding. Return an empty findings "
+        "Report actionable regressions, safety issues, or missed requirements in the "
+        "documented workflow. Treat the remote service and configured hooks as trusted. "
+        "Give a path and line for each finding. Return an empty findings "
         "array when the static review is complete and there are no actionable findings. "
         "If the committed diff cannot be read, report that as a finding.",
     ], evidence / "review.log", cwd=checkout, extra_env=env)
@@ -351,7 +357,7 @@ def land(main_checkout, dry_run):
     if remote != git("remote", "get-url", "--push", "--all", "origin"):
         raise SessionError("origin must use the same single URL for fetch and push")
     remote = absolute_endpoint(remote)
-    no_hooks = [*hooks_disabled(), "-c", f"core.hooksPath={os.devnull}"] if dry_run else []
+    no_hooks = checkout_inspection() if dry_run else []
     branch, base = fetch_default(remote, git_options=no_hooks)
     if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
         raise SessionError("the session changed during fetch; run land again")
@@ -419,10 +425,20 @@ def end(main_checkout):
             except (OSError, subprocess.CalledProcessError) as error:
                 raise SessionError(f"could not restore the checkout from {moved}") from error
             raise
-        print(f"Checkout files retained at {archive}", flush=True)
         # Git only removes the registration of the now-missing worktree.
         # Processes still in that directory continue writing to the archive.
-        git("worktree", "remove", moved, cwd=main_checkout)
+        try:
+            git("worktree", "remove", moved, cwd=main_checkout)
+        except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
+            try:
+                archive.rename(moved)
+                gitfile.rename(moved / ".git")
+                git("worktree", "move", moved, ROOT, cwd=main_checkout)
+            except (OSError, subprocess.CalledProcessError) as restore_error:
+                location = archive if archive.exists() else moved
+                raise SessionError(f"could not unregister the checkout; files retained at {location}") from restore_error
+            raise SessionError(f"could not unregister the checkout; restored {ROOT}") from error
+        print(f"Checkout files retained at {archive}", flush=True)
     finally:
         if not moved.exists() and not archive.exists():
             holding.rmdir()
