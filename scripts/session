@@ -341,10 +341,12 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
                     "--no-fork-point", "--no-rebase-merges", "--reapply-cherry-picks", base,
                     cwd=candidate, capture=False,
                 )
-            except (subprocess.CalledProcessError, KeyboardInterrupt):
+            except (subprocess.CalledProcessError, KeyboardInterrupt) as error:
                 marker = git("rev-parse", "--path-format=absolute", "--git-path", "rebase-merge", cwd=candidate)
                 if Path(marker).exists():
                     git(*options, "rebase", "--abort", cwd=candidate)
+                if isinstance(error, subprocess.CalledProcessError):
+                    raise SessionError(f"rebase onto {base} did not complete; see conflict recovery in the runbook") from error
                 raise
             head = git("rev-parse", "HEAD", cwd=candidate)
             require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
@@ -691,7 +693,7 @@ def end(main_checkout):
     finally:
         if not moved.exists() and not archive.exists():
             holding.rmdir()
-    print(f"Checkout files retained at {archive}", flush=True)
+    print(f"Checkout archive retained at {holding}", flush=True)
     print(f"Ended {session}; the local branch is retained")
 
 

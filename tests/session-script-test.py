@@ -246,10 +246,13 @@ cat > "$SESSION_TEST_HOOK_REFS"
         if SUPPORTS_CONFIG_HOOKS:
             self.assertEqual(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).read_text(), hook_refs.read_text())
         self.assertEqual(self.remote_tip(), rebased)
-        self.session(self.worktree, "end")
+        result = self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
         self.assertEqual(self.git(self.repo, "rev-parse", "fix/mailbox-preview"), rebased)
-        self.assertEqual(len(list(self.root.glob(".repo-mailbox-preview-end-*/files/session-change"))), 1)
+        archives = list(self.root.glob(".repo-mailbox-preview-end-*"))
+        self.assertEqual(len(archives), 1)
+        self.assertIn(f"Checkout archive retained at {archives[0]}", result)
+        self.assertTrue((archives[0] / "files/session-change").is_file())
 
     def test_dirty_and_unlanded_sessions_are_preserved(self):
         head = self.change(self.worktree, "unlanded")
@@ -1044,6 +1047,21 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         self.assertIn("contains merge commits", self.session(self.worktree, "land", status=1))
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), merge)
         self.assertEqual(self.remote_tip(), self.base)
+
+    def test_rebase_conflict_reports_the_base_and_leaves_the_session_untouched(self):
+        original = self.change(self.worktree, "conflict")
+        (self.repo / "conflict").write_text("upstream")
+        self.git(self.repo, "add", "conflict")
+        self.git(self.repo, "commit", "--quiet", "-m", "Add a conflicting upstream file")
+        base = self.git(self.repo, "rev-parse", "HEAD")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        self.assertIn(f"rebase onto {base} did not complete", self.session(
+            self.worktree, "land", status=1,
+        ))
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
+        self.assertEqual((self.worktree / "conflict").read_text(), "conflict")
+        self.assertEqual(self.remote_tip(), base)
 
     def test_landing_does_not_recreate_a_branch_deleted_just_before_push(self):
         self.change(self.worktree, "session-change")

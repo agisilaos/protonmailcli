@@ -52,7 +52,12 @@ this prompt:
    Git's ref update guards the branch tip, and a server-side default-branch
    switch can still happen after that last check.
 3. If the rebase reports conflicts, the session branch keeps its original
-   commits. Resolve the conflicts on that branch before retrying.
+   commits. Start a rebase from the clean session checkout with
+   `git rebase --merge --reapply-cherry-picks <base>` using the exact base
+   printed by the command. Resolve the conflicts, stage the resolutions,
+   and run `git rebase --continue`. After the rebase completes, record the
+   printed base with
+   `git update-ref refs/worktree/protonmailcli/session-base <base>`, then retry.
    If installation fails or is interrupted, inspect the session status before retrying.
    The command reports the recovery directory if a partial installation
    needs inspection.
@@ -64,8 +69,9 @@ this prompt:
 4. Run `scripts/session end` when finished. It unregisters the worktree
    after confirming the checkout is clean and its commit is on the current
    remote default branch. The local branch is retained. The command
-   prints the path to the archived checkout files. Discard the archive once any processes
-   using that checkout have finished. Move ignored local files, such as
+   prints the archive directory. Its `files/` subdirectory contains the
+   checkout. Discard the whole archive once any processes using that
+   checkout have finished. Move ignored local files, such as
    credentials, out of the checkout before ending.
    Once your local default branch includes the landing, you can remove
    the retained branch with `git branch --delete fix/<name>`.
@@ -85,7 +91,7 @@ Record the printed base with
 session checkout. In a still-empty checkout, finish with
 `git restore --source=HEAD --staged --worktree -- .`.
 
-Landing requires Git, Python 3, the project's macOS release toolchain and an
+Landing requires Git, Python 3.9 or newer, the project's macOS release toolchain and an
 authenticated Codex CLI. Git 2.54 or newer supports config-based Git hooks.
 Set `PROTONMAILCLI_CODEX` to select a different
 installed Codex executable. Review output, the release check log and the

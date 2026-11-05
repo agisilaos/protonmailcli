@@ -11,9 +11,10 @@ Releases are prepared by an agent, reviewed by a human, and published from a cle
 
 ## Local verification
 
-Run `make verify` while developing. It checks the pinned local helper bundle,
-module metadata, formatting, vet, Go tests, executable contract fixtures,
-help-generation fixtures, docs/help and the isolated local-state agent smoke.
+Run `make verify` while developing with Python 3.9 or newer. It checks the
+pinned local helper bundle, module metadata, formatting, vet, Go tests,
+executable contract fixtures, help-generation fixtures, docs/help and the
+isolated local-state agent smoke.
 Module validation leaves `go.mod` and `go.sum` unchanged on failure. The smoke
 uses a send dry run; real Bridge/email integration remains an explicit opt-in.
 
