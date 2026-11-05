@@ -64,7 +64,7 @@ Record the printed base with
 session checkout. In a still-empty checkout, finish with
 `git restore --source=HEAD --staged --worktree -- .`.
 
-Landing requires Git, Python 3, the project's macOS release toolchain and an
+Landing requires Git 2.54 or newer, Python 3, the project's macOS release toolchain and an
 authenticated Codex CLI. Set `PROTONMAILCLI_CODEX` to select a different
 installed Codex executable. Review output, the release check log and the
 version-stamped binary are retained under

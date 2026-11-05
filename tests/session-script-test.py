@@ -177,7 +177,21 @@ cat > "$SESSION_TEST_HOOK_REFS"
         hook.chmod(0o755)
         hook_args = self.root / "hook-args"
         hook_refs = self.root / "hook-refs"
-        hook_env = {"SESSION_TEST_HOOK_ARGS": str(hook_args), "SESSION_TEST_HOOK_REFS": str(hook_refs)}
+        rebase_hook = self.repo / ".git/hooks/pre-rebase"
+        rebase_hook.write_text('#!/bin/sh\ntouch "$SESSION_TEST_REBASE_HOOK"\n')
+        rebase_hook.chmod(0o755)
+        config_hook = self.root / "configured-pre-push"
+        config_hook.write_text('#!/bin/sh\ncat > "$SESSION_TEST_CONFIG_HOOK"\n')
+        config_hook.chmod(0o755)
+        self.git(self.repo, "config", "hook.fixture-rebase.event", "pre-rebase")
+        self.git(self.repo, "config", "hook.fixture-rebase.command", rebase_hook)
+        self.git(self.repo, "config", "hook.fixture-push.event", "pre-push")
+        self.git(self.repo, "config", "hook.fixture-push.command", config_hook)
+        hook_env = {
+            "SESSION_TEST_HOOK_ARGS": str(hook_args), "SESSION_TEST_HOOK_REFS": str(hook_refs),
+            "SESSION_TEST_REBASE_HOOK": str(self.root / "rebase-hook-ran"),
+            "SESSION_TEST_CONFIG_HOOK": str(self.root / "configured-hook-refs"),
+        }
 
         self.assertIn("Dry run passed", self.session(self.worktree, "land", "--dry-run", **hook_env))
         rebased = self.git(self.worktree, "rev-parse", "HEAD")
@@ -187,10 +201,13 @@ cat > "$SESSION_TEST_HOOK_REFS"
         self.assertEqual(len(list(self.evidence.glob("*/build/protonmailcli"))), 1)
         self.assertTrue((self.worktree / "remote-change").is_file())
         self.assertFalse(hook_args.exists())
+        self.assertFalse(Path(hook_env["SESSION_TEST_REBASE_HOOK"]).exists())
+        self.assertFalse(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).exists())
 
         self.session(self.worktree, "land", **hook_env)
         self.assertEqual(hook_args.read_text().splitlines(), ["origin", str(self.remote)])
         self.assertIn(f"{rebased} refs/heads/master {new_base}", hook_refs.read_text())
+        self.assertEqual(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).read_text(), hook_refs.read_text())
         self.assertEqual(self.remote_tip(), rebased)
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
@@ -256,6 +273,7 @@ if sys.argv[3:5] == ["worktree", "remove"]:
         files = list(self.root.glob(".repo-mailbox-preview-end-*/files/late.pass"))
         self.assertEqual(len(files), 1)
         self.assertEqual(files[0].read_text(), "fixture")
+        self.assertFalse((files[0].parent / ".git").exists())
         self.assertFalse(self.worktree.exists())
 
     def test_end_refuses_when_the_default_branch_changes_during_fetch(self):
@@ -383,9 +401,17 @@ if ["branch", "--delete"] == sys.argv[9:11]:
         self.change(self.worktree, "session-change")
         fork = self.root / "fork.git"
         self.git(self.repo, "clone", "--quiet", "--bare", self.remote, fork)
+        config_hook = self.root / "configured-hook"
+        config_hook.write_text('#!/bin/sh\ntouch "$SESSION_TEST_CONFIG_HOOK"\n')
+        config_hook.chmod(0o755)
+        self.git(self.repo, "config", "hook.fixture.event", "pre-push")
+        self.git(self.repo, "config", "hook.fixture.command", config_hook)
+        marker = self.root / "configured-hook-ran"
         self.assertIn("unexpected push destination", self.session(
             self.worktree, "land", status=1, SESSION_TEST_REWRITE_PUSHURL=str(fork),
+            SESSION_TEST_CONFIG_HOOK=str(marker),
         ))
+        self.assertFalse(marker.exists())
         self.assertEqual(self.remote_tip(), self.base)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
@@ -411,6 +437,7 @@ git config "url.$SESSION_TEST_FORK.insteadOf" "$SESSION_TEST_REMOTE"
     def test_final_remote_lookup_preserves_configured_authentication(self):
         head = self.change(self.worktree, "session-change")
         self.git(self.repo, "config", "http.https://fixture.invalid.extraHeader", "Authorization: fixture")
+        self.git(self.repo, "config", "core.askPass", "/fixture/git-askpass")
         for helper in ("first", "", "last"):
             self.git(self.repo, "config", "--add", "credential.helper", helper)
         marker = self.root / "transport-checked"
@@ -420,6 +447,7 @@ if sys.argv[1:3] == ["--git-dir=/dev/null", "ls-remote"]:
         return subprocess.check_output([real_git, "--git-dir=/dev/null", "config", *args], text=True)
     assert config("--get", "http.https://fixture.invalid.extraHeader") == "Authorization: fixture\\n"
     assert config("--get-all", "credential.helper").splitlines() == ["first", "", "last"]
+    assert config("--get", "core.askPass") == "/fixture/git-askpass\\n"
     Path(os.environ["SESSION_TEST_TRANSPORT_CHECK"]).touch()
 """)
         self.session(self.worktree, "land", SESSION_TEST_TRANSPORT_CHECK=str(marker), **env)
@@ -545,6 +573,8 @@ fi
         hook.chmod(0o755)
         config = self.root / "gitconfig"
         self.git(self.repo, "config", "--file", config, "core.hooksPath", hooks)
+        self.git(self.repo, "config", "--file", config, "hook.fixture.event", "post-checkout")
+        self.git(self.repo, "config", "--file", config, "hook.fixture.command", hook)
         marker = self.root / "checkout-hook"
         env = {"GIT_CONFIG_GLOBAL": str(config), "SESSION_TEST_CHECKOUT_HOOK": str(marker)}
         self.session(self.repo, "start", "no-hook", **env)
