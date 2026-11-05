@@ -52,11 +52,16 @@ this prompt:
    Git's ref update guards the branch tip, and a server-side default-branch
    switch can still happen after that last check.
 3. If the rebase reports conflicts, the session branch keeps its original
-   commits. Start a rebase from the clean session checkout with
-   `git rebase --merge --reapply-cherry-picks <base>` using the exact base
-   printed by the command. Resolve the conflicts, stage the resolutions,
-   and run `git rebase --continue`. After the rebase completes, record the
-   printed base with
+   commits. From the clean session checkout, replace `<base>` with the
+   exact commit printed by the command and run:
+
+   ```sh
+   git rebase --merge --no-autostash --no-update-refs --no-fork-point \
+     --no-rebase-merges --reapply-cherry-picks <base>
+   ```
+
+   Resolve the conflicts, stage the resolutions, and run
+   `git rebase --continue`. After the rebase completes, record the printed base with
    `git update-ref refs/worktree/protonmailcli/session-base <base>`, then retry.
    If installation fails or is interrupted, inspect the session status before retrying.
    The command reports the recovery directory if a partial installation
