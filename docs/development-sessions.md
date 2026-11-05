@@ -34,7 +34,8 @@ this prompt:
    `scripts/session land` to publish an authorized landing. Both rebase the
    local branch after checking the fetched commit against the resolved
    remote. Rebase runs in a disposable worktree, and installation refuses
-   to overwrite ignored files in the session. They use a fresh checkout
+   to overwrite ignored files or replace a newly advanced session branch.
+   They use a fresh checkout
    with isolated Git configuration for a read-only Codex review and one
    run of `scripts/release-check.sh --ci`. A real
    landing fast-forwards the same remote default branch from the exact tip used
@@ -47,6 +48,8 @@ this prompt:
    switch can still happen after that last check.
 3. If the rebase reports conflicts, the session branch keeps its original
    commits. Resolve the conflicts on that branch before retrying.
+   If installation is interrupted and leaves a detached checkout, inspect
+   its status and return to the session branch before retrying.
    If review reports findings, address them and commit before
    retrying. If the gate fails or the remote advances, inspect the
    reported result and rerun from the clean worktree. If the remote rewound

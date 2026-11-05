@@ -631,6 +631,33 @@ if "checkout" in sys.argv[3:] and "--no-overwrite-ignore" in sys.argv[3:]:
         self.assertIn("would be overwritten", self.session(self.worktree, "land", status=1, **env))
         self.assertEqual((self.worktree / "fixture.pass").read_text(), "preserve")
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
+                         self.base)
+        self.assertEqual(self.remote_tip(), advance)
+        self.git(self.remote, "update-ref", "refs/heads/master", self.base)
+        (self.worktree / "fixture.pass").unlink()
+        self.session(self.worktree, "land")
+        self.assertEqual(self.remote_tip(), original)
+
+    def test_rebase_install_preserves_a_commit_made_just_before_checkout(self):
+        self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if "checkout" in sys.argv[3:] and "--detach" in sys.argv[3:]:
+    worktree = Path(os.environ["SESSION_TEST_WORKTREE"])
+    (worktree / "concurrent-change").write_text("preserve")
+    subprocess.run([real_git, "-C", str(worktree), "add", "concurrent-change"], check=True)
+    subprocess.run(
+        [real_git, "-C", str(worktree), "commit", "--quiet", "-m", "Concurrent commit"], check=True,
+    )
+""")
+        self.assertIn("cannot lock ref", self.session(self.worktree, "land", status=1, **env))
+        self.assertEqual(self.git(self.worktree, "branch", "--show-current"), "fix/mailbox-preview")
+        self.assertEqual(self.git(self.worktree, "log", "-1", "--format=%s"), "Concurrent commit")
+        self.assertEqual((self.worktree / "concurrent-change").read_text(), "preserve")
+        self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
+                         self.base)
         self.assertEqual(self.remote_tip(), advance)
 
     def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):

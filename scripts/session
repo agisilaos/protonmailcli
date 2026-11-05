@@ -49,7 +49,7 @@ def session_environment():
     }
 
 
-def git(*args, cwd=ROOT, capture=True, extra_env=None):
+def git(*args, cwd=ROOT, capture=True, extra_env=None, input_text=None):
     env = {**session_environment(), "GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": ""}
     env.update(extra_env or {})
     result = subprocess.run(
@@ -58,6 +58,7 @@ def git(*args, cwd=ROOT, capture=True, extra_env=None):
         stdout=subprocess.PIPE if capture else None,
         text=True,
         env=env,
+        input=input_text,
     )
     return result.stdout.rstrip("\n") if capture else None
 
@@ -175,8 +176,13 @@ def require_ancestor(ancestor, descendant, message):
 
 
 def rebase_candidate(main_checkout, session, previous_base, base, original_head):
+    branch_ref = f"refs/heads/{session}"
+    base_update = f"update {SESSION_BASE} {base} {previous_base}\n"
     if git("merge-base", base, original_head) == base:
-        git(*checkout_inspection(), "update-ref", SESSION_BASE, base, previous_base)
+        git(
+            *checkout_inspection(), "update-ref", "--stdin",
+            input_text=f"verify {branch_ref} {original_head}\n{base_update}",
+        )
         return original_head
 
     holding = Path(tempfile.mkdtemp(prefix="protonmailcli-rebase-"))
@@ -199,11 +205,21 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
                     git(*options, "rebase", "--abort", cwd=candidate)
                 raise
             head = git("rev-parse", "HEAD", cwd=candidate)
+            require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
             if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
                 raise SessionError("the session changed during rebase; run land again")
-            # Record the base before installing a history that contains it.
-            git(*checkout_inspection(), "update-ref", SESSION_BASE, base, previous_base)
-            git(*checkout_inspection(), "checkout", "--no-overwrite-ignore", "-B", session, head, capture=False)
+            install_options = checkout_inspection()
+            try:
+                git(*install_options, "checkout", "--no-overwrite-ignore", "--detach", head, capture=False)
+                git(
+                    *install_options, "update-ref", "--stdin",
+                    input_text=f"update {branch_ref} {head} {original_head}\n{base_update}",
+                )
+            finally:
+                if not git("branch", "--show-current"):
+                    git(*install_options, "checkout", "--no-overwrite-ignore", session, capture=False)
+            if git("rev-parse", "HEAD") != head:
+                raise SessionError("the session changed during candidate installation; run land again")
             return head
         finally:
             try:
@@ -313,7 +329,6 @@ def push_qualified(remote, branch, base, head, dry_run):
         config = git("config", "--null", "--list", "--includes")
         endpoint_env = with_config({}, list(push_settings(config, alias, remote)))
         probe_env = transport_environment(config, {}, remote)
-        shutil.copy2(Path(__file__).with_name("session_transport.py"), directory)
         hook = Path(directory) / "pre-push"
         hook.write_text("""#!/usr/bin/env python3
 import errno
@@ -322,7 +337,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from session_transport import LOOKUP_REMOTE
 
 destination = sys.argv[2]
 if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
@@ -365,7 +379,8 @@ for key in ("GIT_CONFIG", "GIT_COMMON_DIR", "GIT_WORK_TREE"):
     env.pop(key, None)
 env.update(probe_config)
 advertisement = subprocess.run(
-    [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", LOOKUP_REMOTE, "HEAD"],
+    [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--",
+     os.environ["PROTONMAILCLI_LOOKUP_REMOTE"], "HEAD"],
     stdout=subprocess.PIPE, text=True, env=env,
 )
 if advertisement.returncode:
@@ -393,6 +408,7 @@ if not expected.issubset(advertisement.stdout.splitlines()):
                     "PROTONMAILCLI_QUALIFIED_BRANCH": branch,
                     "PROTONMAILCLI_QUALIFIED_BASE": base,
                     "PROTONMAILCLI_GIT": os.path.abspath(git_executable),
+                    "PROTONMAILCLI_LOOKUP_REMOTE": LOOKUP_REMOTE,
                     "PROTONMAILCLI_RUN_PRE_PUSH": "" if dry_run else "configured" if config_hooks else "file",
                     "PROTONMAILCLI_ORIGINAL_HOOK": original_hook,
                 },
