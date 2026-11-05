@@ -46,7 +46,7 @@ this prompt:
    The session checks the default branch again inside the pre-push hook
    using the resolved destination and its configured transport settings,
    including protocol options. It records those settings before fetching.
-   A temporary push alias must use the same transport settings as `origin`.
+   The push and its final lookup share an isolated transport configuration.
    Pinned HTTP connections require a destination that works without redirects.
    Git's ref update guards the branch tip, and a server-side default-branch
    switch can still happen after that last check.

@@ -17,8 +17,7 @@ import tempfile
 
 sys.dont_write_bytecode = True
 from session_transport import (
-    LOOKUP_REMOTE, config_entries, endpoint_settings, push_settings, supports_config_hooks,
-    transport_environment, with_config,
+    LOOKUP_REMOTE, config_entries, supports_config_hooks, transport_environment,
 )
 
 
@@ -148,16 +147,20 @@ def start(main_checkout, name):
     if session == branch:
         raise SessionError("the session branch name matches the remote default branch")
     path = worktree_path(main_checkout, name)
-    git(*hooks_disabled(), "-c", f"core.hooksPath={os.devnull}", "worktree", "add",
-        "--no-checkout", "--no-track", "-b", session, path, base)
+    if path.exists() or path.is_symlink():
+        raise SessionError(f"the session checkout path already exists: {path}")
     try:
+        git(*hooks_disabled(), "-c", f"core.hooksPath={os.devnull}", "worktree", "add",
+            "--no-checkout", "--no-track", "-b", session, path, base)
         git("update-ref", SESSION_BASE, base, cwd=path)
         git(
             *hooks_disabled(cwd=path),
             "-c", f"core.hooksPath={os.devnull}",
             "restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=path,
         )
-    except (OSError, subprocess.CalledProcessError) as error:
+    except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
+        if not path.exists():
+            raise
         raise SessionError(
             f"setup stopped with the checkout preserved at {path} and base {base}; "
             "see partial checkout recovery in docs/development-sessions.md"
@@ -238,7 +241,7 @@ def locked_index(path):
                 path.unlink()
 
 
-def install_candidate(candidate, head, original_head, branch_ref, branch_update):
+def install_candidate(candidate, head, original_head, branch_ref, previous_base, base):
     options = checkout_inspection(candidate)
     metadata = git("rev-parse", "--absolute-git-dir", cwd=candidate)
     live_index = Path(git("rev-parse", "--path-format=absolute", "--git-path", "index"))
@@ -256,7 +259,9 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
     git(*options, "update-ref", "--no-deref", "HEAD", original_head, head, cwd=candidate)
     try:
         with locked_index(index_lock) as lock:
-            if git("symbolic-ref", "--quiet", "HEAD") != branch_ref or git("rev-parse", "HEAD") != original_head:
+            if (git("symbolic-ref", "--quiet", "HEAD") != branch_ref
+                    or git("rev-parse", "HEAD") != original_head
+                    or git("rev-parse", SESSION_BASE) != previous_base):
                 raise SessionError("the session changed before applying the candidate")
             ready = False
             checkout_started = False
@@ -270,7 +275,12 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
                 lock.flush()
                 os.fsync(lock.fileno())
                 ready = True
-                update_session_refs(branch_ref, f"{branch_update}create {receipt} {head}\n")
+                update_session_refs(
+                    branch_ref,
+                    f"update {branch_ref} {head} {original_head}\n"
+                    f"update {SESSION_BASE} {base} {previous_base}\n"
+                    f"create {receipt} {head}\n",
+                )
                 index_lock.replace(live_index)
             except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
                 try:
@@ -279,6 +289,8 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
                             index_lock.replace(live_index)
                     elif git("rev-parse", "HEAD", cwd=candidate) == head:
                         git(*checkout, original_head, extra_env=env, capture=False)
+                        if git("rev-parse", branch_ref) != original_head or git("rev-parse", SESSION_BASE) != previous_base:
+                            raise SessionError("session refs changed during candidate installation")
                     elif checkout_started:
                         raise SessionError("candidate checkout did not complete") from error
                 except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as recovery_error:
@@ -336,10 +348,7 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
             require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
             if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
                 raise SessionError("the session changed during rebase; run land again")
-            install_candidate(
-                candidate, head, original_head, branch_ref,
-                f"update {branch_ref} {head} {original_head}\n{base_update}",
-            )
+            install_candidate(candidate, head, original_head, branch_ref, previous_base, base)
             if git("branch", "--show-current") != session or git("rev-parse", "HEAD") != head:
                 raise SessionError("the session changed during candidate installation; run land again")
             return head
@@ -450,17 +459,31 @@ def push_qualified(remote, config, branch, base, head, dry_run):
     flags = ["--dry-run"] if dry_run else []
     original_hook = git("rev-parse", "--path-format=absolute", "--git-path", "hooks/pre-push")
     config_hooks = supports_config_hooks(git("version"))
+    hook_mode = "configured" if config_hooks else "file"
+    if dry_run or (config_hooks and git("config", "--type=bool", "--default=true", "--get",
+                                       "hook.pre-push.enabled") == "false"):
+        hook_mode = ""
     with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
-        alias = Path(directory).name
-        probe_env = transport_environment(config, {}, remote)
+        transport_env = transport_environment(config, {}, remote)
         current_config = git("config", "--null", "--list", "--includes")
-        if transport_environment(current_config, {}, remote) != probe_env:
+        if transport_environment(current_config, {}, remote) != transport_env:
             raise SessionError("origin's transport settings changed during qualification")
-        alias_env = with_config({}, list(endpoint_settings(config, alias, remote)))
-        effective = git("config", "--null", "--list", "--includes", extra_env=alias_env)
-        if transport_environment(effective, {}, remote) != probe_env:
-            raise SessionError("the temporary push remote changes Git's transport settings")
-        endpoint_env = with_config({}, list(push_settings(effective, alias, remote)))
+        bare = Path(directory) / "transport.git"
+        object_format = git("rev-parse", "--show-object-format")
+        git(
+            "init", "--quiet", "--bare", "--template=", f"--object-format={object_format}", bare,
+            cwd=Path(directory),
+            extra_env={
+                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CEILING_DIRECTORIES": str(Path(directory).parent),
+            },
+        )
+        objects = git("rev-parse", "--path-format=absolute", "--git-path", "objects")
+        (bare / "objects/info/alternates").write_text(f"{objects}\n")
+        hook_config = {
+            key: value for key, value in session_environment().items()
+            if key in {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"}
+        }
         hook = Path(directory) / "pre-push"
         hook.write_text("""#!/usr/bin/env python3
 import errno
@@ -475,12 +498,18 @@ if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
     sys.exit("session: Git resolved an unexpected push destination")
 
 git = os.environ["PROTONMAILCLI_GIT"]
-env = os.environ.copy()
-probe_config = json.loads(env.pop("PROTONMAILCLI_PROBE_CONFIG"))
-for key in list(env):
-    if (key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
-            or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))):
-        env.pop(key)
+root = os.environ["PROTONMAILCLI_ORIGINAL_ROOT"]
+local_keys = {
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_INDEX_FILE", "GIT_PREFIX",
+}
+network_env = {key: value for key, value in os.environ.items() if key not in local_keys}
+hook_env = {
+    key: value for key, value in network_env.items()
+    if key not in {"GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"}
+    and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+}
+hook_env.update(json.loads(os.environ["PROTONMAILCLI_ORIGINAL_CONFIG"]))
 mode = os.environ["PROTONMAILCLI_RUN_PRE_PUSH"]
 if mode == "configured":
     with tempfile.NamedTemporaryFile() as refs:
@@ -489,7 +518,7 @@ if mode == "configured":
         status = subprocess.run(
             [git, "hook", "run", "--ignore-missing", f"--to-stdin={refs.name}", "pre-push", "--",
              "origin", destination],
-            env=env,
+            cwd=root, env=hook_env,
         ).returncode
         if status:
             sys.exit(status)
@@ -498,22 +527,18 @@ elif mode == "file":
     if os.path.isfile(original) and os.access(original, os.X_OK):
         command = [original, "origin", destination]
         try:
-            status = subprocess.run(command, env=env).returncode
+            status = subprocess.run(command, cwd=root, env=hook_env).returncode
         except OSError as error:
             if error.errno != errno.ENOEXEC:
                 raise
-            status = subprocess.run(["/bin/sh", *command], env=env).returncode
+            status = subprocess.run(["/bin/sh", *command], cwd=root, env=hook_env).returncode
         if status:
             sys.exit(status)
 
-# Reuse the pinned transport settings even if a user hook changed Git config.
-for key in ("GIT_CONFIG", "GIT_COMMON_DIR", "GIT_WORK_TREE"):
-    env.pop(key, None)
-env.update(probe_config)
 advertisement = subprocess.run(
     [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--",
      os.environ["PROTONMAILCLI_LOOKUP_REMOTE"], "HEAD"],
-    stdout=subprocess.PIPE, text=True, env=env,
+    cwd=root, stdout=subprocess.PIPE, text=True, env=network_env,
 )
 if advertisement.returncode:
     sys.exit(advertisement.returncode)
@@ -528,20 +553,21 @@ if not expected.issubset(advertisement.stdout.splitlines()):
             # The explicit lease compares the remote tip during the push. The
             # caller has already checked that this update is a fast-forward.
             git(
-                *hooks_disabled(extra_env=endpoint_env),
+                f"--git-dir={bare}",
                 "-c", "hook.pre-push.enabled=true", "-c", f"core.hooksPath={directory}", "push", *flags,
                 "--no-follow-tags", "--recurse-submodules=no",
                 f"--force-with-lease=refs/heads/{branch}:{base}", "--",
-                alias, f"{head}:refs/heads/{branch}", capture=False,
+                LOOKUP_REMOTE, f"{head}:refs/heads/{branch}", capture=False,
                 extra_env={
-                    **endpoint_env,
-                    "PROTONMAILCLI_PROBE_CONFIG": json.dumps(probe_env),
+                    **transport_env,
+                    "PROTONMAILCLI_ORIGINAL_ROOT": str(ROOT),
+                    "PROTONMAILCLI_ORIGINAL_CONFIG": json.dumps(hook_config),
                     "PROTONMAILCLI_QUALIFIED_URL": remote,
                     "PROTONMAILCLI_QUALIFIED_BRANCH": branch,
                     "PROTONMAILCLI_QUALIFIED_BASE": base,
                     "PROTONMAILCLI_GIT": os.path.abspath(git_executable),
                     "PROTONMAILCLI_LOOKUP_REMOTE": LOOKUP_REMOTE,
-                    "PROTONMAILCLI_RUN_PRE_PUSH": "" if dry_run else "configured" if config_hooks else "file",
+                    "PROTONMAILCLI_RUN_PRE_PUSH": hook_mode,
                     "PROTONMAILCLI_ORIGINAL_HOOK": original_hook,
                 },
             )

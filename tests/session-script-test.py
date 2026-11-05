@@ -571,8 +571,8 @@ if sys.argv[1:2] == ["-C"] and "ls-remote" in sys.argv[3:]:
         self.assertEqual(self.remote_tip(), head)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
-    def test_push_refuses_a_new_url_rewrite(self):
-        self.change(self.worktree, "session-change")
+    def test_push_ignores_a_new_url_rewrite(self):
+        head = self.change(self.worktree, "session-change")
         fork = self.root / "fork.git"
         self.git(self.repo, "clone", "--quiet", "--bare", self.remote, fork)
         config_hook = self.root / "configured-hook"
@@ -582,12 +582,12 @@ if sys.argv[1:2] == ["-C"] and "ls-remote" in sys.argv[3:]:
         self.git(self.repo, "config", "hook.fixture.command", config_hook)
         self.git(self.repo, "config", "hook.pre-push.enabled", "false")
         marker = self.root / "configured-hook-ran"
-        self.assertIn("unexpected push destination", self.session(
-            self.worktree, "land", status=1, SESSION_TEST_REWRITE_PUSHURL=str(fork),
+        self.session(
+            self.worktree, "land", SESSION_TEST_REWRITE_PUSHURL=str(fork),
             SESSION_TEST_CONFIG_HOOK=str(marker),
-        ))
+        )
         self.assertFalse(marker.exists())
-        self.assertEqual(self.remote_tip(), self.base)
+        self.assertEqual(self.remote_tip(), head)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
     def test_rehearsal_skips_hooks_enabled_by_the_temporary_push_remote(self):
@@ -607,11 +607,12 @@ if sys.argv[1:2] == ["-C"] and "ls-remote" in sys.argv[3:]:
         marker = self.root / "conditional-pre-push-ran"
         env = self.git_wrapper("""
 if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in sys.argv[3:]):
-    event = subprocess.check_output(
-        [real_git, "-C", sys.argv[2], "config", "--get", "hook.fixture-conditional.event"],
-        text=True,
+    git_dir = next(arg for arg in sys.argv if arg.startswith("--git-dir="))
+    result = subprocess.run(
+        [real_git, "-C", sys.argv[2], git_dir, "config", "--get", "hook.fixture-conditional.event"],
+        text=True, stdout=subprocess.PIPE,
     )
-    assert event.strip() == "pre-push"
+    assert result.returncode == 1 and not result.stdout
 """)
         self.session(
             self.worktree, "land", "--dry-run", GIT_CONFIG_GLOBAL=str(config),
@@ -619,8 +620,8 @@ if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in s
         )
         self.assertFalse(marker.exists())
 
-    def test_push_refuses_transport_changes_enabled_by_the_temporary_remote(self):
-        self.change(self.worktree, "session-change")
+    def test_push_does_not_load_transport_changes_enabled_by_the_temporary_remote(self):
+        head = self.change(self.worktree, "session-change")
         alias = self.root / "alias.git"
         self.git(self.repo, "remote", "set-url", "origin", alias)
         self.git(self.repo, "config", f"url.{self.remote}.insteadOf", alias)
@@ -629,10 +630,17 @@ if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in s
         self.git(self.repo, "config", "--file", included, "core.sshCommand", "ssh -F fixture")
         self.git(self.repo, "config", "--file", config,
                  f"includeIf.hasconfig:remote.*.url:{self.remote}.path", included)
-        self.assertIn("changes Git's transport settings", self.session(
-            self.worktree, "land", status=1, GIT_CONFIG_GLOBAL=str(config),
-        ))
-        self.assertEqual(self.remote_tip(), self.base)
+        env = self.git_wrapper("""
+if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in sys.argv[3:]):
+    git_dir = next(arg for arg in sys.argv if arg.startswith("--git-dir="))
+    result = subprocess.run(
+        [real_git, "-C", sys.argv[2], git_dir, "config", "--get", "core.sshCommand"],
+        text=True, stdout=subprocess.PIPE,
+    )
+    assert result.returncode == 1 and not result.stdout
+""")
+        self.session(self.worktree, "land", GIT_CONFIG_GLOBAL=str(config), **env)
+        self.assertEqual(self.remote_tip(), head)
 
     def test_rebase_does_not_follow_a_second_url_rewrite(self):
         self.change(self.worktree, "session-change")
@@ -645,9 +653,9 @@ if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in s
         self.git(self.repo, "config", f"url.{self.remote}.insteadOf", alias)
         self.git(self.repo, "config", f"url.{fork}.insteadOf", self.remote)
 
-        self.session(self.worktree, "land", status=1)
+        self.session(self.worktree, "land")
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), expected_base)
-        self.assertEqual(self.remote_tip(), expected_base)
+        self.assertEqual(self.remote_tip(), self.git(self.worktree, "rev-parse", "HEAD"))
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
     def test_push_refuses_a_default_change_in_the_configured_hook(self):
@@ -784,7 +792,10 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         check=True,
     )
 """)
-        self.session(self.worktree, "land", status=1, SESSION_TEST_SOFT_RESET=self.base, **env)
+        self.session(
+            self.worktree, "land", status=1, TMPDIR=str(self.root),
+            SESSION_TEST_SOFT_RESET=self.base, **env,
+        )
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), self.base)
         self.assertEqual((self.worktree / "session-change").read_text(), "session-change")
         self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "A  session-change")
@@ -805,10 +816,34 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
     )
     sys.exit(subprocess.run([real_git, *sys.argv[1:]], input=updates, text=True).returncode)
 """)
-        self.session(self.worktree, "land", status=1, **env)
+        self.assertIn("recovery files retained", self.session(
+            self.worktree, "land", status=1, TMPDIR=str(self.root), **env,
+        ))
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), advance)
         self.assertFalse((self.worktree / "remote-change").exists())
         self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "D  remote-change")
+        self.assertEqual(self.remote_tip(), advance)
+
+    def test_partial_ref_transaction_retains_the_candidate_recovery_files(self):
+        self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
+    updates = sys.stdin.read().splitlines()
+    worktree = os.environ["SESSION_TEST_WORKTREE"]
+    for update in updates[:2]:
+        action, ref, new, old = update.split()
+        assert action == "update"
+        subprocess.run([real_git, "-C", worktree, "update-ref", ref, new, old], check=True)
+    sys.exit(17)
+""")
+        self.assertIn("recovery files retained", self.session(
+            self.worktree, "land", status=1, TMPDIR=str(self.root), **env,
+        ))
+        self.assertTrue(list(self.root.glob("protonmailcli-rebase-*/installation-index")))
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), advance)
+        self.assertFalse((self.worktree / "remote-change").exists())
         self.assertEqual(self.remote_tip(), advance)
 
     def test_partial_installation_retains_recovery_files_after_a_signal_or_checkout_error(self):
@@ -1020,6 +1055,22 @@ exit 23
         self.assertIn("standard Git transport", self.session(self.repo, "start", "custom", status=1))
         self.assertFalse((self.root / "repo-custom").exists())
 
+    def test_interrupted_start_reports_the_recoverable_checkout_and_base(self):
+        path = self.root / "repo-recovery"
+        env = self.git_wrapper("""
+if sys.argv[2] == os.environ["SESSION_TEST_START_PATH"] and sys.argv[3:5] == [
+    "update-ref", "refs/worktree/protonmailcli/session-base",
+]:
+    import signal
+    os.kill(os.getppid(), signal.SIGTERM)
+    sys.exit(17)
+""")
+        result = self.session(self.repo, "start", "recovery", status=1, SESSION_TEST_START_PATH=str(path), **env)
+        self.assertIn(f"checkout preserved at {path} and base {self.base}", result)
+        self.git(path, "update-ref", "refs/worktree/protonmailcli/session-base", self.base)
+        self.git(path, "restore", "--source=HEAD", "--staged", "--worktree", "--", ".")
+        self.assertTrue((path / "scripts/session").is_file())
+
     def test_older_git_runs_an_executable_file_hook_without_a_shebang(self):
         head = self.change(self.worktree, "session-change")
         hook = self.repo / ".git/hooks/pre-push"
@@ -1051,28 +1102,25 @@ if sys.argv[3:] == ["version"]:
         self.git(self.repo, "config", "http.followRedirects", "true")
         self.git(self.repo, "config", f"http.{url}.followRedirects", "true")
         config = self.git(self.repo, "config", "--null", "--list", "--includes")
-        push = TRANSPORT["with_config"](self.env, list(TRANSPORT["push_settings"](config, "pinned", url)))
-        lookup = TRANSPORT["transport_environment"](config, self.env, url)
-        for env in (push, lookup):
-            result = subprocess.check_output(
-                ["git", "config", "--get-urlmatch", "http.followRedirects", url],
-                cwd=self.repo, env=env, text=True,
-            )
-            self.assertEqual(result.strip(), "false")
+        env = TRANSPORT["transport_environment"](config, self.env, url)
+        result = subprocess.check_output(
+            ["git", "config", "--get-urlmatch", "http.followRedirects", url],
+            cwd=self.repo, env=env, text=True,
+        )
+        self.assertEqual(result.strip(), "false")
 
     def test_pinned_connections_preserve_server_option_order(self):
         for option in ("first=one", "second=two", "first=three"):
             self.git(self.repo, "config", "--add", "remote.origin.serverOption", option)
         config = self.git(self.repo, "config", "--null", "--list", "--includes")
         url = "https://fixture.invalid/repo.git"
-        push = TRANSPORT["with_config"](self.env, list(TRANSPORT["push_settings"](config, "pinned", url)))
-        lookup = TRANSPORT["transport_environment"](config, self.env, url)
-        for env, alias in ((push, "pinned"), (lookup, TRANSPORT["LOOKUP_REMOTE"])):
-            result = subprocess.check_output(
-                ["git", "config", "--get-all", f"remote.{alias}.serverOption"],
-                cwd=self.repo, env=env, text=True,
-            )
-            self.assertEqual(result.splitlines(), ["first=one", "second=two", "first=three"])
+        env = TRANSPORT["transport_environment"](config, self.env, url)
+        alias = TRANSPORT["LOOKUP_REMOTE"]
+        result = subprocess.check_output(
+            ["git", "config", "--get-all", f"remote.{alias}.serverOption"],
+            cwd=self.repo, env=env, text=True,
+        )
+        self.assertEqual(result.splitlines(), ["first=one", "second=two", "first=three"])
 
     def test_fetch_from_a_changed_origin_preserves_the_shared_tracking_ref(self):
         self.change(self.worktree, "session-change")

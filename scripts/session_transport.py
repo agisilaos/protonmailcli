@@ -29,15 +29,6 @@ def redirect_settings(remote):
         yield f"http.{remote}.followredirects", "false"
 
 
-def push_settings(config, alias, remote):
-    yield from endpoint_settings(config, alias, remote)
-    for key, value in config_entries(config):
-        if (key in {"core.sshcommand", "core.gitproxy", "ssh.variant"}
-                or (key.startswith(("http.", "https.")) and key.endswith((".proxy", ".proxyauthmethod")))):
-            yield key, value
-    yield from redirect_settings(remote)
-
-
 def with_config(environment, settings):
     env = environment.copy()
     for key in list(env):
