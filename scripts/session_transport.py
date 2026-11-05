@@ -44,8 +44,12 @@ def with_config(environment, settings):
 def transport_environment(config, environment, remote):
     transport = list(endpoint_settings(config, LOOKUP_REMOTE, remote))
     for key, value in config_entries(config):
-        if (key.startswith(("credential.", "http.", "https.", "protocol.", "ssh."))
-                or key in {"core.askpass", "core.sshcommand", "core.gitproxy"}):
+        if (key.startswith(("credential.", "gpg.", "http.", "https.", "protocol.", "ssh."))
+                or key in {
+                    "core.askpass", "core.sshcommand", "core.gitproxy", "push.gpgsign", "push.pushoption",
+                    "user.name", "user.email", "user.signingkey", "user.useconfigonly",
+                    "committer.name", "committer.email",
+                }):
             transport.append((key, value))
     transport.extend(redirect_settings(remote))
 

@@ -47,6 +47,7 @@ this prompt:
    using the resolved destination and its configured transport settings,
    including protocol options. It records those settings before fetching.
    The push and its final lookup share an isolated transport configuration.
+   The push honors configured signing and push options.
    Pinned HTTP connections require a destination that works without redirects.
    Git's ref update guards the branch tip, and a server-side default-branch
    switch can still happen after that last check.

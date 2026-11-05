@@ -717,6 +717,27 @@ if sys.argv[1:3] == ["--git-dir=/dev/null", "ls-remote"]:
         self.assertEqual(self.git(self.repo, "config", "--get", "remote.origin.proxyAuthMethod"), "digest")
         self.assertEqual(self.remote_tip(), head)
 
+    def test_isolated_push_preserves_push_option_order_and_resets(self):
+        head = self.change(self.worktree, "session-change")
+        self.git(self.remote, "config", "receive.advertisePushOptions", "true")
+        hook = self.remote / "hooks/pre-receive"
+        hook.write_text("""#!/bin/sh
+printf '%s\\n' "$GIT_PUSH_OPTION_COUNT" "$GIT_PUSH_OPTION_0" "$GIT_PUSH_OPTION_1" > "$SESSION_TEST_PUSH_OPTIONS"
+""")
+        hook.chmod(0o755)
+        for option in ("discard", "", "workflow=fixture", "order=second"):
+            self.git(self.repo, "config", "--add", "push.pushOption", option)
+        options = self.root / "push-options"
+        self.session(self.worktree, "land", SESSION_TEST_PUSH_OPTIONS=str(options))
+        self.assertEqual(options.read_text().splitlines(), ["2", "workflow=fixture", "order=second"])
+        self.assertEqual(self.remote_tip(), head)
+
+    def test_isolated_push_preserves_required_push_signing(self):
+        self.change(self.worktree, "session-change")
+        self.git(self.repo, "config", "push.gpgSign", "true")
+        self.assertIn("does not support --signed push", self.session(self.worktree, "land", status=1))
+        self.assertEqual(self.remote_tip(), self.base)
+
     def test_branch_switch_during_fetch_stops_before_rebase(self):
         original = self.change(self.worktree, "session-change")
         advance = self.change(self.repo, "remote-change")
