@@ -77,6 +77,12 @@ def fetch_default(remote="origin"):
     return branch, base
 
 
+def absolute_endpoint(url):
+    if re.match(r"^[^/]*:", url):
+        return url
+    return str((ROOT / Path(url).expanduser()).resolve())
+
+
 def worktree_path(main_checkout, name):
     return main_checkout.with_name(f"{main_checkout.name}-{name}")
 
@@ -223,7 +229,11 @@ fi
 if [ -x "$PROTONMAILCLI_PRE_PUSH" ]; then
     "$PROTONMAILCLI_PRE_PUSH" origin "$2" || exit "$?"
 fi
-advertisement=$(git ls-remote --symref -- "$2" HEAD) || exit "$?"
+advertisement=$(
+    unset GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_COMMON_DIR GIT_WORK_TREE
+    export GIT_CONFIG_COUNT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+    git --git-dir=/dev/null ls-remote --symref -- "$2" HEAD
+) || exit "$?"
 expected_ref=$(printf 'ref: refs/heads/%s\\tHEAD' "$PROTONMAILCLI_QUALIFIED_BRANCH")
 expected_tip=$(printf '%s\\tHEAD' "$PROTONMAILCLI_QUALIFIED_BASE")
 if ! printf '%s\\n' "$advertisement" | grep -Fqx -- "$expected_ref" ||
@@ -258,6 +268,7 @@ def land(main_checkout, dry_run):
     remote = git("remote", "get-url", "origin")
     if remote != git("remote", "get-url", "--push", "--all", "origin"):
         raise SessionError("origin must use the same single URL for fetch and push")
+    remote = absolute_endpoint(remote)
     branch, base = fetch_default(remote)
     if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
         raise SessionError("the session changed during fetch; run land again")
@@ -291,7 +302,8 @@ def land(main_checkout, dry_run):
 def end(main_checkout):
     session, session_base = current_session(main_checkout)
     head = git("rev-parse", "HEAD")
-    branch, base = fetch_default()
+    remote = absolute_endpoint(git("remote", "get-url", "origin"))
+    branch, base = fetch_default(remote)
     if session == branch:
         raise SessionError("the default branch cannot be ended")
     require_ancestor(head, base, f"session HEAD is not on origin/{branch}")
@@ -306,7 +318,7 @@ def end(main_checkout):
     try:
         git("worktree", "move", ROOT, moved, cwd=main_checkout)
         try:
-            if default_tip("origin", cwd=moved) != (branch, base):
+            if default_tip(remote, cwd=moved) != (branch, base):
                 raise SessionError("origin's default branch changed during cleanup; run end again")
             if (current_session(main_checkout, cwd=moved) != (session, session_base)
                     or git("rev-parse", "HEAD", cwd=moved) != head):

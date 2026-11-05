@@ -72,6 +72,6 @@ variables and use the project's Make and Go settings.
 
 Use `scripts/session land` for publication so the exact commits pass review
 and qualification. Those checks are enforced by the session command. GitHub's
-existing release-check workflow also runs after a push to the default branch.
+existing release-check workflow also runs after a push to `master` or `main`.
 Run `make session-script-test` to exercise changes to the session helper
 against disposable local Git remotes.

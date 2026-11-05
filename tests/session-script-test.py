@@ -319,6 +319,13 @@ if ["branch", "--delete"] == sys.argv[9:11]:
         self.session(self.worktree, "end")
         self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
 
+    def test_end_keeps_a_relative_origin_resolvable_after_moving_the_checkout(self):
+        self.change(self.worktree, "session-change")
+        self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/master")
+        self.git(self.repo, "remote", "set-url", "origin", "../remote.git")
+        self.session(self.worktree, "end")
+        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
+
     def test_hidden_tracked_edits_are_preserved(self):
         path = self.worktree / ".gitignore"
         self.git(self.worktree, "update-index", "--assume-unchanged", ".gitignore")
@@ -385,16 +392,21 @@ if ["branch", "--delete"] == sys.argv[9:11]:
     def test_push_refuses_a_default_change_in_the_configured_hook(self):
         self.change(self.worktree, "session-change")
         self.git(self.remote, "update-ref", "refs/heads/main", self.base)
+        fork = self.root / "fork.git"
+        self.git(self.repo, "clone", "--quiet", "--bare", self.remote, fork)
         hook = self.repo / ".git/hooks/pre-push"
         hook.write_text("""#!/bin/sh
+set -e
 git --git-dir="$SESSION_TEST_REMOTE" symbolic-ref HEAD refs/heads/main
+git config "url.$SESSION_TEST_FORK.insteadOf" "$SESSION_TEST_REMOTE"
 """)
         hook.chmod(0o755)
         self.assertIn("default branch changed before the push", self.session(
-            self.worktree, "land", status=1,
+            self.worktree, "land", status=1, SESSION_TEST_FORK=str(fork),
         ))
         self.assertEqual(self.remote_tip(), self.base)
         self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/main"), self.base)
+        self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
     def test_branch_switch_during_fetch_stops_before_rebase(self):
         original = self.change(self.worktree, "session-change")
