@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt fmt-check verify check-help update-help help-script-test docs-check changelog-context release-check release-check-ci release release-dry-run
+.PHONY: build test vet fmt fmt-check verify check-help update-help help-script-test session-script-test docs-check changelog-context release-check release-check-ci release release-dry-run
 
 build:
 	go build -o protonmailcli ./cmd/protonmailcli
@@ -26,6 +26,9 @@ update-help:
 
 help-script-test:
 	python3 tests/help-scripts-test.py
+
+session-script-test:
+	python3 tests/session-script-test.py
 
 docs-check:
 	./scripts/docs-check.sh

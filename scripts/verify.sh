@@ -22,6 +22,8 @@ echo "[verify] checking executable contract fixtures"
 go test ./internal/app -run TestContractFixtures -v
 echo "[verify] checking help generation fixtures"
 make help-script-test
+echo "[verify] checking worktree session fixtures"
+make session-script-test
 echo "[verify] checking docs and help"
 make docs-check
 echo "[verify] running isolated local-state agent smoke"

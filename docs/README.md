@@ -22,6 +22,8 @@
 
 ## Local verification
 
+- [Development sessions](development-sessions.md) covers new chats, worktrees and direct landing.
+
 - `make verify` runs the full local gate, including executable contract
   fixtures and the isolated local-state send dry run.
 - `scripts/release-config.sh` owns release names, metadata and the pinned bundle fingerprint.
