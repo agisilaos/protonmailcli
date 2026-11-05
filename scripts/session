@@ -263,6 +263,8 @@ def install_candidate(candidate, head, original_head, branch_ref, previous_base,
                     or git("rev-parse", "HEAD") != original_head
                     or git("rev-parse", SESSION_BASE) != previous_base):
                 raise SessionError("the session changed before applying the candidate")
+            if git(*checkout_inspection(), "status", "--porcelain", "--untracked-files=all"):
+                raise SessionError("the session index or files changed before applying the candidate")
             ready = False
             checkout_started = False
             try:
@@ -627,6 +629,7 @@ def end(main_checkout):
     # A refused cleanup restores the original path or leaves the files at the
     # holding path if something else has occupied the original one.
     original_gitfile = (ROOT / ".git").read_bytes()
+    known_gitfiles = {original_gitfile}
     holding = Path(tempfile.mkdtemp(prefix=f".{ROOT.name}-end-", dir=ROOT.parent))
     moved = holding / "checkout"
     archive = holding / "files"
@@ -656,6 +659,7 @@ def end(main_checkout):
                         archive.rename(moved)
                     if gitfile.exists():
                         gitfile.rename(moved / ".git")
+                    known_gitfiles.add((moved / ".git").read_bytes())
                     git("worktree", "move", moved, ROOT, cwd=main_checkout)
                 elif (registered_worktree(ROOT, main_checkout) and moved.is_dir()
                       and (moved / ".git").read_bytes() == original_gitfile):
@@ -671,6 +675,12 @@ def end(main_checkout):
                 location = archive if archive.exists() else moved
                 if not location.exists() and (ROOT / moved.name).exists():
                     location = ROOT / moved.name
+                if not location.exists():
+                    try:
+                        if (ROOT / ".git").read_bytes() in known_gitfiles:
+                            location = ROOT
+                    except OSError:
+                        pass
                 pointer = gitfile if gitfile.exists() else location / ".git"
                 raise SessionError(
                     f"could not restore the checkout; files at {location}, Git pointer at {pointer}"

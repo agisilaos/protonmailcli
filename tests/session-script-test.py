@@ -361,6 +361,22 @@ if sys.argv[3:5] == ["worktree", "move"] and sys.argv[5] == os.environ["SESSION_
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
 
+    def test_end_reports_files_already_returned_to_the_original_path(self):
+        env = self.git_wrapper("""
+if sys.argv[3:5] == ["worktree", "remove"]:
+    sys.exit(17)
+if sys.argv[3:5] == ["worktree", "move"] and sys.argv[6] == os.environ["SESSION_TEST_WORKTREE"]:
+    Path(sys.argv[5]).rename(sys.argv[6])
+    sys.exit(17)
+""")
+        self.assertIn(f"files at {self.worktree}, Git pointer at {self.worktree / '.git'}", self.session(
+            self.worktree, "end", status=1, **env,
+        ))
+        self.assertTrue((self.worktree / "scripts/session").is_file())
+        self.git(self.repo, "worktree", "repair", self.worktree)
+        self.session(self.worktree, "end")
+        self.assertFalse(self.worktree.exists())
+
     def test_end_does_not_nest_the_worktree_under_a_recreated_original_path(self):
         env = self.git_wrapper("""
 if sys.argv[3:5] == ["worktree", "remove"]:
@@ -799,6 +815,24 @@ if sys.argv[3:] == ["rev-parse", "--path-format=absolute", "--git-path", "index"
         self.assertEqual((self.worktree / "concurrent-change").read_text(), "preserve")
         self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
                          self.base)
+        self.assertEqual(self.remote_tip(), advance)
+
+    def test_rebase_install_preserves_an_edit_staged_just_before_the_index_lock(self):
+        original = self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if sys.argv[3:] == ["rev-parse", "--path-format=absolute", "--git-path", "index"]:
+    worktree = Path(os.environ["SESSION_TEST_WORKTREE"])
+    (worktree / "remote-change").write_text("remote-change")
+    subprocess.run([real_git, "-C", str(worktree), "add", "remote-change"], check=True)
+""")
+        self.assertIn("session index or files changed before applying the candidate", self.session(
+            self.worktree, "land", status=1, **env,
+        ))
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "A  remote-change")
+        self.assertEqual((self.worktree / "remote-change").read_text(), "remote-change")
         self.assertEqual(self.remote_tip(), advance)
 
     def test_rebase_rollback_preserves_the_pre_installation_files_after_a_soft_reset(self):

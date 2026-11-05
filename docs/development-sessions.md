@@ -72,7 +72,9 @@ this prompt:
    If cleanup is interrupted or Git refuses to unregister the worktree,
    the command restores the original path when possible and reports where
    the files are retained. An archive whose registration is already gone
-   remains detached from the repository.
+   remains detached from the repository. If files returned to the original
+   path before Git updated its registration, use `git worktree repair <path>`
+   from the primary checkout.
 
 ## Partial checkout recovery
 
