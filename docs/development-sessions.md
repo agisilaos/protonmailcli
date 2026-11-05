@@ -37,8 +37,9 @@ this prompt:
    local branch after checking the fetched commit against the resolved
    remote. Rebase runs in a disposable worktree, and installation refuses
    to overwrite ignored files or replace a newly advanced session branch.
-   The session and disposable worktree need matching checkout filters and
-   line-ending settings, with an absolute path for any configured attributes file.
+   The session and disposable worktree need matching checkout settings,
+   including filters, symlinks, and line endings. Use an absolute path
+   for any configured attributes file.
    They use a fresh checkout
    with isolated Git configuration for a read-only Codex review and one
    run of `scripts/release-check.sh --ci`. A real

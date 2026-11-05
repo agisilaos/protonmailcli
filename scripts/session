@@ -97,7 +97,9 @@ def checkout_conversion(cwd):
         key: value for key, value in config_entries(config)
         if key.startswith("filter.") or key in {
             "core.attributesfile", "core.autocrlf", "core.checkroundtripencoding",
-            "core.eol", "core.safecrlf",
+            "core.eol", "core.filemode", "core.ignorecase", "core.precomposeunicode",
+            "core.protecthfs", "core.protectntfs", "core.safecrlf", "core.sparsecheckout",
+            "core.sparsecheckoutcone", "core.symlinks", "index.sparse",
         }
     }
 

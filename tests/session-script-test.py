@@ -1072,11 +1072,13 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         metadata = self.git(self.worktree, "rev-parse", "--absolute-git-dir")
         config = self.root / "gitconfig"
         included = self.root / "conditional-gitconfig"
-        self.git(self.repo, "config", "--file", included, "core.autocrlf", "true")
         self.git(self.repo, "config", "--file", config, f"includeIf.gitdir:{metadata}.path", included)
-        self.assertIn("checkout conversion settings differ", self.session(
-            self.worktree, "land", status=1, TMPDIR=str(self.root), GIT_CONFIG_GLOBAL=str(config),
-        ))
+        for setting in ("autocrlf = true", "symlinks = false"):
+            with self.subTest(setting=setting):
+                included.write_text(f"[core]\n    {setting}\n")
+                self.assertIn("checkout conversion settings differ", self.session(
+                    self.worktree, "land", status=1, TMPDIR=str(self.root), GIT_CONFIG_GLOBAL=str(config),
+                ))
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
         self.assertFalse((self.worktree / "remote-change").exists())
         self.assertFalse(list(self.root.glob("protonmailcli-rebase-*")))
