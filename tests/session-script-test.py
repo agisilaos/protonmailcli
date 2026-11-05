@@ -617,6 +617,22 @@ if sys.argv[3:4] == ["fetch"]:
         self.assertEqual(self.git(self.worktree, "rev-parse", "fix/mailbox-preview"), original)
         self.assertEqual(self.remote_tip(), advance)
 
+    def test_rebase_install_does_not_overwrite_an_ignored_file_created_late(self):
+        original = self.change(self.worktree, "session-change")
+        (self.repo / "fixture.pass").write_text("tracked upstream")
+        self.git(self.repo, "add", "-f", "fixture.pass")
+        self.git(self.repo, "commit", "--quiet", "-m", "Add fixture upstream")
+        advance = self.git(self.repo, "rev-parse", "HEAD")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if "checkout" in sys.argv[3:] and "--no-overwrite-ignore" in sys.argv[3:]:
+    Path(os.environ["SESSION_TEST_WORKTREE"], "fixture.pass").write_text("preserve")
+""")
+        self.assertIn("would be overwritten", self.session(self.worktree, "land", status=1, **env))
+        self.assertEqual((self.worktree / "fixture.pass").read_text(), "preserve")
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertEqual(self.remote_tip(), advance)
+
     def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):
         self.change(self.worktree, "session-change")
         prior_tip = self.change(self.repo, "remote-change")
@@ -697,6 +713,30 @@ exit 23
         self.assertEqual(self.git(self.root / "repo-from-main", "rev-parse", "HEAD"), alternate)
         self.assertEqual(self.git(self.repo, "branch", "--show-current"), "master")
         self.assertEqual(self.git(self.repo, "rev-parse", "refs/tags/local-only"), self.base)
+
+    def test_start_refuses_a_name_that_matches_the_remote_default_branch(self):
+        self.git(self.remote, "update-ref", "refs/heads/fix/collision", self.base)
+        self.git(self.remote, "symbolic-ref", "HEAD", "refs/heads/fix/collision")
+        self.assertIn("matches the remote default branch", self.session(
+            self.repo, "start", "collision", status=1,
+        ))
+        self.assertEqual(self.git(self.repo, "branch", "--list", "fix/collision"), "")
+        self.assertFalse((self.root / "repo-collision").exists())
+
+    def test_older_git_runs_an_executable_file_hook_without_a_shebang(self):
+        head = self.change(self.worktree, "session-change")
+        hook = self.repo / ".git/hooks/pre-push"
+        hook.write_text('printf "%s\\n" "$1" > "$SESSION_TEST_HOOK_MARKER"\n')
+        hook.chmod(0o755)
+        marker = self.root / "legacy-hook"
+        env = self.git_wrapper("""
+if sys.argv[3:] == ["version"]:
+    print("git version 2.53.0")
+    sys.exit(0)
+""")
+        self.session(self.worktree, "land", SESSION_TEST_HOOK_MARKER=str(marker), **env)
+        self.assertEqual(marker.read_text().strip(), "origin")
+        self.assertEqual(self.remote_tip(), head)
 
     def test_fetch_refmap_does_not_update_other_local_branches(self):
         advance = self.change(self.repo, "remote-change")

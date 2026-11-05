@@ -119,9 +119,12 @@ def start(main_checkout, name):
         raise SessionError("use a session name such as mailbox-preview")
     remote = absolute_endpoint(git("remote", "get-url", "origin"))
     branch, base = fetch_default(remote)
+    session = f"fix/{name}"
+    if session == branch:
+        raise SessionError("the session branch name matches the remote default branch")
     path = worktree_path(main_checkout, name)
     git(*hooks_disabled(), "-c", f"core.hooksPath={os.devnull}", "worktree", "add",
-        "--no-checkout", "--no-track", "-b", f"fix/{name}", path, base)
+        "--no-checkout", "--no-track", "-b", session, path, base)
     try:
         git("update-ref", SESSION_BASE, base, cwd=path)
         git(
@@ -169,6 +172,47 @@ def require_ancestor(ancestor, descendant, message):
         git("merge-base", "--is-ancestor", ancestor, descendant)
     except subprocess.CalledProcessError as error:
         raise SessionError(message) from error
+
+
+def rebase_candidate(main_checkout, session, previous_base, base, original_head):
+    if git("merge-base", base, original_head) == base:
+        git(*checkout_inspection(), "update-ref", SESSION_BASE, base, previous_base)
+        return original_head
+
+    holding = Path(tempfile.mkdtemp(prefix="protonmailcli-rebase-"))
+    candidate = holding / "checkout"
+    try:
+        git(*checkout_inspection(), "worktree", "add", "--detach", "--no-checkout",
+            candidate, original_head)
+        options = checkout_inspection(candidate)
+        try:
+            git(*options, "restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=candidate)
+            try:
+                git(
+                    *options, "rebase", "--merge", "--no-autostash", "--no-update-refs",
+                    "--no-fork-point", "--no-rebase-merges", "--reapply-cherry-picks", base,
+                    cwd=candidate, capture=False,
+                )
+            except (subprocess.CalledProcessError, KeyboardInterrupt):
+                marker = git("rev-parse", "--path-format=absolute", "--git-path", "rebase-merge", cwd=candidate)
+                if Path(marker).exists():
+                    git(*options, "rebase", "--abort", cwd=candidate)
+                raise
+            head = git("rev-parse", "HEAD", cwd=candidate)
+            if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
+                raise SessionError("the session changed during rebase; run land again")
+            # Record the base before installing a history that contains it.
+            git(*checkout_inspection(), "update-ref", SESSION_BASE, base, previous_base)
+            git(*checkout_inspection(), "checkout", "--no-overwrite-ignore", "-B", session, head, capture=False)
+            return head
+        finally:
+            try:
+                git(*checkout_inspection(), "worktree", "remove", candidate)
+            except (OSError, subprocess.CalledProcessError) as error:
+                raise SessionError(f"temporary rebase worktree retained at {candidate}") from error
+    finally:
+        if not candidate.exists():
+            holding.rmdir()
 
 
 def run_logged(command, path, cwd=ROOT, extra_env=None):
@@ -272,6 +316,7 @@ def push_qualified(remote, branch, base, head, dry_run):
         shutil.copy2(Path(__file__).with_name("session_transport.py"), directory)
         hook = Path(directory) / "pre-push"
         hook.write_text("""#!/usr/bin/env python3
+import errno
 import json
 import os
 import subprocess
@@ -305,7 +350,13 @@ if mode == "configured":
 elif mode == "file":
     original = os.environ["PROTONMAILCLI_ORIGINAL_HOOK"]
     if os.path.isfile(original) and os.access(original, os.X_OK):
-        status = subprocess.run([original, "origin", destination], env=env).returncode
+        command = [original, "origin", destination]
+        try:
+            status = subprocess.run(command, env=env).returncode
+        except OSError as error:
+            if error.errno != errno.ENOEXEC:
+                raise
+            status = subprocess.run(["/bin/sh", *command], env=env).returncode
         if status:
             sys.exit(status)
 
@@ -366,11 +417,7 @@ def land(main_checkout, dry_run):
     require_ancestor(previous_base, base, f"origin/{branch} no longer descends from this session's base")
     if git("rev-list", "--max-count=1", "--merges", f"{base}..HEAD"):
         raise SessionError("session contains merge commits; prepare a linear branch before landing")
-    # Remember this base even when the rebase or qualification stops.
-    git(*no_hooks, "update-ref", SESSION_BASE, base, previous_base)
-    git(*no_hooks, "rebase", "--no-autostash", "--no-update-refs", "--no-fork-point",
-        "--no-rebase-merges", "--reapply-cherry-picks", base, session, capture=False)
-    head = git("rev-parse", "HEAD")
+    head = rebase_candidate(main_checkout, session, previous_base, base, original_head)
     require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
     if head == base:
         print(f"Session has no commits ahead of origin/{branch}")
