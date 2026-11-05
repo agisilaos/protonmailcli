@@ -27,10 +27,14 @@ assert sys.argv[sys.argv.index("--sandbox") + 1] == "read-only"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
 if os.environ.get("SESSION_TEST_EXPECT_CONDITIONAL_HOOK"):
-    events = subprocess.check_output(
-        ["git", "config", "--get-all", "hook.fixture-reference.event"], text=True,
+    events = subprocess.run(
+        ["git", "config", "--get-all", "hook.fixture-reference.event"],
+        text=True, stdout=subprocess.PIPE,
     )
-    assert events.splitlines() == ["reference-transaction", ""]
+    assert events.returncode == 1 and not events.stdout
+    assert subprocess.check_output(
+        ["git", "config", "--get", "core.attributesFile"], text=True,
+    ).strip() == os.devnull
 for revision in ("HEAD", "HEAD^"):
     sha = subprocess.check_output(["git", "rev-parse", revision], text=True).strip()
     assert sha in sys.argv[-1]
@@ -50,6 +54,8 @@ assert not {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDE
 assert not {"BASH_ENV", "BASHOPTS", "CDPATH", "ENV", "SHELLOPTS", "GOFLAGS"} & os.environ.keys()
 assert os.environ["GOENV"] == "off"
 assert os.environ["GOWORK"] == "off"
+assert os.environ["GIT_CONFIG_GLOBAL"] == os.devnull
+assert os.environ["GIT_ATTR_NOSYSTEM"] == "1"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
 assert not subprocess.check_output(["git", "status", "--porcelain"])
@@ -331,7 +337,7 @@ if sys.argv[3:4] == ["fetch"]:
 
     def test_end_preserves_the_branch_if_another_worktree_checks_it_out(self):
         env = self.git_wrapper("""
-if ["branch", "--delete"] == sys.argv[9:11]:
+if "branch" in sys.argv[3:] and "--delete" in sys.argv[3:]:
     repo = Path(sys.argv[2])
     subprocess.run(
         [real_git, "-C", str(repo), "worktree", "add", str(repo.parent / "other"), "fix/mailbox-preview"],
@@ -348,10 +354,12 @@ if ["branch", "--delete"] == sys.argv[9:11]:
         self.change(self.worktree, "session-change")
         self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/main")
         self.git(self.remote, "symbolic-ref", "HEAD", "refs/heads/main")
+        self.git(self.repo, "branch", "protected-local", self.base)
         self.git(self.repo, "config", "--replace-all", "remote.origin.fetch",
-                 "+refs/heads/master:refs/remotes/origin/master")
+                 "+refs/heads/main:refs/heads/protected-local")
         self.session(self.worktree, "end")
         self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
+        self.assertEqual(self.git(self.repo, "rev-parse", "protected-local"), self.base)
 
     def test_end_keeps_a_relative_origin_resolvable_after_moving_the_checkout(self):
         self.change(self.worktree, "session-change")
@@ -634,6 +642,13 @@ fi
         self.git(self.repo, "config", "--file", included, "hook.fixture-reference.event",
                  "reference-transaction")
         self.git(self.repo, "config", "--file", included, "hook.fixture-reference.command", hook)
+        attributes = self.root / "attributes"
+        attributes.write_text("scripts/release-check.sh filter=fixture\n")
+        self.git(self.repo, "config", "--file", included, "core.attributesFile", attributes)
+        self.git(self.repo, "config", "--file", included, "filter.fixture.smudge",
+                 "sed 's/protonmailcli/altered/g'")
+        self.git(self.repo, "config", "--file", included, "filter.fixture.clean",
+                 "sed 's/altered/protonmailcli/g'")
         self.git(self.repo, "config", "--file", config,
                  "includeIf.gitdir:**/protonmailcli-qualification-*/checkout/.git.path", included)
         marker = self.root / "checkout-hook"

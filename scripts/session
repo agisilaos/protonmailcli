@@ -179,7 +179,7 @@ def run_logged(command, path, cwd=ROOT, extra_env=None):
         raise SessionError(f"{command[0]} exited {result.returncode}; see {path}")
 
 
-def review(base, head, evidence, checkout):
+def review(base, head, evidence, checkout, env):
     schema = evidence / "review-schema.json"
     schema.write_text(json.dumps({
         "type": "object",
@@ -201,7 +201,7 @@ def review(base, head, evidence, checkout):
         "by the change. Give a path and line for each finding. Return an empty findings "
         "array when the static review is complete and there are no actionable findings. "
         "If the committed diff cannot be read, report that as a finding.",
-    ], evidence / "review.log", cwd=checkout)
+    ], evidence / "review.log", cwd=checkout, extra_env=env)
     try:
         result = json.loads(verdict.read_text())
         findings = result["findings"]
@@ -217,29 +217,29 @@ def review(base, head, evidence, checkout):
 def qualify(session, base, head, evidence):
     with tempfile.TemporaryDirectory(prefix="protonmailcli-qualification-") as directory:
         checkout = Path(directory) / "checkout"
+        env = {
+            "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_ATTR_NOSYSTEM": "1", "GIT_CEILING_DIRECTORIES": str(Path(directory).parent),
+        }
         git(
             "clone", "--quiet", "--no-checkout",
             "--template=", "--config", f"core.hooksPath={os.devnull}",
+            "--config", f"core.attributesFile={os.devnull}",
             "--no-local", "--single-branch", "--no-tags", "--branch", session, ROOT, checkout,
-            cwd=Path(directory),
-            extra_env={
-                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_CEILING_DIRECTORIES": str(Path(directory).parent),
-            },
+            cwd=Path(directory), extra_env=env,
         )
-        for key in configured_hook_events(cwd=checkout):
-            git("config", "--local", "--add", key, "", cwd=checkout)
-        git("remote", "remove", "origin", cwd=checkout)
-        if git("rev-parse", "HEAD", cwd=checkout) != head:
+        git("remote", "remove", "origin", cwd=checkout, extra_env=env)
+        if git("rev-parse", "HEAD", cwd=checkout, extra_env=env) != head:
             raise SessionError("the session changed before qualification; run land again")
-        git("restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=checkout)
-        if git("status", "--porcelain", "--untracked-files=all", "--ignored=matching", cwd=checkout):
+        git("restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=checkout, extra_env=env)
+        if git("status", "--porcelain", "--untracked-files=all", "--ignored=matching",
+               cwd=checkout, extra_env=env):
             raise SessionError("the qualification checkout is dirty")
-        review(base, head, evidence, checkout)
+        review(base, head, evidence, checkout, env)
         run_logged(
             ["scripts/release-check.sh", "--ci"], evidence / "release-check.log", cwd=checkout,
             extra_env={
-                "GOENV": "off", "GOWORK": "off",
+                **env, "GOENV": "off", "GOWORK": "off",
                 "PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build"),
             },
         )
@@ -418,14 +418,20 @@ def end(main_checkout):
             holding.rmdir()
     if git("rev-parse", "--verify", f"refs/heads/{session}", cwd=main_checkout) != head:
         raise SessionError("the session branch changed during cleanup and was retained")
+    alias = f"protonmailcli-cleanup-{holding.name.rsplit('-', 1)[-1]}"
+    verified_ref = f"refs/protonmailcli/cleanup/{alias}"
+    git("update-ref", verified_ref, base, "", cwd=main_checkout)
     try:
         git(
-            "-c", f"remote.origin.fetch=+refs/heads/{branch}:refs/remotes/origin/{branch}",
-            "-c", f"branch.{session}.remote=origin", "-c", f"branch.{session}.merge=refs/heads/{branch}",
+            "-c", f"remote.{alias}.url=unused",
+            "-c", f"remote.{alias}.fetch=+refs/heads/{branch}:{verified_ref}",
+            "-c", f"branch.{session}.remote={alias}", "-c", f"branch.{session}.merge=refs/heads/{branch}",
             "branch", "--delete", "--", session, cwd=main_checkout, capture=False,
         )
     except subprocess.CalledProcessError as error:
         raise SessionError("Git could not delete the session branch") from error
+    finally:
+        git("update-ref", "-d", verified_ref, base, cwd=main_checkout)
     print(f"Ended {session}")
 
 
