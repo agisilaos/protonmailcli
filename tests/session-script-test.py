@@ -1292,9 +1292,19 @@ fi
         self.session(self.repo, "start", "private", umask=0o077)
         self.assertEqual((private / "scripts/session_transport.py").stat().st_mode & 0o777, 0o644)
         self.assertEqual((private / "scripts/release-check.sh").stat().st_mode & 0o777, 0o755)
-        head = self.change(private, "session-change")
+        self.change(private, "session-change")
+        for filename in ("session_transport.py", "release-check.sh"):
+            with (self.repo / "scripts" / filename).open("a") as script:
+                script.write("\n# Fixture remote update\n")
+        self.git(self.repo, "add", "scripts/session_transport.py", "scripts/release-check.sh")
+        self.git(self.repo, "commit", "--quiet", "-m", "Update fixture scripts")
+        base = self.git(self.repo, "rev-parse", "HEAD")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
         self.session(private, "land", umask=0o077, SESSION_TEST_WORKTREE=str(private))
-        self.assertEqual(self.remote_tip(), head)
+        self.assertEqual(self.git(private, "rev-parse", "HEAD^"), base)
+        self.assertEqual((private / "scripts/session_transport.py").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((private / "scripts/release-check.sh").stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.remote_tip(), self.git(private, "rev-parse", "HEAD"))
 
 
 if __name__ == "__main__":

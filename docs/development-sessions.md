@@ -57,8 +57,8 @@ this prompt:
    Git's ref update guards the branch tip, and a server-side default-branch
    switch can still happen after that last check.
 3. If the rebase reports conflicts, the session branch keeps its original
-   commits. From the clean session checkout, replace `<base>` with the
-   exact commit printed by the command and run:
+   commits. From the clean session checkout in a shell with `umask 022`,
+   replace `<base>` with the exact commit printed by the command and run:
 
    ```sh
    git rebase --merge --no-autostash --no-update-refs --no-fork-point \

@@ -295,7 +295,7 @@ def install_candidate(candidate, head, original_head, branch_ref, previous_base,
                 if live_index.exists():
                     shutil.copy2(live_index, prepared_index)
                 checkout_started = True
-                git(*checkout, head, extra_env=env, capture=False)
+                git(*checkout, head, extra_env=env, capture=False, umask=0o022)
                 with prepared_index.open("rb") as source:
                     shutil.copyfileobj(source, lock)
                 lock.flush()
@@ -314,7 +314,7 @@ def install_candidate(candidate, head, original_head, branch_ref, previous_base,
                         if owns_index_lock(index_lock, lock):
                             index_lock.replace(live_index)
                     elif git("rev-parse", "HEAD", cwd=candidate) == head:
-                        git(*checkout, original_head, extra_env=env, capture=False)
+                        git(*checkout, original_head, extra_env=env, capture=False, umask=0o022)
                         if git("rev-parse", branch_ref) != original_head or git("rev-parse", SESSION_BASE) != previous_base:
                             raise SessionError("session refs changed during candidate installation")
                     elif checkout_started:
