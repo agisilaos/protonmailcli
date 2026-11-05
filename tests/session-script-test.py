@@ -306,6 +306,30 @@ if sys.argv[3:5] == ["worktree", "remove"]:
         self.assertFalse((files[0].parent / ".git").exists())
         self.assertFalse(self.worktree.exists())
 
+    def test_end_holds_the_index_lock_until_unregistration(self):
+        metadata = self.git(self.worktree, "rev-parse", "--absolute-git-dir")
+        blob = self.git(self.worktree, "rev-parse", "HEAD:scripts/session")
+        marker = self.root / "late-stage-blocked"
+        env = self.git_wrapper("""
+if sys.argv[3:5] == ["worktree", "remove"]:
+    archive = Path(sys.argv[5]).with_name("files")
+    metadata = os.environ["SESSION_TEST_METADATA"]
+    blob = os.environ["SESSION_TEST_BLOB"]
+    result = subprocess.run(
+        [real_git, f"--git-dir={metadata}", f"--work-tree={archive}", "update-index",
+         "--add", "--cacheinfo", f"100644,{blob},staged-only"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert result.returncode and "index.lock" in result.stderr
+    Path(os.environ["SESSION_TEST_STAGE_MARKER"]).touch()
+""")
+        self.session(
+            self.worktree, "end", SESSION_TEST_METADATA=metadata, SESSION_TEST_BLOB=blob,
+            SESSION_TEST_STAGE_MARKER=str(marker), **env,
+        )
+        self.assertTrue(marker.is_file())
+        self.assertFalse(self.worktree.exists())
+
     def test_end_restores_the_worktree_after_an_unregister_failure(self):
         env = self.git_wrapper("""
 if sys.argv[3:5] == ["worktree", "remove"]:
@@ -580,6 +604,21 @@ if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in s
             SESSION_TEST_CONDITIONAL_HOOK=str(marker), **env,
         )
         self.assertFalse(marker.exists())
+
+    def test_push_refuses_transport_changes_enabled_by_the_temporary_remote(self):
+        self.change(self.worktree, "session-change")
+        alias = self.root / "alias.git"
+        self.git(self.repo, "remote", "set-url", "origin", alias)
+        self.git(self.repo, "config", f"url.{self.remote}.insteadOf", alias)
+        config = self.root / "gitconfig"
+        included = self.root / "conditional-gitconfig"
+        self.git(self.repo, "config", "--file", included, "core.sshCommand", "ssh -F fixture")
+        self.git(self.repo, "config", "--file", config,
+                 f"includeIf.hasconfig:remote.*.url:{self.remote}.path", included)
+        self.assertIn("changes Git's transport settings", self.session(
+            self.worktree, "land", status=1, GIT_CONFIG_GLOBAL=str(config),
+        ))
+        self.assertEqual(self.remote_tip(), self.base)
 
     def test_rebase_does_not_follow_a_second_url_rewrite(self):
         self.change(self.worktree, "session-change")

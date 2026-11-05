@@ -2,6 +2,7 @@
 """Start, inspect, land and end protonmailcli worktree sessions."""
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 from functools import cache
 import json
@@ -16,7 +17,8 @@ import tempfile
 
 sys.dont_write_bytecode = True
 from session_transport import (
-    LOOKUP_REMOTE, config_entries, push_settings, supports_config_hooks, transport_environment, with_config,
+    LOOKUP_REMOTE, config_entries, endpoint_settings, push_settings, supports_config_hooks,
+    transport_environment, with_config,
 )
 
 
@@ -216,6 +218,23 @@ fi
         )
 
 
+def owns_index_lock(path, handle):
+    try:
+        return os.path.samestat(path.stat(), os.fstat(handle.fileno()))
+    except FileNotFoundError:
+        return False
+
+
+@contextmanager
+def locked_index(path):
+    with path.open("xb") as lock:
+        try:
+            yield lock
+        finally:
+            if owns_index_lock(path, lock):
+                path.unlink()
+
+
 def install_candidate(candidate, head, original_head, branch_ref, branch_update):
     options = checkout_inspection(candidate)
     metadata = git("rev-parse", "--absolute-git-dir", cwd=candidate)
@@ -231,13 +250,7 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
     env = {"GIT_INDEX_FILE": str(prepared_index)}
     git(*options, "update-ref", "--no-deref", "HEAD", original_head, head, cwd=candidate)
     try:
-        with index_lock.open("xb") as lock:
-            def owns_lock():
-                try:
-                    return os.path.samestat(index_lock.stat(), os.fstat(lock.fileno()))
-                except FileNotFoundError:
-                    return False
-
+        with locked_index(index_lock) as lock:
             ready = False
             try:
                 if live_index.exists():
@@ -252,14 +265,11 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
                 index_lock.replace(live_index)
             except (OSError, subprocess.CalledProcessError, KeyboardInterrupt):
                 current = git("rev-parse", "HEAD")
-                if ready and current == head and owns_lock():
+                if ready and current == head and owns_index_lock(index_lock, lock):
                     index_lock.replace(live_index)
                 elif current != head and git("rev-parse", "HEAD", cwd=candidate) == head:
                     git(*checkout, current, extra_env=env, capture=False)
                 raise
-            finally:
-                if owns_lock():
-                    index_lock.unlink()
     finally:
         prepared_index.unlink(missing_ok=True)
         git(*options, "update-ref", "--no-deref", "HEAD", head, cwd=candidate)
@@ -408,8 +418,12 @@ def push_qualified(remote, branch, base, head, dry_run):
     with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
         alias = Path(directory).name
         config = git("config", "--null", "--list", "--includes")
-        endpoint_env = with_config({}, list(push_settings(config, alias, remote)))
         probe_env = transport_environment(config, {}, remote)
+        alias_env = with_config({}, list(endpoint_settings(config, alias, remote)))
+        effective = git("config", "--null", "--list", "--includes", extra_env=alias_env)
+        if transport_environment(effective, {}, remote) != probe_env:
+            raise SessionError("the temporary push remote changes Git's transport settings")
+        endpoint_env = with_config({}, list(push_settings(effective, alias, remote)))
         hook = Path(directory) / "pre-push"
         hook.write_text("""#!/usr/bin/env python3
 import errno
@@ -556,17 +570,19 @@ def end(main_checkout):
     gitfile = holding / "worktree-gitfile"
     try:
         git("worktree", "move", ROOT, moved, cwd=main_checkout)
-        if (current_session(main_checkout, cwd=moved) != (session, session_base)
-                or git("rev-parse", "HEAD", cwd=moved) != head):
-            raise SessionError("the session changed before removal")
-        (moved / ".git").rename(gitfile)
-        moved.rename(archive)
-        # Git only removes the registration of the now-missing worktree.
-        # Processes still in that directory continue writing to the archive.
-        try:
-            git("worktree", "remove", moved, cwd=main_checkout)
-        except (OSError, subprocess.CalledProcessError) as error:
-            raise SessionError("could not unregister the checkout") from error
+        index = Path(git("rev-parse", "--path-format=absolute", "--git-path", "index", cwd=moved))
+        with locked_index(index.with_name("index.lock")):
+            if (current_session(main_checkout, cwd=moved) != (session, session_base)
+                    or git("rev-parse", "HEAD", cwd=moved) != head):
+                raise SessionError("the session changed before removal")
+            (moved / ".git").rename(gitfile)
+            moved.rename(archive)
+            # Git only removes the registration of the now-missing worktree.
+            # Processes still in that directory continue writing to the archive.
+            try:
+                git("worktree", "remove", moved, cwd=main_checkout)
+            except (OSError, subprocess.CalledProcessError) as error:
+                raise SessionError("could not unregister the checkout") from error
     except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
         if archive.exists() or moved.exists():
             try:
