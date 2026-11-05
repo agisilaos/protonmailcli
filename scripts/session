@@ -404,44 +404,43 @@ def end(main_checkout):
     holding = Path(tempfile.mkdtemp(prefix=f".{ROOT.name}-end-", dir=ROOT.parent))
     moved = holding / "checkout"
     archive = holding / "files"
+    gitfile = holding / "worktree-gitfile"
     try:
         git("worktree", "move", ROOT, moved, cwd=main_checkout)
-        try:
-            if default_tip(remote, cwd=moved) != (branch, base):
-                raise SessionError("origin's default branch changed during cleanup; run end again")
-            if (current_session(main_checkout, cwd=moved) != (session, session_base)
-                    or git("rev-parse", "HEAD", cwd=moved) != head):
-                raise SessionError("the session changed before removal")
-            gitfile = holding / "worktree-gitfile"
-            (moved / ".git").rename(gitfile)
-            try:
-                moved.rename(archive)
-            except OSError:
-                gitfile.rename(moved / ".git")
-                raise
-        except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt):
-            try:
-                git("worktree", "move", moved, ROOT, cwd=main_checkout)
-            except (OSError, subprocess.CalledProcessError) as error:
-                raise SessionError(f"could not restore the checkout from {moved}") from error
-            raise
+        if default_tip(remote, cwd=moved) != (branch, base):
+            raise SessionError("origin's default branch changed during cleanup; run end again")
+        if (current_session(main_checkout, cwd=moved) != (session, session_base)
+                or git("rev-parse", "HEAD", cwd=moved) != head):
+            raise SessionError("the session changed before removal")
+        (moved / ".git").rename(gitfile)
+        moved.rename(archive)
         # Git only removes the registration of the now-missing worktree.
         # Processes still in that directory continue writing to the archive.
         try:
             git("worktree", "remove", moved, cwd=main_checkout)
-        except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise SessionError("could not unregister the checkout") from error
+    except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
+        if archive.exists() or moved.exists():
             try:
-                archive.rename(moved)
-                gitfile.rename(moved / ".git")
+                if archive.exists():
+                    archive.rename(moved)
+                if gitfile.exists():
+                    gitfile.rename(moved / ".git")
                 git("worktree", "move", moved, ROOT, cwd=main_checkout)
-            except (OSError, subprocess.CalledProcessError) as restore_error:
+            except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as restore_error:
                 location = archive if archive.exists() else moved
-                raise SessionError(f"could not unregister the checkout; files retained at {location}") from restore_error
-            raise SessionError(f"could not unregister the checkout; restored {ROOT}") from error
-        print(f"Checkout files retained at {archive}", flush=True)
+                pointer = gitfile if gitfile.exists() else location / ".git"
+                raise SessionError(
+                    f"could not restore the checkout; files at {location}, Git pointer at {pointer}"
+                ) from restore_error
+            if isinstance(error, SessionError):
+                raise SessionError(f"{error}; restored {ROOT}") from error
+        raise
     finally:
         if not moved.exists() and not archive.exists():
             holding.rmdir()
+    print(f"Checkout files retained at {archive}", flush=True)
     if git("rev-parse", "--verify", f"refs/heads/{session}", cwd=main_checkout) != head:
         raise SessionError("the session branch changed during cleanup and was retained")
     alias = f"protonmailcli-cleanup-{holding.name.rsplit('-', 1)[-1]}"

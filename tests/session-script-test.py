@@ -318,6 +318,39 @@ if sys.argv[3:5] == ["worktree", "remove"]:
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
 
+    def test_end_restores_the_gitfile_when_archive_rename_is_interrupted(self):
+        script = """
+import os
+from pathlib import Path
+import runpy
+import sys
+
+rename = Path.rename
+def interrupt_archive(path, target):
+    if Path(target).name == "files":
+        if os.environ["SESSION_TEST_INTERRUPT"] == "after":
+            rename(path, target)
+        raise KeyboardInterrupt
+    return rename(path, target)
+
+Path.rename = interrupt_archive
+sys.path.insert(0, str(Path("scripts").resolve()))
+sys.argv = ["scripts/session", "end"]
+runpy.run_path("scripts/session", run_name="__main__")
+"""
+        for timing in ("before", "after"):
+            with self.subTest(timing=timing):
+                result = subprocess.run(
+                    ["python3", "-c", script], cwd=self.worktree,
+                    env={**self.env, "SESSION_TEST_INTERRUPT": timing},
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                )
+                self.assertEqual(result.returncode, 130, result.stdout)
+                self.assertTrue((self.worktree / ".git").is_file())
+                self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
+        self.session(self.worktree, "end")
+        self.assertFalse(self.worktree.exists())
+
     def test_end_refuses_when_the_default_branch_changes_during_fetch(self):
         self.change(self.worktree, "session-change")
         self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/master")

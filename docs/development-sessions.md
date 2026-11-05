@@ -57,8 +57,9 @@ this prompt:
    credentials, out of the checkout before ending.
    If another worktree holds the branch, its owner can delete the branch
    once they finish and their local default branch includes the landing.
-   If Git refuses to unregister the worktree, the command restores the
-   original path when possible and reports where the files are retained.
+   If cleanup is interrupted or Git refuses to unregister the worktree,
+   the command restores the original path when possible and reports where
+   the files are retained.
 
 ## Partial checkout recovery
 
