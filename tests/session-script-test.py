@@ -36,6 +36,8 @@ import sys
 assert sys.argv[1:] == ["--ci"]
 assert not any(key.startswith("PMAIL_") for key in os.environ)
 assert not {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"} & os.environ.keys()
+assert not {"BASH_ENV", "ENV", "GOFLAGS"} & os.environ.keys()
+assert os.environ["GOENV"] == "off"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
 assert not subprocess.check_output(["git", "status", "--porcelain"])
@@ -53,6 +55,13 @@ if os.environ.get("SESSION_TEST_SWAP_PUSHURL"):
     subprocess.run(
         ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "remote", "set-url", "--push", "origin",
          os.environ["SESSION_TEST_SWAP_PUSHURL"]],
+        check=True,
+    )
+if os.environ.get("SESSION_TEST_REWRITE_PUSHURL"):
+    fork = os.environ["SESSION_TEST_REWRITE_PUSHURL"]
+    subprocess.run(
+        ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "config",
+         f"url.{fork}.pushInsteadOf", os.environ["SESSION_TEST_REMOTE"]],
         check=True,
     )
 sys.exit(int(os.environ.get("SESSION_TEST_GATE_EXIT", "0")))
@@ -86,6 +95,7 @@ class SessionTests(unittest.TestCase):
             SESSION_TEST_PRIMARY=str(self.repo),
             GNUMAKEFLAGS="-n", MAKEFILES="fixture.mk", MAKEFLAGS="-n", MAKELEVEL="1",
             MAKEOVERRIDES="fixture=value", MFLAGS="-n",
+            BASH_ENV="fixture.sh", ENV="fixture.sh", GOENV="fixture.goenv", GOFLAGS="-skip=.",
         )
         self.git(self.root, "init", "--quiet", "--bare", "--initial-branch=master", self.remote)
         self.git(self.root, "init", "--quiet", "--initial-branch=master", self.repo)
@@ -159,7 +169,18 @@ os.execv(real_git, [real_git, *sys.argv[1:]])
         self.assertEqual(len(list(self.evidence.glob("*/build/protonmailcli"))), 1)
         self.assertTrue((self.worktree / "remote-change").is_file())
 
-        self.session(self.worktree, "land")
+        hook = self.repo / ".git/hooks/pre-push"
+        hook.write_text("""#!/bin/sh
+printf '%s\\n' "$1" "$2" > "$SESSION_TEST_HOOK_ARGS"
+cat > "$SESSION_TEST_HOOK_REFS"
+""")
+        hook.chmod(0o755)
+        hook_args = self.root / "hook-args"
+        hook_refs = self.root / "hook-refs"
+        self.session(self.worktree, "land", SESSION_TEST_HOOK_ARGS=str(hook_args),
+                     SESSION_TEST_HOOK_REFS=str(hook_refs))
+        self.assertEqual(hook_args.read_text().splitlines(), ["origin", str(self.remote)])
+        self.assertIn(f"{rebased} refs/heads/master {new_base}", hook_refs.read_text())
         self.assertEqual(self.remote_tip(), rebased)
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
@@ -204,6 +225,16 @@ if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["ls-remote"]:
 """)
         self.assertIn("move ignored files", self.session(self.worktree, "end", status=1, **env))
         self.assertEqual((self.worktree / "fixture.pass").read_text(), "fixture")
+
+    def test_end_restores_checkout_with_an_ignored_file_added_just_before_move(self):
+        env = self.git_wrapper("""
+worktree = Path(os.environ["SESSION_TEST_WORKTREE"])
+if sys.argv[3:6] == ["worktree", "move", str(worktree)]:
+    (worktree / "fixture.pass").write_text("fixture")
+""")
+        self.assertIn("move ignored files", self.session(self.worktree, "end", status=1, **env))
+        self.assertEqual((self.worktree / "fixture.pass").read_text(), "fixture")
+        self.assertIn(str(self.worktree), self.session(self.repo, "list"))
 
     def test_hidden_tracked_edits_are_preserved(self):
         path = self.worktree / ".gitignore"
@@ -251,6 +282,32 @@ if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["ls-remote"]:
         self.assertEqual(self.remote_tip(), head)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
+    def test_push_refuses_a_new_url_rewrite(self):
+        self.change(self.worktree, "session-change")
+        fork = self.root / "fork.git"
+        self.git(self.repo, "clone", "--quiet", "--bare", self.remote, fork)
+        self.assertIn("unexpected push destination", self.session(
+            self.worktree, "land", status=1, SESSION_TEST_REWRITE_PUSHURL=str(fork),
+        ))
+        self.assertEqual(self.remote_tip(), self.base)
+        self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
+
+    def test_branch_switch_during_fetch_stops_before_rebase(self):
+        original = self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if sys.argv[3:4] == ["fetch"]:
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_WORKTREE"], "switch", "--quiet", "-c", "fix/other"],
+        check=True,
+    )
+""")
+        self.session(self.worktree, "land", status=1, **env)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "fix/other"), original)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "fix/mailbox-preview"), original)
+        self.assertEqual(self.remote_tip(), advance)
+
     def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):
         self.change(self.worktree, "session-change")
         self.change(self.repo, "remote-change")
@@ -283,7 +340,7 @@ if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["ls-remote"]:
     def test_lease_prevents_recreating_a_branch_deleted_just_before_push(self):
         self.change(self.worktree, "session-change")
         env = self.git_wrapper("""
-if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["push"]:
+if sys.argv[3:4] == ["-c"] and sys.argv[5:6] == ["push"]:
     subprocess.run(
         [real_git, "-C", os.environ["SESSION_TEST_REMOTE"], "update-ref", "-d", "refs/heads/master"],
         check=True,

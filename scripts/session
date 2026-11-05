@@ -15,19 +15,23 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SESSION_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 SESSION_BASE = "refs/worktree/protonmailcli/session-base"
-MAKE_ENV = {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"}
+QUALIFICATION_ENV = {
+    "BASH_ENV", "ENV", "GOENV", "GOFLAGS", "GNUMAKEFLAGS",
+    "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS",
+}
 
 
 class SessionError(Exception):
     pass
 
 
-def git(*args, cwd=ROOT, capture=True):
+def git(*args, cwd=ROOT, capture=True, extra_env=None):
     result = subprocess.run(
         ["git", "-C", cwd, *args],
         check=True,
         stdout=subprocess.PIPE if capture else None,
         text=True,
+        env={**os.environ, **extra_env} if extra_env else None,
     )
     return result.stdout.rstrip("\n") if capture else None
 
@@ -66,27 +70,27 @@ def start(main_checkout, name):
     print(f"Session checkout: {path} (origin/{branch} at {base})")
 
 
-def current_session(main_checkout):
-    branch = git("branch", "--show-current")
+def current_session(main_checkout, cwd=ROOT):
+    branch = git("branch", "--show-current", cwd=cwd)
     name = branch.removeprefix("fix/")
     if name == branch or not SESSION_NAME.fullmatch(name) or ROOT != worktree_path(main_checkout, name):
         raise SessionError("run from the checkout made by scripts/session start")
     try:
-        base = git("rev-parse", "--verify", "--quiet", SESSION_BASE)
+        base = git("rev-parse", "--verify", "--quiet", SESSION_BASE, cwd=cwd)
     except subprocess.CalledProcessError as error:
         raise SessionError("this checkout has no session record from scripts/session start") from error
     for marker in (
         "rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD",
         "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_START",
     ):
-        path = git("rev-parse", "--path-format=absolute", "--git-path", marker)
+        path = git("rev-parse", "--path-format=absolute", "--git-path", marker, cwd=cwd)
         if Path(path).exists():
             raise SessionError("finish the Git operation in this checkout first")
-    if git("status", "--porcelain", "--untracked-files=all"):
+    if git("status", "--porcelain", "--untracked-files=all", cwd=cwd):
         raise SessionError("commit the session's changes or set them aside before continuing")
-    if git("ls-files", "--others", "--ignored", "--exclude-standard"):
+    if git("ls-files", "--others", "--ignored", "--exclude-standard", cwd=cwd):
         raise SessionError("move ignored files out of the session checkout before continuing")
-    tracked = git("ls-files", "-v", "-z").split("\0")
+    tracked = git("ls-files", "-v", "-z", cwd=cwd).split("\0")
     if any(entry.startswith("S ") or entry[:1].islower() for entry in tracked):
         raise SessionError("restore normal index tracking before continuing")
     return branch, base
@@ -101,7 +105,7 @@ def require_ancestor(ancestor, descendant, message):
 def run_logged(command, path, cwd=ROOT, extra_env=None):
     env = {
         key: value for key, value in os.environ.items()
-        if not key.startswith("PMAIL_") and key not in MAKE_ENV
+        if not key.startswith("PMAIL_") and key not in QUALIFICATION_ENV
     }
     env.update(extra_env or {})
     print(f"Running {command[0]} (log: {path})", flush=True)
@@ -160,16 +164,51 @@ def qualify(session, base, head, evidence):
         review(base, head, evidence, checkout)
         run_logged(
             ["scripts/release-check.sh", "--ci"], evidence / "release-check.log", cwd=checkout,
-            extra_env={"PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build")},
+            extra_env={"GOENV": "off", "PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build")},
         )
+
+
+def push_qualified(remote, branch, base, head, dry_run):
+    original_hook = git("rev-parse", "--path-format=absolute", "--git-path", "hooks/pre-push")
+    flags = ["--dry-run"] if dry_run else []
+    with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
+        hook = Path(directory) / "pre-push"
+        hook.write_text("""#!/bin/sh
+if [ "$2" != "$PROTONMAILCLI_QUALIFIED_URL" ]; then
+    echo "session: Git resolved an unexpected push destination" >&2
+    exit 1
+fi
+if [ -x "$PROTONMAILCLI_PRE_PUSH" ]; then
+    exec "$PROTONMAILCLI_PRE_PUSH" origin "$2"
+fi
+""")
+        hook.chmod(0o700)
+        try:
+            # The explicit lease compares the remote tip during the push. The
+            # caller has already checked that this update is a fast-forward.
+            git(
+                "-c", f"core.hooksPath={directory}", "push", *flags,
+                "--no-follow-tags", "--recurse-submodules=no",
+                f"--force-with-lease=refs/heads/{branch}:{base}", "--",
+                remote, f"{head}:refs/heads/{branch}", capture=False,
+                extra_env={
+                    "PROTONMAILCLI_QUALIFIED_URL": remote,
+                    "PROTONMAILCLI_PRE_PUSH": original_hook,
+                },
+            )
+        except subprocess.CalledProcessError as error:
+            raise SessionError(f"git push exited {error.returncode}") from error
 
 
 def land(main_checkout, dry_run):
     session, previous_base = current_session(main_checkout)
+    original_head = git("rev-parse", "HEAD")
     remote = git("remote", "get-url", "origin")
     if remote != git("remote", "get-url", "--push", "--all", "origin"):
         raise SessionError("origin must use the same single URL for fetch and push")
     branch, base = fetch_default(remote)
+    if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
+        raise SessionError("the session changed during fetch; run land again")
     if session == branch:
         raise SessionError("run land from a feature branch")
     require_ancestor(previous_base, base, f"origin/{branch} no longer descends from this session's base")
@@ -178,7 +217,7 @@ def land(main_checkout, dry_run):
     # Remember this base even when the rebase or qualification stops.
     git("update-ref", SESSION_BASE, base, previous_base)
     git("rebase", "--no-autostash", "--no-update-refs", "--no-fork-point", "--no-rebase-merges",
-        "--reapply-cherry-picks", base, capture=False)
+        "--reapply-cherry-picks", base, session, capture=False)
     head = git("rev-parse", "HEAD")
     require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
     if head == base:
@@ -192,14 +231,7 @@ def land(main_checkout, dry_run):
         raise SessionError("the session changed during qualification; run land again")
     if default_tip(remote) != (branch, base):
         raise SessionError("origin's default branch changed during qualification; run land again")
-    flags = ["--dry-run"] if dry_run else []
-    # An explicit lease compares the remote tip during the push. The ancestry
-    # check above limits the update to a fast-forward from that exact tip.
-    git(
-        "push", *flags, "--no-follow-tags", "--recurse-submodules=no",
-        f"--force-with-lease=refs/heads/{branch}:{base}", "--",
-        remote, f"{head}:refs/heads/{branch}", capture=False,
-    )
+    push_qualified(remote, branch, base, head, dry_run)
     action = "Dry run passed for" if dry_run else "Landed"
     print(f"{action} {head} on origin/{branch}. Evidence: {evidence}")
 
@@ -213,13 +245,28 @@ def end(main_checkout):
     require_ancestor(head, base, f"session HEAD is not on origin/{branch}")
     if current_session(main_checkout) != (session, session_base) or git("rev-parse", "HEAD") != head:
         raise SessionError("the session changed during cleanup; run end again")
-    # Git's normal removal protects dirty worktrees. Delete the branch only at the
-    # commit we verified, and only after the worktree is gone.
-    subprocess.run(["git", "-C", main_checkout, "worktree", "remove", ROOT], check=True)
-    subprocess.run(
-        ["git", "-C", main_checkout, "update-ref", "-d", f"refs/heads/{session}", head],
-        check=True,
-    )
+    # Move the checkout away from its working path before the last inspection.
+    # A refused cleanup restores the original path or leaves the files at the
+    # holding path if something else has occupied the original one.
+    holding = Path(tempfile.mkdtemp(prefix=f".{ROOT.name}-end-", dir=ROOT.parent))
+    moved = holding / "checkout"
+    try:
+        git("worktree", "move", ROOT, moved, cwd=main_checkout)
+        try:
+            if (current_session(main_checkout, cwd=moved) != (session, session_base)
+                    or git("rev-parse", "HEAD", cwd=moved) != head):
+                raise SessionError("the session changed before removal")
+            git("worktree", "remove", moved, cwd=main_checkout)
+        except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt):
+            try:
+                git("worktree", "move", moved, ROOT, cwd=main_checkout)
+            except (OSError, subprocess.CalledProcessError) as error:
+                raise SessionError(f"could not restore the checkout from {moved}") from error
+            raise
+    finally:
+        if not moved.exists():
+            holding.rmdir()
+    git("update-ref", "-d", f"refs/heads/{session}", head, cwd=main_checkout)
     print(f"Ended {session}")
 
 

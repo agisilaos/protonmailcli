@@ -50,7 +50,7 @@ authenticated Codex CLI. Set `PROTONMAILCLI_CODEX` to select a different
 installed Codex executable. Review output, the release check log and the
 version-stamped binary are retained under
 `~/Library/Logs/protonmailcli/sessions/`. The landing checks clear Proton Mail
-variables and inherited Make overrides.
+variables and use the project's Make and Go settings.
 
 Use `scripts/session land` for publication so the exact commits pass review
 and qualification. Those checks are enforced by the session command. GitHub's
