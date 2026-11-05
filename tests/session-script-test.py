@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SUPPORTS_CONFIG_HOOKS = runpy.run_path(str(ROOT / "scripts/session_transport.py"))[
+    "supports_config_hooks"
+](subprocess.check_output(["git", "version"], text=True))
 REVIEWER = """#!/usr/bin/env python3
 import os
 from pathlib import Path
@@ -109,6 +113,7 @@ class SessionTests(unittest.TestCase):
         scripts = self.repo / "scripts"
         scripts.mkdir()
         shutil.copy2(ROOT / "scripts/session", scripts / "session")
+        shutil.copy2(ROOT / "scripts/session_transport.py", scripts / "session_transport.py")
         gate = scripts / "release-check.sh"
         gate.write_text(RELEASE_CHECK)
         gate.chmod(0o755)
@@ -180,6 +185,9 @@ cat > "$SESSION_TEST_HOOK_REFS"
         rebase_hook = self.repo / ".git/hooks/pre-rebase"
         rebase_hook.write_text('#!/bin/sh\ntouch "$SESSION_TEST_REBASE_HOOK"\n')
         rebase_hook.chmod(0o755)
+        ref_hook = self.repo / ".git/hooks/reference-transaction"
+        ref_hook.write_text('#!/bin/sh\nif [ -n "$SESSION_TEST_REF_HOOK" ]; then touch "$SESSION_TEST_REF_HOOK"; fi\n')
+        ref_hook.chmod(0o755)
         config_hook = self.root / "configured-pre-push"
         config_hook.write_text('#!/bin/sh\ncat > "$SESSION_TEST_CONFIG_HOOK"\n')
         config_hook.chmod(0o755)
@@ -191,6 +199,7 @@ cat > "$SESSION_TEST_HOOK_REFS"
             "SESSION_TEST_HOOK_ARGS": str(hook_args), "SESSION_TEST_HOOK_REFS": str(hook_refs),
             "SESSION_TEST_REBASE_HOOK": str(self.root / "rebase-hook-ran"),
             "SESSION_TEST_CONFIG_HOOK": str(self.root / "configured-hook-refs"),
+            "SESSION_TEST_REF_HOOK": str(self.root / "reference-hook-ran"),
         }
 
         self.assertIn("Dry run passed", self.session(self.worktree, "land", "--dry-run", **hook_env))
@@ -203,11 +212,13 @@ cat > "$SESSION_TEST_HOOK_REFS"
         self.assertFalse(hook_args.exists())
         self.assertFalse(Path(hook_env["SESSION_TEST_REBASE_HOOK"]).exists())
         self.assertFalse(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).exists())
+        self.assertFalse(Path(hook_env["SESSION_TEST_REF_HOOK"]).exists())
 
         self.session(self.worktree, "land", **hook_env)
         self.assertEqual(hook_args.read_text().splitlines(), ["origin", str(self.remote)])
         self.assertIn(f"{rebased} refs/heads/master {new_base}", hook_refs.read_text())
-        self.assertEqual(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).read_text(), hook_refs.read_text())
+        if SUPPORTS_CONFIG_HOOKS:
+            self.assertEqual(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).read_text(), hook_refs.read_text())
         self.assertEqual(self.remote_tip(), rebased)
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
@@ -248,7 +259,7 @@ cat > "$SESSION_TEST_HOOK_REFS"
 
     def test_end_preserves_ignored_files_added_during_fetch(self):
         env = self.git_wrapper("""
-if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["ls-remote"]:
+if sys.argv[1:2] == ["-C"] and "ls-remote" in sys.argv[3:]:
     Path(os.environ["SESSION_TEST_WORKTREE"], "fixture.pass").write_text("fixture")
 """)
         self.assertIn("move ignored files", self.session(self.worktree, "end", status=1, **env))
@@ -406,6 +417,7 @@ if ["branch", "--delete"] == sys.argv[9:11]:
         config_hook.chmod(0o755)
         self.git(self.repo, "config", "hook.fixture.event", "pre-push")
         self.git(self.repo, "config", "hook.fixture.command", config_hook)
+        self.git(self.repo, "config", "hook.pre-push.enabled", "false")
         marker = self.root / "configured-hook-ran"
         self.assertIn("unexpected push destination", self.session(
             self.worktree, "land", status=1, SESSION_TEST_REWRITE_PUSHURL=str(fork),
@@ -413,6 +425,22 @@ if ["branch", "--delete"] == sys.argv[9:11]:
         ))
         self.assertFalse(marker.exists())
         self.assertEqual(self.remote_tip(), self.base)
+        self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
+
+    def test_rebase_does_not_follow_a_second_url_rewrite(self):
+        self.change(self.worktree, "session-change")
+        fork = self.root / "fork.git"
+        self.git(self.repo, "clone", "--quiet", "--bare", self.remote, fork)
+        expected_base = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        alias = self.root / "alias.git"
+        self.git(self.repo, "remote", "set-url", "origin", alias)
+        self.git(self.repo, "config", f"url.{self.remote}.insteadOf", alias)
+        self.git(self.repo, "config", f"url.{fork}.insteadOf", self.remote)
+
+        self.session(self.worktree, "land", status=1)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), expected_base)
+        self.assertEqual(self.remote_tip(), expected_base)
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
 
     def test_push_refuses_a_default_change_in_the_configured_hook(self):
@@ -503,7 +531,7 @@ if sys.argv[3:4] == ["fetch"]:
     def test_landing_does_not_recreate_a_branch_deleted_just_before_push(self):
         self.change(self.worktree, "session-change")
         env = self.git_wrapper("""
-if sys.argv[3:4] == ["-c"] and sys.argv[5:6] == ["push"]:
+if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in sys.argv[3:]):
     subprocess.run(
         [real_git, "-C", os.environ["SESSION_TEST_REMOTE"], "update-ref", "-d", "refs/heads/master"],
         check=True,

@@ -13,6 +13,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.dont_write_bytecode = True
+from session_transport import supports_config_hooks, transport_environment
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SESSION_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -66,7 +69,12 @@ def hooks_disabled(cwd=ROOT):
 
 
 def default_tip(remote, cwd=ROOT):
-    rows = git("ls-remote", "--symref", "--", remote, "HEAD", cwd=cwd).splitlines()
+    config = git("config", "--null", "--list", "--includes", cwd=cwd)
+    env = transport_environment(config, session_environment())
+    rows = git(
+        f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", remote, "HEAD",
+        cwd=cwd, extra_env=env,
+    ).splitlines()
     refs = [row for row in rows if row.endswith("\tHEAD")]
     if len(refs) == 2:
         ref, sha = refs
@@ -77,11 +85,12 @@ def default_tip(remote, cwd=ROOT):
     raise SessionError("could not resolve the default branch of origin")
 
 
-def fetch_default(remote="origin"):
+def fetch_default(remote, git_options=()):
     branch, _ = default_tip(remote)
     ref = f"refs/heads/{branch}"
     tracking = f"refs/remotes/origin/{branch}"
-    git("fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--", remote, f"+{ref}:{tracking}")
+    git(*git_options, "fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--",
+        "origin", f"+{ref}:{tracking}")
     base = git("rev-parse", tracking)
     if default_tip(remote) != (branch, base):
         raise SessionError("origin's default branch changed during fetch; retry")
@@ -101,7 +110,8 @@ def worktree_path(main_checkout, name):
 def start(main_checkout, name):
     if not SESSION_NAME.fullmatch(name):
         raise SessionError("use a session name such as mailbox-preview")
-    branch, base = fetch_default()
+    remote = absolute_endpoint(git("remote", "get-url", "origin"))
+    branch, base = fetch_default(remote)
     path = worktree_path(main_checkout, name)
     git(*hooks_disabled(), "-c", f"core.hooksPath={os.devnull}", "worktree", "add",
         "--no-checkout", "--no-track", "-b", f"fix/{name}", path, base)
@@ -238,13 +248,17 @@ def push_qualified(remote, branch, base, head, dry_run):
     if not git_executable:
         raise SessionError("could not locate Git for the pre-push check")
     flags = ["--dry-run"] if dry_run else []
+    original_hook = git("rev-parse", "--path-format=absolute", "--git-path", "hooks/pre-push")
+    config_hooks = supports_config_hooks(git("version"))
     with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
+        shutil.copy2(Path(__file__).with_name("session_transport.py"), directory)
         hook = Path(directory) / "pre-push"
         hook.write_text("""#!/usr/bin/env python3
 import os
 import subprocess
 import sys
 import tempfile
+from session_transport import transport_environment
 
 destination = sys.argv[2]
 if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
@@ -253,7 +267,8 @@ if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
 git = os.environ["PROTONMAILCLI_GIT"]
 env = os.environ.copy()
 env.pop("GIT_CONFIG_PARAMETERS", None)
-if os.environ["PROTONMAILCLI_RUN_PRE_PUSH"] == "1":
+mode = os.environ["PROTONMAILCLI_RUN_PRE_PUSH"]
+if mode == "configured":
     with tempfile.NamedTemporaryFile() as refs:
         refs.write(sys.stdin.buffer.read())
         refs.flush()
@@ -264,25 +279,18 @@ if os.environ["PROTONMAILCLI_RUN_PRE_PUSH"] == "1":
         ).returncode
         if status:
             sys.exit(status)
+elif mode == "file":
+    original = os.environ["PROTONMAILCLI_ORIGINAL_HOOK"]
+    if os.path.isfile(original) and os.access(original, os.X_OK):
+        status = subprocess.run([original, "origin", destination], env=env).returncode
+        if status:
+            sys.exit(status)
 
 # Reuse the transport settings without re-resolving the push URL.
 config = subprocess.check_output([git, "config", "--null", "--list", "--includes"], text=True, env=env)
-transport = []
-for setting in config.split("\\0"):
-    key, separator, value = setting.partition("\\n")
-    if (key.startswith(("credential.", "http.", "https.", "protocol.", "ssh."))
-            or key in {"core.askpass", "core.sshcommand", "core.gitproxy"}):
-        transport.append((key, value if separator else "true"))
-
-for key in ("GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_COMMON_DIR", "GIT_WORK_TREE"):
-    env.pop(key, None)
-env.update(GIT_CONFIG_COUNT=str(len(transport)), GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-for index, (key, value) in enumerate(transport):
-    env[f"GIT_CONFIG_KEY_{index}"] = key
-    env[f"GIT_CONFIG_VALUE_{index}"] = value
 advertisement = subprocess.run(
     [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", destination, "HEAD"],
-    stdout=subprocess.PIPE, text=True, env=env,
+    stdout=subprocess.PIPE, text=True, env=transport_environment(config, env),
 )
 if advertisement.returncode:
     sys.exit(advertisement.returncode)
@@ -298,7 +306,7 @@ if not expected.issubset(advertisement.stdout.splitlines()):
             # caller has already checked that this update is a fast-forward.
             git(
                 *hooks_disabled(),
-                "-c", f"core.hooksPath={directory}", "push", *flags,
+                "-c", "hook.pre-push.enabled=true", "-c", f"core.hooksPath={directory}", "push", *flags,
                 "--no-follow-tags", "--recurse-submodules=no",
                 f"--force-with-lease=refs/heads/{branch}:{base}", "--",
                 remote, f"{head}:refs/heads/{branch}", capture=False,
@@ -307,7 +315,8 @@ if not expected.issubset(advertisement.stdout.splitlines()):
                     "PROTONMAILCLI_QUALIFIED_BRANCH": branch,
                     "PROTONMAILCLI_QUALIFIED_BASE": base,
                     "PROTONMAILCLI_GIT": os.path.abspath(git_executable),
-                    "PROTONMAILCLI_RUN_PRE_PUSH": "0" if dry_run else "1",
+                    "PROTONMAILCLI_RUN_PRE_PUSH": "" if dry_run else "configured" if config_hooks else "file",
+                    "PROTONMAILCLI_ORIGINAL_HOOK": original_hook,
                 },
             )
         except subprocess.CalledProcessError as error:
@@ -321,7 +330,8 @@ def land(main_checkout, dry_run):
     if remote != git("remote", "get-url", "--push", "--all", "origin"):
         raise SessionError("origin must use the same single URL for fetch and push")
     remote = absolute_endpoint(remote)
-    branch, base = fetch_default(remote)
+    no_hooks = [*hooks_disabled(), "-c", f"core.hooksPath={os.devnull}"] if dry_run else []
+    branch, base = fetch_default(remote, git_options=no_hooks)
     if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
         raise SessionError("the session changed during fetch; run land again")
     if session == branch:
@@ -330,8 +340,7 @@ def land(main_checkout, dry_run):
     if git("rev-list", "--max-count=1", "--merges", f"{base}..HEAD"):
         raise SessionError("session contains merge commits; prepare a linear branch before landing")
     # Remember this base even when the rebase or qualification stops.
-    git("update-ref", SESSION_BASE, base, previous_base)
-    no_hooks = [*hooks_disabled(), "-c", f"core.hooksPath={os.devnull}"] if dry_run else []
+    git(*no_hooks, "update-ref", SESSION_BASE, base, previous_base)
     git(*no_hooks, "rebase", "--no-autostash", "--no-update-refs", "--no-fork-point",
         "--no-rebase-merges", "--reapply-cherry-picks", base, session, capture=False)
     head = git("rev-parse", "HEAD")
