@@ -15,6 +15,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SESSION_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 SESSION_BASE = "refs/worktree/protonmailcli/session-base"
+MAKE_ENV = {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"}
 
 
 class SessionError(Exception):
@@ -31,8 +32,9 @@ def git(*args, cwd=ROOT, capture=True):
     return result.stdout.rstrip("\n") if capture else None
 
 
-def default_tip():
-    refs = git("ls-remote", "--symref", "origin", "HEAD").splitlines()
+def default_tip(remote):
+    rows = git("ls-remote", "--symref", "--", remote, "HEAD").splitlines()
+    refs = [row for row in rows if row.endswith("\tHEAD")]
     if len(refs) == 2:
         ref, sha = refs
         branch = re.fullmatch(r"ref: refs/heads/(.+)\tHEAD", ref)
@@ -42,11 +44,11 @@ def default_tip():
     raise SessionError("could not resolve the default branch of origin")
 
 
-def fetch_default():
-    branch, _ = default_tip()
+def fetch_default(remote="origin"):
+    branch, _ = default_tip(remote)
     ref = f"refs/heads/{branch}"
     tracking = f"refs/remotes/origin/{branch}"
-    git("fetch", "--no-tags", "origin", f"+{ref}:{tracking}")
+    git("fetch", "--no-tags", "--", remote, f"+{ref}:{tracking}")
     return branch, git("rev-parse", tracking)
 
 
@@ -97,7 +99,10 @@ def require_ancestor(ancestor, descendant, message):
 
 
 def run_logged(command, path, cwd=ROOT, extra_env=None):
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PMAIL_")}
+    env = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("PMAIL_") and key not in MAKE_ENV
+    }
     env.update(extra_env or {})
     print(f"Running {command[0]} (log: {path})", flush=True)
     with path.open("w") as log:
@@ -161,9 +166,10 @@ def qualify(session, base, head, evidence):
 
 def land(main_checkout, dry_run):
     session, previous_base = current_session(main_checkout)
-    if git("remote", "get-url", "origin") != git("remote", "get-url", "--push", "--all", "origin"):
+    remote = git("remote", "get-url", "origin")
+    if remote != git("remote", "get-url", "--push", "--all", "origin"):
         raise SessionError("origin must use the same single URL for fetch and push")
-    branch, base = fetch_default()
+    branch, base = fetch_default(remote)
     if session == branch:
         raise SessionError("run land from a feature branch")
     require_ancestor(previous_base, base, f"origin/{branch} no longer descends from this session's base")
@@ -184,26 +190,29 @@ def land(main_checkout, dry_run):
     qualify(session, base, head, evidence)
     if current_session(main_checkout) != (session, base) or git("rev-parse", "HEAD") != head:
         raise SessionError("the session changed during qualification; run land again")
-    if default_tip() != (branch, base):
+    if default_tip(remote) != (branch, base):
         raise SessionError("origin's default branch changed during qualification; run land again")
     flags = ["--dry-run"] if dry_run else []
     # An explicit lease compares the remote tip during the push. The ancestry
     # check above limits the update to a fast-forward from that exact tip.
     git(
-        "push", *flags, "--no-follow-tags", "--recurse-submodules=no", "origin",
-        f"--force-with-lease=refs/heads/{branch}:{base}", f"{head}:refs/heads/{branch}", capture=False,
+        "push", *flags, "--no-follow-tags", "--recurse-submodules=no",
+        f"--force-with-lease=refs/heads/{branch}:{base}", "--",
+        remote, f"{head}:refs/heads/{branch}", capture=False,
     )
     action = "Dry run passed for" if dry_run else "Landed"
     print(f"{action} {head} on origin/{branch}. Evidence: {evidence}")
 
 
 def end(main_checkout):
-    session, _ = current_session(main_checkout)
+    session, session_base = current_session(main_checkout)
+    head = git("rev-parse", "HEAD")
     branch, base = fetch_default()
     if session == branch:
         raise SessionError("the default branch cannot be ended")
-    head = git("rev-parse", "HEAD")
     require_ancestor(head, base, f"session HEAD is not on origin/{branch}")
+    if current_session(main_checkout) != (session, session_base) or git("rev-parse", "HEAD") != head:
+        raise SessionError("the session changed during cleanup; run end again")
     # Git's normal removal protects dirty worktrees. Delete the branch only at the
     # commit we verified, and only after the worktree is gone.
     subprocess.run(["git", "-C", main_checkout, "worktree", "remove", ROOT], check=True)
@@ -242,7 +251,10 @@ def main():
                     land(main_checkout, args.dry_run)
                 else:
                     end(main_checkout)
-    except (SessionError, OSError, subprocess.CalledProcessError) as error:
+    except subprocess.CalledProcessError as error:
+        print(f"session: git {error.cmd[3]} exited {error.returncode}", file=sys.stderr)
+        return 1
+    except (SessionError, OSError) as error:
         print(f"session: {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

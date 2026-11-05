@@ -35,6 +35,7 @@ import sys
 
 assert sys.argv[1:] == ["--ci"]
 assert not any(key.startswith("PMAIL_") for key in os.environ)
+assert not {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"} & os.environ.keys()
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
 assert not subprocess.check_output(["git", "status", "--porcelain"])
@@ -46,6 +47,12 @@ if os.environ.get("SESSION_TEST_MOVE_REMOTE"):
     subprocess.run(
         ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "push", os.environ["SESSION_TEST_REMOTE"],
          "refs/heads/advance:refs/heads/master"],
+        check=True,
+    )
+if os.environ.get("SESSION_TEST_SWAP_PUSHURL"):
+    subprocess.run(
+        ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "remote", "set-url", "--push", "origin",
+         os.environ["SESSION_TEST_SWAP_PUSHURL"]],
         check=True,
     )
 sys.exit(int(os.environ.get("SESSION_TEST_GATE_EXIT", "0")))
@@ -77,6 +84,8 @@ class SessionTests(unittest.TestCase):
             PMAIL_E2E_REAL_SEND="1", PMAIL_SMTP_PASSWORD="fixture",
             SESSION_TEST_REMOTE=str(self.remote), SESSION_TEST_WORKTREE=str(self.worktree),
             SESSION_TEST_PRIMARY=str(self.repo),
+            GNUMAKEFLAGS="-n", MAKEFILES="fixture.mk", MAKEFLAGS="-n", MAKELEVEL="1",
+            MAKEOVERRIDES="fixture=value", MFLAGS="-n",
         )
         self.git(self.root, "init", "--quiet", "--bare", "--initial-branch=master", self.remote)
         self.git(self.root, "init", "--quiet", "--initial-branch=master", self.repo)
@@ -117,6 +126,23 @@ class SessionTests(unittest.TestCase):
 
     def remote_tip(self):
         return self.git(self.remote, "rev-parse", "refs/heads/master")
+
+    def git_wrapper(self, extra_code):
+        wrapper = self.root / "git"
+        wrapper.write_text("""#!/usr/bin/env python3
+import os
+from pathlib import Path
+import subprocess
+import sys
+real_git = os.environ["SESSION_TEST_REAL_GIT"]
+""" + extra_code + """
+os.execv(real_git, [real_git, *sys.argv[1:]])
+""")
+        wrapper.chmod(0o755)
+        return {
+            "PATH": os.pathsep.join([str(self.root), self.env["PATH"]]),
+            "SESSION_TEST_REAL_GIT": shutil.which("git"),
+        }
 
     def test_start_rebase_dry_run_land_and_end(self):
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), self.base)
@@ -171,6 +197,14 @@ class SessionTests(unittest.TestCase):
         self.assertIn("no session record", self.session(manual, "end", status=1))
         self.assertTrue(manual.is_dir())
 
+    def test_end_preserves_ignored_files_added_during_fetch(self):
+        env = self.git_wrapper("""
+if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["ls-remote"]:
+    Path(os.environ["SESSION_TEST_WORKTREE"], "fixture.pass").write_text("fixture")
+""")
+        self.assertIn("move ignored files", self.session(self.worktree, "end", status=1, **env))
+        self.assertEqual((self.worktree / "fixture.pass").read_text(), "fixture")
+
     def test_hidden_tracked_edits_are_preserved(self):
         path = self.worktree / ".gitignore"
         self.git(self.worktree, "update-index", "--assume-unchanged", ".gitignore")
@@ -209,6 +243,14 @@ class SessionTests(unittest.TestCase):
         ))
         self.assertEqual(self.remote_tip(), advance)
 
+    def test_landing_pins_the_original_remote_when_push_url_changes(self):
+        head = self.change(self.worktree, "session-change")
+        fork = self.root / "fork.git"
+        self.git(self.repo, "clone", "--quiet", "--bare", self.remote, fork)
+        self.session(self.worktree, "land", SESSION_TEST_SWAP_PUSHURL=str(fork))
+        self.assertEqual(self.remote_tip(), head)
+        self.assertEqual(self.git(fork, "rev-parse", "refs/heads/master"), self.base)
+
     def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):
         self.change(self.worktree, "session-change")
         self.change(self.repo, "remote-change")
@@ -240,25 +282,14 @@ class SessionTests(unittest.TestCase):
 
     def test_lease_prevents_recreating_a_branch_deleted_just_before_push(self):
         self.change(self.worktree, "session-change")
-        git = self.root / "git"
-        git.write_text("""#!/usr/bin/env python3
-import os
-import subprocess
-import sys
-real_git = os.environ["SESSION_TEST_REAL_GIT"]
+        env = self.git_wrapper("""
 if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["push"]:
     subprocess.run(
         [real_git, "-C", os.environ["SESSION_TEST_REMOTE"], "update-ref", "-d", "refs/heads/master"],
         check=True,
     )
-os.execv(real_git, [real_git, *sys.argv[1:]])
 """)
-        git.chmod(0o755)
-        self.assertIn("stale info", self.session(
-            self.worktree, "land", status=1,
-            PATH=os.pathsep.join([str(self.root), self.env["PATH"]]),
-            SESSION_TEST_REAL_GIT=shutil.which("git"),
-        ))
+        self.assertIn("stale info", self.session(self.worktree, "land", status=1, **env))
         self.assertEqual(self.git(self.remote, "for-each-ref", "refs/heads/master"), "")
 
     def test_smoke_binary_is_built_outside_the_checkout(self):
@@ -290,6 +321,7 @@ exit 23
         alternate = self.change(self.repo, "main-change")
         self.git(self.repo, "push", "--quiet", "origin", "main")
         self.git(self.remote, "symbolic-ref", "HEAD", "refs/heads/main")
+        self.git(self.remote, "update-ref", "refs/heads/feature/HEAD", self.base)
         self.git(self.repo, "switch", "--quiet", "master")
         self.session(self.repo, "start", "from-main")
         self.assertEqual(self.git(self.root / "repo-from-main", "rev-parse", "HEAD"), alternate)

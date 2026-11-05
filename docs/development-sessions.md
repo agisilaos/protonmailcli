@@ -32,7 +32,7 @@ this prompt:
    `scripts/session land` to publish an authorized landing. Both rebase the
    local branch, then use a fresh checkout of the exact commits for a
    read-only Codex review and one run of `scripts/release-check.sh --ci`. A real
-   landing fast-forwards the remote default branch from the exact tip used
+   landing fast-forwards the same remote default branch from the exact tip used
    during qualification. Landings take turns across worktrees of the same clone.
 3. If the rebase stops, resolve the conflict or abort it, then rerun the
    command. If review reports findings, address them and commit before
@@ -49,8 +49,8 @@ Landing requires Git, Python 3, the project's macOS release toolchain and an
 authenticated Codex CLI. Set `PROTONMAILCLI_CODEX` to select a different
 installed Codex executable. Review output, the release check log and the
 version-stamped binary are retained under
-`~/Library/Logs/protonmailcli/sessions/`. The landing checks run with the
-Proton Mail environment variables cleared.
+`~/Library/Logs/protonmailcli/sessions/`. The landing checks clear Proton Mail
+variables and inherited Make overrides.
 
 Use `scripts/session land` for publication so the exact commits pass review
 and qualification. Those checks are enforced by the session command. GitHub's
