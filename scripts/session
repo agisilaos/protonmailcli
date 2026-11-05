@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,14 @@ QUALIFICATION_ENV = {
 
 class SessionError(Exception):
     pass
+
+
+class SessionTerminated(KeyboardInterrupt):
+    pass
+
+
+def terminate_session(_signum, _frame):
+    raise SessionTerminated
 
 
 @cache
@@ -175,6 +184,31 @@ def require_ancestor(ancestor, descendant, message):
         raise SessionError(message) from error
 
 
+def install_candidate(candidate, head, original_head, branch_update):
+    options = checkout_inspection()
+    metadata = git("rev-parse", "--absolute-git-dir", cwd=candidate)
+    live_index = git("rev-parse", "--path-format=absolute", "--git-path", "index")
+    # Use the candidate's detached HEAD with the live index and files. The
+    # session's own HEAD remains attached and keeps its branch reserved.
+    checkout = [
+        *options, f"--git-dir={metadata}", f"--work-tree={ROOT}",
+        "checkout", "--no-overwrite-ignore", "--detach",
+    ]
+    env = {"GIT_INDEX_FILE": live_index}
+    git(*options, "update-ref", "--no-deref", "HEAD", original_head, head, cwd=candidate)
+    try:
+        git(*checkout, head, extra_env=env, capture=False)
+        git(*options, "update-ref", "--stdin", input_text=branch_update)
+    except (OSError, subprocess.CalledProcessError, KeyboardInterrupt):
+        if git("rev-parse", "HEAD", cwd=candidate) == head:
+            current = git("rev-parse", "HEAD")
+            if current != head:
+                git(*checkout, current, extra_env=env, capture=False)
+        raise
+    finally:
+        git(*options, "update-ref", "--no-deref", "HEAD", head, cwd=candidate)
+
+
 def rebase_candidate(main_checkout, session, previous_base, base, original_head):
     branch_ref = f"refs/heads/{session}"
     base_update = f"update {SESSION_BASE} {base} {previous_base}\n"
@@ -208,17 +242,8 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
             require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
             if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
                 raise SessionError("the session changed during rebase; run land again")
-            install_options = checkout_inspection()
-            try:
-                git(*install_options, "checkout", "--no-overwrite-ignore", "--detach", head, capture=False)
-                git(
-                    *install_options, "update-ref", "--stdin",
-                    input_text=f"update {branch_ref} {head} {original_head}\n{base_update}",
-                )
-            finally:
-                if not git("branch", "--show-current"):
-                    git(*install_options, "checkout", "--no-overwrite-ignore", session, capture=False)
-            if git("rev-parse", "HEAD") != head:
+            install_candidate(candidate, head, original_head, f"update {branch_ref} {head} {original_head}\n{base_update}")
+            if git("branch", "--show-current") != session or git("rev-parse", "HEAD") != head:
                 raise SessionError("the session changed during candidate installation; run land again")
             return head
         finally:
@@ -547,6 +572,7 @@ def end(main_checkout):
 
 
 def main():
+    signal.signal(signal.SIGTERM, terminate_session)
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("start", help="create a sibling worktree from origin's default branch").add_argument("name")
@@ -580,6 +606,9 @@ def main():
     except (SessionError, OSError) as error:
         print(f"session: {error}", file=sys.stderr)
         return 1
+    except SessionTerminated:
+        print("session: terminated", file=sys.stderr)
+        return 143
     except KeyboardInterrupt:
         print("session: interrupted", file=sys.stderr)
         return 130

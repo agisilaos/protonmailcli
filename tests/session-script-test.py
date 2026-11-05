@@ -354,13 +354,17 @@ if sys.argv[3:5] == ["worktree", "remove"]:
 import os
 from pathlib import Path
 import runpy
+import signal
 import sys
 
 rename = Path.rename
 def interrupt_archive(path, target):
     if Path(target).name == "files":
-        if os.environ["SESSION_TEST_INTERRUPT"] == "after":
+        timing = os.environ["SESSION_TEST_INTERRUPT"]
+        if timing == "after":
             rename(path, target)
+        if timing == "term":
+            os.kill(os.getpid(), signal.SIGTERM)
         raise KeyboardInterrupt
     return rename(path, target)
 
@@ -369,14 +373,14 @@ sys.path.insert(0, str(Path("scripts").resolve()))
 sys.argv = ["scripts/session", "end"]
 runpy.run_path("scripts/session", run_name="__main__")
 """
-        for timing in ("before", "after"):
+        for timing, status in (("before", 130), ("after", 130), ("term", 143)):
             with self.subTest(timing=timing):
                 result = subprocess.run(
                     ["python3", "-c", script], cwd=self.worktree,
                     env={**self.env, "SESSION_TEST_INTERRUPT": timing},
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 )
-                self.assertEqual(result.returncode, 130, result.stdout)
+                self.assertEqual(result.returncode, status, result.stdout)
                 self.assertTrue((self.worktree / ".git").is_file())
                 self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
         self.session(self.worktree, "end")
@@ -659,6 +663,27 @@ if "checkout" in sys.argv[3:] and "--detach" in sys.argv[3:]:
         self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
                          self.base)
         self.assertEqual(self.remote_tip(), advance)
+
+    def test_rebase_install_keeps_the_session_branch_reserved(self):
+        self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        marker = self.root / "branch-reservation"
+        env = self.git_wrapper("""
+if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
+    repo = Path(os.environ["SESSION_TEST_PRIMARY"])
+    other = repo.parent / "other"
+    result = subprocess.run(
+        [real_git, "-C", str(repo), "worktree", "add", str(other), "fix/mailbox-preview"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    assert result.returncode and not other.exists()
+    Path(os.environ["SESSION_TEST_RESERVATION"]).touch()
+""")
+        self.session(self.worktree, "land", SESSION_TEST_RESERVATION=str(marker), **env)
+        self.assertTrue(marker.is_file())
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), advance)
+        self.assertEqual(self.remote_tip(), self.git(self.worktree, "rev-parse", "HEAD"))
 
     def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):
         self.change(self.worktree, "session-change")
