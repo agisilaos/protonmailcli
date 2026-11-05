@@ -40,10 +40,12 @@ this prompt:
    reported result and rerun from the clean worktree. If the remote rewound
    past the recorded base, start a fresh session and bring over only the
    commits you still intend to land.
-4. Run `scripts/session end` when finished. It removes the worktree and its
-   branch only if the checkout is clean and its commit is on the current
-   remote default branch. Move any ignored local files you want to keep,
-   such as credential files, out of the checkout before ending.
+4. Run `scripts/session end` when finished. It unregisters the worktree
+   and removes its branch after confirming the checkout is clean and its
+   commit is on the current remote default branch. It prints the path to
+   the archived checkout files. Discard the archive once any processes
+   using that checkout have finished. Move ignored local files, such as
+   credentials, out of the checkout before ending.
 
 Landing requires Git, Python 3, the project's macOS release toolchain and an
 authenticated Codex CLI. Set `PROTONMAILCLI_CODEX` to select a different

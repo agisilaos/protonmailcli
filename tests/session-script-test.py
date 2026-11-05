@@ -38,6 +38,7 @@ assert not any(key.startswith("PMAIL_") for key in os.environ)
 assert not {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"} & os.environ.keys()
 assert not {"BASH_ENV", "ENV", "GOFLAGS"} & os.environ.keys()
 assert os.environ["GOENV"] == "off"
+assert os.environ["GOWORK"] == "off"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
 assert not subprocess.check_output(["git", "status", "--porcelain"])
@@ -96,6 +97,7 @@ class SessionTests(unittest.TestCase):
             GNUMAKEFLAGS="-n", MAKEFILES="fixture.mk", MAKEFLAGS="-n", MAKELEVEL="1",
             MAKEOVERRIDES="fixture=value", MFLAGS="-n",
             BASH_ENV="fixture.sh", ENV="fixture.sh", GOENV="fixture.goenv", GOFLAGS="-skip=.",
+            GOWORK="fixture.work",
         )
         self.git(self.root, "init", "--quiet", "--bare", "--initial-branch=master", self.remote)
         self.git(self.root, "init", "--quiet", "--initial-branch=master", self.repo)
@@ -185,6 +187,7 @@ cat > "$SESSION_TEST_HOOK_REFS"
         self.session(self.worktree, "end")
         self.assertFalse(self.worktree.exists())
         self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
+        self.assertEqual(len(list(self.root.glob(".repo-mailbox-preview-end-*/files/session-change"))), 1)
 
     def test_dirty_and_unlanded_sessions_are_preserved(self):
         head = self.change(self.worktree, "unlanded")
@@ -235,6 +238,48 @@ if sys.argv[3:6] == ["worktree", "move", str(worktree)]:
         self.assertIn("move ignored files", self.session(self.worktree, "end", status=1, **env))
         self.assertEqual((self.worktree / "fixture.pass").read_text(), "fixture")
         self.assertIn(str(self.worktree), self.session(self.repo, "list"))
+
+    def test_end_preserves_a_file_written_after_the_final_scan(self):
+        env = self.git_wrapper("""
+if sys.argv[3:5] == ["worktree", "remove"]:
+    Path(sys.argv[5]).with_name("files").joinpath("late.pass").write_text("fixture")
+""")
+        self.session(self.worktree, "end", **env)
+        files = list(self.root.glob(".repo-mailbox-preview-end-*/files/late.pass"))
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0].read_text(), "fixture")
+        self.assertFalse(self.worktree.exists())
+
+    def test_end_refuses_when_the_default_branch_changes_during_fetch(self):
+        self.change(self.worktree, "session-change")
+        self.git(self.worktree, "push", self.remote, "HEAD:refs/heads/master")
+        self.git(self.remote, "update-ref", "refs/heads/main", self.base)
+        env = self.git_wrapper("""
+if sys.argv[3:4] == ["fetch"]:
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_REMOTE"], "symbolic-ref", "HEAD", "refs/heads/main"],
+        check=True,
+    )
+""")
+        self.assertIn("default branch changed during cleanup", self.session(
+            self.worktree, "end", status=1, **env,
+        ))
+        self.assertTrue((self.worktree / "session-change").is_file())
+
+    def test_end_preserves_the_branch_if_another_worktree_checks_it_out(self):
+        env = self.git_wrapper("""
+if sys.argv[7:9] == ["branch", "--delete"]:
+    repo = Path(sys.argv[2])
+    subprocess.run(
+        [real_git, "-C", str(repo), "worktree", "add", str(repo.parent / "other"), "fix/mailbox-preview"],
+        check=True,
+    )
+""")
+        self.assertIn("Git could not delete the session branch", self.session(
+            self.worktree, "end", status=1, **env,
+        ))
+        self.assertEqual(self.git(self.root / "other", "branch", "--show-current"), "fix/mailbox-preview")
+        self.assertTrue(list(self.root.glob(".repo-mailbox-preview-end-*/files/scripts/session")))
 
     def test_hidden_tracked_edits_are_preserved(self):
         path = self.worktree / ".gitignore"
@@ -310,10 +355,11 @@ if sys.argv[3:4] == ["fetch"]:
 
     def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):
         self.change(self.worktree, "session-change")
-        self.change(self.repo, "remote-change")
+        prior_tip = self.change(self.repo, "remote-change")
         self.git(self.repo, "push", "--quiet", "origin", "master")
         self.session(self.worktree, "land", status=1, SESSION_TEST_GATE_EXIT="17")
         self.git(self.remote, "update-ref", "refs/heads/master", self.base)
+        self.git(self.repo, "replace", "--graft", self.base, prior_tip)
         self.assertIn("no longer descends", self.session(self.worktree, "land", status=1))
         self.assertEqual(self.remote_tip(), self.base)
 

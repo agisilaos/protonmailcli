@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SESSION_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 SESSION_BASE = "refs/worktree/protonmailcli/session-base"
 QUALIFICATION_ENV = {
-    "BASH_ENV", "ENV", "GOENV", "GOFLAGS", "GNUMAKEFLAGS",
+    "BASH_ENV", "ENV", "GOENV", "GOFLAGS", "GOWORK", "GNUMAKEFLAGS",
     "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS",
 }
 
@@ -26,18 +26,20 @@ class SessionError(Exception):
 
 
 def git(*args, cwd=ROOT, capture=True, extra_env=None):
+    env = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
+    env.update(extra_env or {})
     result = subprocess.run(
         ["git", "-C", cwd, *args],
         check=True,
         stdout=subprocess.PIPE if capture else None,
         text=True,
-        env={**os.environ, **extra_env} if extra_env else None,
+        env=env,
     )
     return result.stdout.rstrip("\n") if capture else None
 
 
-def default_tip(remote):
-    rows = git("ls-remote", "--symref", "--", remote, "HEAD").splitlines()
+def default_tip(remote, cwd=ROOT):
+    rows = git("ls-remote", "--symref", "--", remote, "HEAD", cwd=cwd).splitlines()
     refs = [row for row in rows if row.endswith("\tHEAD")]
     if len(refs) == 2:
         ref, sha = refs
@@ -97,9 +99,10 @@ def current_session(main_checkout, cwd=ROOT):
 
 
 def require_ancestor(ancestor, descendant, message):
-    result = subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", ancestor, descendant])
-    if result.returncode:
-        raise SessionError(message)
+    try:
+        git("merge-base", "--is-ancestor", ancestor, descendant)
+    except subprocess.CalledProcessError as error:
+        raise SessionError(message) from error
 
 
 def run_logged(command, path, cwd=ROOT, extra_env=None):
@@ -164,7 +167,10 @@ def qualify(session, base, head, evidence):
         review(base, head, evidence, checkout)
         run_logged(
             ["scripts/release-check.sh", "--ci"], evidence / "release-check.log", cwd=checkout,
-            extra_env={"GOENV": "off", "PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build")},
+            extra_env={
+                "GOENV": "off", "GOWORK": "off",
+                "PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build"),
+            },
         )
 
 
@@ -250,23 +256,38 @@ def end(main_checkout):
     # holding path if something else has occupied the original one.
     holding = Path(tempfile.mkdtemp(prefix=f".{ROOT.name}-end-", dir=ROOT.parent))
     moved = holding / "checkout"
+    archive = holding / "files"
     try:
         git("worktree", "move", ROOT, moved, cwd=main_checkout)
         try:
+            if default_tip("origin", cwd=moved) != (branch, base):
+                raise SessionError("origin's default branch changed during cleanup; run end again")
             if (current_session(main_checkout, cwd=moved) != (session, session_base)
                     or git("rev-parse", "HEAD", cwd=moved) != head):
                 raise SessionError("the session changed before removal")
-            git("worktree", "remove", moved, cwd=main_checkout)
+            moved.rename(archive)
         except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt):
             try:
                 git("worktree", "move", moved, ROOT, cwd=main_checkout)
             except (OSError, subprocess.CalledProcessError) as error:
                 raise SessionError(f"could not restore the checkout from {moved}") from error
             raise
+        print(f"Checkout files retained at {archive}", flush=True)
+        # Git only removes the registration of the now-missing worktree.
+        # Processes still in that directory continue writing to the archive.
+        git("worktree", "remove", moved, cwd=main_checkout)
     finally:
-        if not moved.exists():
+        if not moved.exists() and not archive.exists():
             holding.rmdir()
-    git("update-ref", "-d", f"refs/heads/{session}", head, cwd=main_checkout)
+    if git("rev-parse", "--verify", f"refs/heads/{session}", cwd=main_checkout) != head:
+        raise SessionError("the session branch changed during cleanup and was retained")
+    try:
+        git(
+            "-c", f"branch.{session}.remote=origin", "-c", f"branch.{session}.merge=refs/heads/{branch}",
+            "branch", "--delete", "--", session, cwd=main_checkout, capture=False,
+        )
+    except subprocess.CalledProcessError as error:
+        raise SessionError("Git could not delete the session branch") from error
     print(f"Ended {session}")
 
 
