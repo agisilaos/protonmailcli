@@ -279,8 +279,8 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
                             index_lock.replace(live_index)
                     elif git("rev-parse", "HEAD", cwd=candidate) == head:
                         git(*checkout, original_head, extra_env=env, capture=False)
-                    elif checkout_started and isinstance(error, KeyboardInterrupt):
-                        raise SessionError("candidate checkout was interrupted")
+                    elif checkout_started:
+                        raise SessionError("candidate checkout did not complete") from error
                 except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as recovery_error:
                     retained = True
                     raise RetainedCandidate(

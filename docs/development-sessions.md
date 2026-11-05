@@ -52,7 +52,7 @@ this prompt:
    switch can still happen after that last check.
 3. If the rebase reports conflicts, the session branch keeps its original
    commits. Resolve the conflicts on that branch before retrying.
-   If installation is interrupted, inspect the session status before retrying.
+   If installation fails or is interrupted, inspect the session status before retrying.
    The command reports the recovery directory if a partial installation
    needs inspection.
    If review reports findings, address them and commit before

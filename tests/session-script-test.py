@@ -736,7 +736,9 @@ if sys.argv[3:4] == ["fetch"]:
 if "checkout" in sys.argv[3:] and "--no-overwrite-ignore" in sys.argv[3:]:
     Path(os.environ["SESSION_TEST_WORKTREE"], "fixture.pass").write_text("preserve")
 """)
-        self.assertIn("would be overwritten", self.session(self.worktree, "land", status=1, **env))
+        self.assertIn("would be overwritten", self.session(
+            self.worktree, "land", status=1, TMPDIR=str(self.root), **env,
+        ))
         self.assertEqual((self.worktree / "fixture.pass").read_text(), "preserve")
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
         self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
@@ -809,7 +811,7 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "D  remote-change")
         self.assertEqual(self.remote_tip(), advance)
 
-    def test_interrupted_partial_installation_retains_recovery_files(self):
+    def test_partial_installation_retains_recovery_files_after_a_signal_or_checkout_error(self):
         original = self.change(self.worktree, "session-change")
         self.change(self.repo, "remote-change")
         self.git(self.repo, "push", "--quiet", "origin", "master")
@@ -817,15 +819,21 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
 if "checkout" in sys.argv[3:] and "--no-overwrite-ignore" in sys.argv[3:]:
     import signal
     Path(os.environ["SESSION_TEST_WORKTREE"], "partial-candidate").write_text("partial")
-    os.kill(os.getppid(), signal.SIGTERM)
+    if os.environ["SESSION_TEST_INSTALL_FAILURE"] == "signal":
+        os.kill(os.getppid(), signal.SIGTERM)
     sys.exit(17)
 """)
-        self.assertIn("recovery files retained", self.session(
-            self.worktree, "land", status=1, TMPDIR=str(self.root), **env,
-        ))
-        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
-        self.assertTrue(list(self.root.glob("protonmailcli-rebase-*/installation-index")))
-        self.assertEqual((self.worktree / "partial-candidate").read_text(), "partial")
+        partial = self.worktree / "partial-candidate"
+        for count, failure in enumerate(("signal", "error"), 1):
+            with self.subTest(failure=failure):
+                self.assertIn("recovery files retained", self.session(
+                    self.worktree, "land", status=1, TMPDIR=str(self.root),
+                    SESSION_TEST_INSTALL_FAILURE=failure, **env,
+                ))
+                self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+                self.assertEqual(len(list(self.root.glob("protonmailcli-rebase-*/installation-index"))), count)
+                self.assertEqual(partial.read_text(), "partial")
+                partial.unlink()
 
     def test_rebase_install_locks_the_live_index_against_concurrent_commits(self):
         self.change(self.worktree, "session-change")
