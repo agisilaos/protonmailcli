@@ -42,7 +42,8 @@ this prompt:
    run of `scripts/release-check.sh --ci`. A real
    landing fast-forwards the same remote default branch from the exact tip used
    during qualification. Landings take turns across worktrees of the same clone.
-   The configured pre-push hook runs for a real landing.
+   The configured pre-push hook runs for a real landing and receives the
+   session branch as the local ref.
    The session checks the default branch again inside the pre-push hook
    using the resolved destination and its configured transport settings,
    including protocol options. It records those settings before fetching.

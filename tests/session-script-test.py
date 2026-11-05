@@ -242,7 +242,9 @@ cat > "$SESSION_TEST_HOOK_REFS"
 
         self.session(self.worktree, "land", **hook_env)
         self.assertEqual(hook_args.read_text().splitlines(), ["origin", str(self.remote)])
-        self.assertIn(f"{rebased} refs/heads/master {new_base}", hook_refs.read_text())
+        self.assertEqual(hook_refs.read_text().splitlines(), [
+            f"refs/heads/fix/mailbox-preview {rebased} refs/heads/master {new_base}",
+        ])
         if SUPPORTS_CONFIG_HOOKS:
             self.assertEqual(Path(hook_env["SESSION_TEST_CONFIG_HOOK"]).read_text(), hook_refs.read_text())
         self.assertEqual(self.remote_tip(), rebased)

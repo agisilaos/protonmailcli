@@ -456,7 +456,7 @@ def qualify(session, base, head, evidence):
             raise SessionError(f"the release check did not produce an executable; see {evidence / 'release-check.log'}")
 
 
-def push_qualified(remote, config, branch, base, head, dry_run):
+def push_qualified(remote, config, session, branch, base, head, dry_run):
     git_executable = shutil.which("git")
     if not git_executable:
         raise SessionError("could not locate Git for the pre-push check")
@@ -484,6 +484,11 @@ def push_qualified(remote, config, branch, base, head, dry_run):
         )
         objects = git("rev-parse", "--path-format=absolute", "--git-path", "objects")
         (bare / "objects/info/alternates").write_text(f"{objects}\n")
+        local_ref = f"refs/heads/{session}"
+        git(
+            f"--git-dir={bare}", "update-ref", local_ref, head, "",
+            cwd=Path(directory), extra_env=transport_env,
+        )
         hook_config = {
             key: value for key, value in session_environment().items()
             if key in {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"}
@@ -561,7 +566,7 @@ if not expected.issubset(advertisement.stdout.splitlines()):
                 "-c", "hook.pre-push.enabled=true", "-c", f"core.hooksPath={directory}", "push", *flags,
                 "--no-follow-tags", "--recurse-submodules=no",
                 f"--force-with-lease=refs/heads/{branch}:{base}", "--",
-                LOOKUP_REMOTE, f"{head}:refs/heads/{branch}", capture=False,
+                LOOKUP_REMOTE, f"{local_ref}:refs/heads/{branch}", capture=False,
                 extra_env={
                     **transport_env,
                     "PROTONMAILCLI_ORIGINAL_ROOT": str(ROOT),
@@ -605,7 +610,7 @@ def land(main_checkout, dry_run):
         raise SessionError("the session changed during qualification; run land again")
     if default_tip(remote, config) != (branch, base):
         raise SessionError("origin's default branch changed during qualification; run land again")
-    push_qualified(remote, config, branch, base, head, dry_run)
+    push_qualified(remote, config, session, branch, base, head, dry_run)
     action = "Dry run passed for" if dry_run else "Landed"
     print(f"{action} {head} on origin/{branch}. Evidence: {evidence}")
 
