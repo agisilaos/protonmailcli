@@ -26,6 +26,11 @@ assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT"} & 
 assert sys.argv[sys.argv.index("--sandbox") + 1] == "read-only"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
+if os.environ.get("SESSION_TEST_EXPECT_CONDITIONAL_HOOK"):
+    events = subprocess.check_output(
+        ["git", "config", "--get-all", "hook.fixture-reference.event"], text=True,
+    )
+    assert events.splitlines() == ["reference-transaction", ""]
 for revision in ("HEAD", "HEAD^"):
     sha = subprocess.check_output(["git", "rev-parse", revision], text=True).strip()
     assert sha in sys.argv[-1]
@@ -466,16 +471,28 @@ git config "url.$SESSION_TEST_FORK.insteadOf" "$SESSION_TEST_REMOTE"
         head = self.change(self.worktree, "session-change")
         self.git(self.repo, "config", "http.https://fixture.invalid.extraHeader", "Authorization: fixture")
         self.git(self.repo, "config", "core.askPass", "/fixture/git-askpass")
+        self.git(self.repo, "config", "remote.origin.proxy", "")
+        self.git(self.repo, "config", "remote.origin.proxyAuthMethod", "basic")
         for helper in ("first", "", "last"):
             self.git(self.repo, "config", "--add", "credential.helper", helper)
         marker = self.root / "transport-checked"
         env = self.git_wrapper("""
+if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in sys.argv[3:]):
+    settings = {
+        os.environ[f"GIT_CONFIG_KEY_{index}"]: os.environ[f"GIT_CONFIG_VALUE_{index}"]
+        for index in range(int(os.environ["GIT_CONFIG_COUNT"]))
+    }
+    prefix = next(key.rsplit(".", 1)[0] for key in settings if key.endswith(".url"))
+    assert settings[f"{prefix}.proxy"] == ""
+    assert settings[f"{prefix}.proxyauthmethod"] == "basic"
 if sys.argv[1:3] == ["--git-dir=/dev/null", "ls-remote"]:
     def config(*args):
         return subprocess.check_output([real_git, "--git-dir=/dev/null", "config", *args], text=True)
     assert config("--get", "http.https://fixture.invalid.extraHeader") == "Authorization: fixture\\n"
     assert config("--get-all", "credential.helper").splitlines() == ["first", "", "last"]
     assert config("--get", "core.askPass") == "/fixture/git-askpass\\n"
+    assert config("--get", "remote.protonmailcli-endpoint.proxy") == "\\n"
+    assert config("--get", "remote.protonmailcli-endpoint.proxyAuthMethod") == "basic\\n"
     Path(os.environ["SESSION_TEST_TRANSPORT_CHECK"]).touch()
 """)
         self.session(self.worktree, "land", SESSION_TEST_TRANSPORT_CHECK=str(marker), **env)
@@ -579,6 +596,16 @@ exit 23
         self.assertEqual(self.git(self.repo, "branch", "--show-current"), "master")
         self.assertEqual(self.git(self.repo, "rev-parse", "refs/tags/local-only"), self.base)
 
+    def test_fetch_refmap_does_not_update_other_local_branches(self):
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        self.git(self.repo, "branch", "protected-local", self.base)
+        self.git(self.repo, "config", "--replace-all", "remote.origin.fetch",
+                 "+refs/heads/master:refs/heads/protected-local")
+        self.session(self.repo, "start", "refmap")
+        self.assertEqual(self.git(self.root / "repo-refmap", "rev-parse", "HEAD"), advance)
+        self.assertEqual(self.git(self.repo, "rev-parse", "protected-local"), self.base)
+
     def test_git_repository_environment_cannot_redirect_qualification(self):
         head = self.change(self.worktree, "session-change")
         self.session(
@@ -603,8 +630,17 @@ fi
         self.git(self.repo, "config", "--file", config, "core.hooksPath", hooks)
         self.git(self.repo, "config", "--file", config, "hook.fixture.event", "post-checkout")
         self.git(self.repo, "config", "--file", config, "hook.fixture.command", hook)
+        included = self.root / "conditional-gitconfig"
+        self.git(self.repo, "config", "--file", included, "hook.fixture-reference.event",
+                 "reference-transaction")
+        self.git(self.repo, "config", "--file", included, "hook.fixture-reference.command", hook)
+        self.git(self.repo, "config", "--file", config,
+                 "includeIf.gitdir:**/protonmailcli-qualification-*/checkout/.git.path", included)
         marker = self.root / "checkout-hook"
-        env = {"GIT_CONFIG_GLOBAL": str(config), "SESSION_TEST_CHECKOUT_HOOK": str(marker)}
+        env = {
+            "GIT_CONFIG_GLOBAL": str(config), "SESSION_TEST_CHECKOUT_HOOK": str(marker),
+            "SESSION_TEST_EXPECT_CONDITIONAL_HOOK": "1",
+        }
         self.session(self.repo, "start", "no-hook", **env)
         self.assertTrue((self.root / "repo-no-hook/scripts/session").is_file())
         head = self.change(self.worktree, "session-change")

@@ -37,7 +37,7 @@ this prompt:
    during qualification. Landings take turns across worktrees of the same clone.
    The configured pre-push hook runs for a real landing.
    The session checks the default branch again inside the pre-push hook
-   using the resolved destination and configured authentication settings.
+   using the resolved destination and its configured transport settings.
    Git's ref update guards the branch tip, and a server-side default-branch
    switch can still happen after that last check.
 3. If the rebase stops, resolve the conflict or abort it, then rerun the

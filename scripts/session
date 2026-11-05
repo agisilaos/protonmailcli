@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
-from session_transport import supports_config_hooks, transport_environment
+from session_transport import LOOKUP_REMOTE, endpoint_settings, supports_config_hooks, transport_environment, with_config
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,9 +70,9 @@ def hooks_disabled(cwd=ROOT):
 
 def default_tip(remote, cwd=ROOT):
     config = git("config", "--null", "--list", "--includes", cwd=cwd)
-    env = transport_environment(config, session_environment())
+    env = transport_environment(config, session_environment(), remote)
     rows = git(
-        f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", remote, "HEAD",
+        f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", LOOKUP_REMOTE, "HEAD",
         cwd=cwd, extra_env=env,
     ).splitlines()
     refs = [row for row in rows if row.endswith("\tHEAD")]
@@ -89,7 +89,7 @@ def fetch_default(remote, git_options=()):
     branch, _ = default_tip(remote)
     ref = f"refs/heads/{branch}"
     tracking = f"refs/remotes/origin/{branch}"
-    git(*git_options, "fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--",
+    git(*git_options, "fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--refmap=", "--",
         "origin", f"+{ref}:{tracking}")
     base = git("rev-parse", tracking)
     if default_tip(remote) != (branch, base):
@@ -218,9 +218,14 @@ def qualify(session, base, head, evidence):
     with tempfile.TemporaryDirectory(prefix="protonmailcli-qualification-") as directory:
         checkout = Path(directory) / "checkout"
         git(
-            *hooks_disabled(), "clone", "--quiet", "--no-checkout",
+            "clone", "--quiet", "--no-checkout",
             "--template=", "--config", f"core.hooksPath={os.devnull}",
             "--no-local", "--single-branch", "--no-tags", "--branch", session, ROOT, checkout,
+            cwd=Path(directory),
+            extra_env={
+                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CEILING_DIRECTORIES": str(Path(directory).parent),
+            },
         )
         for key in configured_hook_events(cwd=checkout):
             git("config", "--local", "--add", key, "", cwd=checkout)
@@ -251,6 +256,9 @@ def push_qualified(remote, branch, base, head, dry_run):
     original_hook = git("rev-parse", "--path-format=absolute", "--git-path", "hooks/pre-push")
     config_hooks = supports_config_hooks(git("version"))
     with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
+        alias = Path(directory).name
+        config = git("config", "--null", "--list", "--includes")
+        endpoint_env = with_config({}, list(endpoint_settings(config, alias, remote)))
         shutil.copy2(Path(__file__).with_name("session_transport.py"), directory)
         hook = Path(directory) / "pre-push"
         hook.write_text("""#!/usr/bin/env python3
@@ -258,7 +266,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from session_transport import transport_environment
+from session_transport import LOOKUP_REMOTE, transport_environment
 
 destination = sys.argv[2]
 if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
@@ -266,7 +274,9 @@ if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
 
 git = os.environ["PROTONMAILCLI_GIT"]
 env = os.environ.copy()
-env.pop("GIT_CONFIG_PARAMETERS", None)
+for key in list(env):
+    if key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+        env.pop(key)
 mode = os.environ["PROTONMAILCLI_RUN_PRE_PUSH"]
 if mode == "configured":
     with tempfile.NamedTemporaryFile() as refs:
@@ -289,8 +299,8 @@ elif mode == "file":
 # Reuse the transport settings without re-resolving the push URL.
 config = subprocess.check_output([git, "config", "--null", "--list", "--includes"], text=True, env=env)
 advertisement = subprocess.run(
-    [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", destination, "HEAD"],
-    stdout=subprocess.PIPE, text=True, env=transport_environment(config, env),
+    [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", LOOKUP_REMOTE, "HEAD"],
+    stdout=subprocess.PIPE, text=True, env=transport_environment(config, env, destination),
 )
 if advertisement.returncode:
     sys.exit(advertisement.returncode)
@@ -309,8 +319,9 @@ if not expected.issubset(advertisement.stdout.splitlines()):
                 "-c", "hook.pre-push.enabled=true", "-c", f"core.hooksPath={directory}", "push", *flags,
                 "--no-follow-tags", "--recurse-submodules=no",
                 f"--force-with-lease=refs/heads/{branch}:{base}", "--",
-                remote, f"{head}:refs/heads/{branch}", capture=False,
+                alias, f"{head}:refs/heads/{branch}", capture=False,
                 extra_env={
+                    **endpoint_env,
                     "PROTONMAILCLI_QUALIFIED_URL": remote,
                     "PROTONMAILCLI_QUALIFIED_BRANCH": branch,
                     "PROTONMAILCLI_QUALIFIED_BASE": base,

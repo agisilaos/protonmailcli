@@ -3,25 +3,49 @@
 import os
 
 
-def transport_environment(config, environment):
-    transport = []
+LOOKUP_REMOTE = "protonmailcli-endpoint"
+
+
+def config_entries(config):
     for setting in config.split("\0"):
         key, separator, value = setting.partition("\n")
-        if (key.startswith(("credential.", "http.", "https.", "protocol.", "ssh."))
-                or key in {"core.askpass", "core.sshcommand", "core.gitproxy"}):
-            transport.append((key, value if separator else "true"))
+        if key:
+            yield key, value if separator else "true"
 
+
+def endpoint_settings(config, alias, remote):
+    yield f"remote.{alias}.url", remote
+    for key, value in config_entries(config):
+        if key in {
+            "remote.origin.proxy", "remote.origin.proxyauthmethod",
+            "remote.origin.uploadpack", "remote.origin.receivepack",
+        }:
+            yield f"remote.{alias}.{key.rsplit('.', 1)[1]}", value
+
+
+def with_config(environment, settings):
     env = environment.copy()
-    for key in ("GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_COMMON_DIR", "GIT_WORK_TREE"):
-        env.pop(key, None)
-    env.update(
-        GIT_CONFIG_COUNT=str(len(transport)),
-        GIT_CONFIG_GLOBAL=os.devnull,
-        GIT_CONFIG_NOSYSTEM="1",
-    )
-    for index, (key, value) in enumerate(transport):
+    for key in list(env):
+        if key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+            del env[key]
+    env["GIT_CONFIG_COUNT"] = str(len(settings))
+    for index, (key, value) in enumerate(settings):
         env[f"GIT_CONFIG_KEY_{index}"] = key
         env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
+
+
+def transport_environment(config, environment, remote):
+    transport = list(endpoint_settings(config, LOOKUP_REMOTE, remote))
+    for key, value in config_entries(config):
+        if (key.startswith(("credential.", "http.", "https.", "protocol.", "ssh."))
+                or key in {"core.askpass", "core.sshcommand", "core.gitproxy"}):
+            transport.append((key, value))
+
+    env = with_config(environment, transport)
+    for key in ("GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_COMMON_DIR", "GIT_WORK_TREE"):
+        env.pop(key, None)
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     return env
 
 
