@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 assert not any(key.startswith("PMAIL_") for key in os.environ)
+assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT"} & os.environ.keys()
 assert sys.argv[sys.argv.index("--sandbox") + 1] == "read-only"
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
@@ -35,6 +36,7 @@ import sys
 
 assert sys.argv[1:] == ["--ci"]
 assert not any(key.startswith("PMAIL_") for key in os.environ)
+assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT"} & os.environ.keys()
 assert not {"GNUMAKEFLAGS", "MAKEFILES", "MAKEFLAGS", "MAKELEVEL", "MAKEOVERRIDES", "MFLAGS"} & os.environ.keys()
 assert not {"BASH_ENV", "ENV", "GOFLAGS"} & os.environ.keys()
 assert os.environ["GOENV"] == "off"
@@ -162,15 +164,6 @@ os.execv(real_git, [real_git, *sys.argv[1:]])
         old_head = self.change(self.worktree, "session-change")
         new_base = self.change(self.repo, "remote-change")
         self.git(self.repo, "push", "--quiet", "origin", "master")
-
-        self.assertIn("Dry run passed", self.session(self.worktree, "land", "--dry-run"))
-        rebased = self.git(self.worktree, "rev-parse", "HEAD")
-        self.assertNotEqual(rebased, old_head)
-        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), new_base)
-        self.assertEqual(self.remote_tip(), new_base)
-        self.assertEqual(len(list(self.evidence.glob("*/build/protonmailcli"))), 1)
-        self.assertTrue((self.worktree / "remote-change").is_file())
-
         hook = self.repo / ".git/hooks/pre-push"
         hook.write_text("""#!/bin/sh
 printf '%s\\n' "$1" "$2" > "$SESSION_TEST_HOOK_ARGS"
@@ -179,8 +172,18 @@ cat > "$SESSION_TEST_HOOK_REFS"
         hook.chmod(0o755)
         hook_args = self.root / "hook-args"
         hook_refs = self.root / "hook-refs"
-        self.session(self.worktree, "land", SESSION_TEST_HOOK_ARGS=str(hook_args),
-                     SESSION_TEST_HOOK_REFS=str(hook_refs))
+        hook_env = {"SESSION_TEST_HOOK_ARGS": str(hook_args), "SESSION_TEST_HOOK_REFS": str(hook_refs)}
+
+        self.assertIn("Dry run passed", self.session(self.worktree, "land", "--dry-run", **hook_env))
+        rebased = self.git(self.worktree, "rev-parse", "HEAD")
+        self.assertNotEqual(rebased, old_head)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), new_base)
+        self.assertEqual(self.remote_tip(), new_base)
+        self.assertEqual(len(list(self.evidence.glob("*/build/protonmailcli"))), 1)
+        self.assertTrue((self.worktree / "remote-change").is_file())
+        self.assertFalse(hook_args.exists())
+
+        self.session(self.worktree, "land", **hook_env)
         self.assertEqual(hook_args.read_text().splitlines(), ["origin", str(self.remote)])
         self.assertIn(f"{rebased} refs/heads/master {new_base}", hook_refs.read_text())
         self.assertEqual(self.remote_tip(), rebased)
@@ -261,10 +264,31 @@ if sys.argv[3:4] == ["fetch"]:
         check=True,
     )
 """)
-        self.assertIn("default branch changed during cleanup", self.session(
+        self.assertIn("default branch changed during fetch", self.session(
             self.worktree, "end", status=1, **env,
         ))
         self.assertTrue((self.worktree / "session-change").is_file())
+
+    def test_land_preserves_the_session_base_if_the_default_changes_during_fetch(self):
+        original = self.change(self.worktree, "session-change")
+        self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        self.git(self.remote, "update-ref", "refs/heads/main", self.base)
+        env = self.git_wrapper("""
+if sys.argv[3:4] == ["fetch"]:
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_REMOTE"], "symbolic-ref", "HEAD", "refs/heads/main"],
+        check=True,
+    )
+""")
+        self.assertIn("default branch changed during fetch", self.session(
+            self.worktree, "land", status=1, **env,
+        ))
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "refs/worktree/protonmailcli/session-base"),
+                         self.base)
+        self.session(self.worktree, "land")
+        self.assertEqual(self.git(self.remote, "rev-parse", "refs/heads/main"), original)
 
     def test_end_preserves_the_branch_if_another_worktree_checks_it_out(self):
         env = self.git_wrapper("""
@@ -426,9 +450,22 @@ exit 23
         self.git(self.remote, "symbolic-ref", "HEAD", "refs/heads/main")
         self.git(self.remote, "update-ref", "refs/heads/feature/HEAD", self.base)
         self.git(self.repo, "switch", "--quiet", "master")
+        self.git(self.repo, "tag", "local-only")
+        self.git(self.repo, "config", "fetch.prune", "true")
+        self.git(self.repo, "config", "fetch.pruneTags", "true")
         self.session(self.repo, "start", "from-main")
         self.assertEqual(self.git(self.root / "repo-from-main", "rev-parse", "HEAD"), alternate)
         self.assertEqual(self.git(self.repo, "branch", "--show-current"), "master")
+        self.assertEqual(self.git(self.repo, "rev-parse", "refs/tags/local-only"), self.base)
+
+    def test_git_repository_environment_cannot_redirect_qualification(self):
+        head = self.change(self.worktree, "session-change")
+        self.session(
+            self.worktree, "land", GIT_DIR=str(self.repo / ".git"), GIT_WORK_TREE=str(self.repo),
+            GIT_INDEX_FILE=str(self.repo / ".git/index"), GIT_CONFIG_COUNT="0",
+        )
+        self.assertEqual(self.git(self.repo, "remote", "get-url", "origin"), str(self.remote))
+        self.assertEqual(self.remote_tip(), head)
 
 
 if __name__ == "__main__":

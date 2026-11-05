@@ -3,6 +3,7 @@
 
 import argparse
 import fcntl
+from functools import cache
 import json
 import os
 from pathlib import Path
@@ -25,8 +26,22 @@ class SessionError(Exception):
     pass
 
 
+@cache
+def session_environment():
+    result = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"], text=True, stdout=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise SessionError("could not determine Git's repository-local environment variables")
+    local = set(result.stdout.splitlines()) | {"GIT_NAMESPACE", "GIT_QUARANTINE_PATH"}
+    return {
+        key: value for key, value in os.environ.items()
+        if key not in local and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+    }
+
+
 def git(*args, cwd=ROOT, capture=True, extra_env=None):
-    env = {**os.environ, "GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": os.devnull}
+    env = {**session_environment(), "GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": ""}
     env.update(extra_env or {})
     result = subprocess.run(
         ["git", "-C", cwd, *args],
@@ -54,8 +69,11 @@ def fetch_default(remote="origin"):
     branch, _ = default_tip(remote)
     ref = f"refs/heads/{branch}"
     tracking = f"refs/remotes/origin/{branch}"
-    git("fetch", "--no-tags", "--", remote, f"+{ref}:{tracking}")
-    return branch, git("rev-parse", tracking)
+    git("fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--", remote, f"+{ref}:{tracking}")
+    base = git("rev-parse", tracking)
+    if default_tip(remote) != (branch, base):
+        raise SessionError("origin's default branch changed during fetch; retry")
+    return branch, base
 
 
 def worktree_path(main_checkout, name):
@@ -107,7 +125,7 @@ def require_ancestor(ancestor, descendant, message):
 
 def run_logged(command, path, cwd=ROOT, extra_env=None):
     env = {
-        key: value for key, value in os.environ.items()
+        key: value for key, value in session_environment().items()
         if not key.startswith("PMAIL_") and key not in QUALIFICATION_ENV
     }
     env.update(extra_env or {})
@@ -199,7 +217,7 @@ fi
                 remote, f"{head}:refs/heads/{branch}", capture=False,
                 extra_env={
                     "PROTONMAILCLI_QUALIFIED_URL": remote,
-                    "PROTONMAILCLI_PRE_PUSH": original_hook,
+                    "PROTONMAILCLI_PRE_PUSH": "" if dry_run else original_hook,
                 },
             )
         except subprocess.CalledProcessError as error:

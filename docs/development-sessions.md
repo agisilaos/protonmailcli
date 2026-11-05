@@ -34,6 +34,7 @@ this prompt:
    read-only Codex review and one run of `scripts/release-check.sh --ci`. A real
    landing fast-forwards the same remote default branch from the exact tip used
    during qualification. Landings take turns across worktrees of the same clone.
+   The configured pre-push hook runs for a real landing.
 3. If the rebase stops, resolve the conflict or abort it, then rerun the
    command. If review reports findings, address them and commit before
    retrying. If the gate fails or the remote advances, inspect the
