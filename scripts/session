@@ -14,15 +14,16 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SESSION_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+SESSION_BASE = "refs/worktree/protonmailcli/session-base"
 
 
 class SessionError(Exception):
     pass
 
 
-def git(*args, capture=True):
+def git(*args, cwd=ROOT, capture=True):
     result = subprocess.run(
-        ["git", "-C", ROOT, *args],
+        ["git", "-C", cwd, *args],
         check=True,
         stdout=subprocess.PIPE if capture else None,
         text=True,
@@ -59,6 +60,7 @@ def start(main_checkout, name):
     branch, base = fetch_default()
     path = worktree_path(main_checkout, name)
     git("worktree", "add", "--no-track", "-b", f"fix/{name}", path, base)
+    git("update-ref", SESSION_BASE, base, cwd=path)
     print(f"Session checkout: {path} (origin/{branch} at {base})")
 
 
@@ -76,23 +78,31 @@ def current_session(main_checkout):
             raise SessionError("finish the Git operation in this checkout first")
     if git("status", "--porcelain", "--untracked-files=all"):
         raise SessionError("commit the session's changes or set them aside before continuing")
+    if git("ls-files", "--others", "--ignored", "--exclude-standard"):
+        raise SessionError("move ignored files out of the session checkout before continuing")
     return branch
 
 
-def run_logged(command, path, extra_env=None):
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PMAIL_E2E_")}
+def require_ancestor(ancestor, descendant, message):
+    result = subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", ancestor, descendant])
+    if result.returncode:
+        raise SessionError(message)
+
+
+def run_logged(command, path, cwd=ROOT, extra_env=None):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PMAIL_")}
     env.update(extra_env or {})
     print(f"Running {command[0]} (log: {path})", flush=True)
     with path.open("w") as log:
         result = subprocess.run(
-            command, cwd=ROOT, stdin=subprocess.DEVNULL,
+            command, cwd=cwd, stdin=subprocess.DEVNULL,
             stdout=log, stderr=subprocess.STDOUT, env=env,
         )
     if result.returncode:
         raise SessionError(f"{command[0]} exited {result.returncode}; see {path}")
 
 
-def review(base, head, evidence):
+def review(session, base, head, evidence):
     schema = evidence / "review-schema.json"
     schema.write_text(json.dumps({
         "type": "object",
@@ -103,19 +113,25 @@ def review(base, head, evidence):
         "additionalProperties": False,
     }))
     verdict = evidence / "review.json"
-    run_logged([
-        os.environ.get("PROTONMAILCLI_CODEX", "codex"), "exec",
-        "--sandbox", "read-only", "--ephemeral", "--output-schema", schema,
-        "--output-last-message", verdict,
-        f"Review the committed change from {base} to {head} in this checkout. "
-        "This is a read-only review of those exact commits. Inspect the diff and "
-        "relevant tracked code and repository instructions. Keep local configuration, "
-        "credentials and untracked files out of the review. Report actionable "
-        "regressions, safety issues, and missed requirements introduced by the "
-        "change. Give a path and line for each finding. Return an empty findings "
-        "array only if the review is complete and there are no actionable findings. "
-        "Report any inability to complete the review as a finding.",
-    ], evidence / "review.log")
+    with tempfile.TemporaryDirectory(prefix="protonmailcli-review-") as directory:
+        checkout = Path(directory) / "checkout"
+        git("clone", "--quiet", "--no-local", "--single-branch", "--no-tags", "--branch", session,
+            ROOT, checkout)
+        git("remote", "remove", "origin", cwd=checkout)
+        if git("rev-parse", "HEAD", cwd=checkout) != head:
+            raise SessionError("the session changed before review; run land again")
+        run_logged([
+            os.environ.get("PROTONMAILCLI_CODEX", "codex"), "exec",
+            "--sandbox", "read-only", "--ephemeral", "--output-schema", schema,
+            "--output-last-message", verdict,
+            f"Review the committed change from {base} to {head} in this checkout. "
+            "This is a read-only review of those exact commits. Inspect the diff and "
+            "relevant tracked code and repository instructions. Review only this checkout. "
+            "Report actionable regressions, safety issues, and missed requirements introduced "
+            "by the change. Give a path and line for each finding. Return an empty findings "
+            "array only if the review is complete and there are no actionable findings. "
+            "Report any inability to complete the review as a finding.",
+        ], evidence / "review.log", cwd=checkout)
     try:
         result = json.loads(verdict.read_text())
         findings = result["findings"]
@@ -135,15 +151,25 @@ def land(main_checkout, dry_run):
     branch, base = fetch_default()
     if session == branch:
         raise SessionError("run land from a feature branch")
-    git("rebase", "--no-autostash", "--no-update-refs", "--no-fork-point", base, capture=False)
+    previous_base = git("rev-parse", "--verify", SESSION_BASE)
+    require_ancestor(previous_base, base, f"origin/{branch} no longer descends from this session's base")
+    if git("rev-list", "--max-count=1", "--merges", f"{base}..HEAD"):
+        raise SessionError("session contains merge commits; prepare a linear branch before landing")
+    # Remember this base even when the rebase or qualification stops.
+    git("update-ref", SESSION_BASE, base, previous_base)
+    git("rebase", "--no-autostash", "--no-update-refs", "--no-fork-point", "--no-rebase-merges",
+        base, capture=False)
     head = git("rev-parse", "HEAD")
+    require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
     if head == base:
         print(f"Session has no commits ahead of origin/{branch}")
         return
     evidence_root = Path.home() / "Library/Logs/protonmailcli/sessions"
     evidence_root.mkdir(parents=True, exist_ok=True)
     evidence = Path(tempfile.mkdtemp(prefix=f"{session[4:]}-", dir=evidence_root))
-    review(base, head, evidence)
+    review(session, base, head, evidence)
+    if current_session(main_checkout) != session or git("rev-parse", "HEAD") != head:
+        raise SessionError("the session changed during review; run land again")
     run_logged(
         ["scripts/release-check.sh", "--ci"], evidence / "release-check.log",
         extra_env={"PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build")},
@@ -153,9 +179,11 @@ def land(main_checkout, dry_run):
     if default_tip() != (branch, base):
         raise SessionError("origin's default branch changed during qualification; run land again")
     flags = ["--dry-run"] if dry_run else []
+    # An explicit lease compares the remote tip during the push. The ancestry
+    # check above limits the update to a fast-forward from that exact tip.
     git(
         "push", *flags, "--no-follow-tags", "--recurse-submodules=no", "origin",
-        f"{head}:refs/heads/{branch}", capture=False,
+        f"--force-with-lease=refs/heads/{branch}:{base}", f"{head}:refs/heads/{branch}", capture=False,
     )
     action = "Dry run passed for" if dry_run else "Landed"
     print(f"{action} {head} on origin/{branch}. Evidence: {evidence}")
@@ -163,15 +191,11 @@ def land(main_checkout, dry_run):
 
 def end(main_checkout):
     session = current_session(main_checkout)
-    if git("ls-files", "--others", "--ignored", "--exclude-standard"):
-        raise SessionError("move ignored files you want to keep out of the checkout before ending")
     branch, base = fetch_default()
     if session == branch:
         raise SessionError("the default branch cannot be ended")
     head = git("rev-parse", "HEAD")
-    ancestry = subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", head, base])
-    if ancestry.returncode != 0:
-        raise SessionError(f"session HEAD is not on origin/{branch}")
+    require_ancestor(head, base, f"session HEAD is not on origin/{branch}")
     # Git's normal removal protects dirty worktrees. Delete the branch only at the
     # commit we verified, and only after the worktree is gone.
     subprocess.run(["git", "-C", main_checkout, "worktree", "remove", ROOT], check=True)

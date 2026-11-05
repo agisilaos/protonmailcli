@@ -2,12 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN_PATH="${ROOT_DIR}/.tmp/protonmailcli-smoke"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
+BIN_PATH="${TMP_DIR}/protonmailcli-smoke"
 
 echo "[smoke] build binary"
-mkdir -p "${ROOT_DIR}/.tmp"
 go build -o "${BIN_PATH}" ./cmd/protonmailcli
 
 CFG_PATH="${TMP_DIR}/config.toml"

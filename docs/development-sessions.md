@@ -25,17 +25,21 @@ this prompt:
 
 ## Land and end
 
-1. When authorized, commit the changes and confirm the worktree is clean.
+1. When authorized, commit the changes as a linear series and confirm the
+   worktree is clean. Move any ignored local files, such as credentials or
+   build artifacts, out of the checkout before landing.
 2. Run `scripts/session land --dry-run` to rehearse a landing, or
    `scripts/session land` to publish an authorized landing. Both rebase the
-   local branch, run a fresh read-only Codex review of the exact commits, and
-   run `scripts/release-check.sh --ci` once. A real landing pushes the
-   qualified commit directly to the remote default branch. Landings take
-   turns across worktrees of the same clone.
+   local branch, run a fresh read-only Codex review in a temporary checkout
+   of the exact commits, and run `scripts/release-check.sh --ci` once. A real
+   landing fast-forwards the remote default branch from the exact tip used
+   during qualification. Landings take turns across worktrees of the same clone.
 3. If the rebase stops, resolve the conflict or abort it, then rerun the
    command. If review reports findings, address them and commit before
    retrying. If the gate fails or the remote advances, inspect the
-   reported result and rerun from the clean worktree.
+   reported result and rerun from the clean worktree. If the remote rewound
+   past the recorded base, start a fresh session and bring over only the
+   commits you still intend to land.
 4. Run `scripts/session end` when finished. It removes the worktree and its
    branch only if the checkout is clean and its commit is on the current
    remote default branch. Move any ignored local files you want to keep,
@@ -46,7 +50,7 @@ authenticated Codex CLI. Set `PROTONMAILCLI_CODEX` to select a different
 installed Codex executable. Review output, the release check log and the
 version-stamped binary are retained under
 `~/Library/Logs/protonmailcli/sessions/`. The landing checks run with the
-live Bridge integration environment variables cleared.
+Proton Mail environment variables cleared.
 
 Use `scripts/session land` for publication so the exact commits pass review
 and qualification. Those checks are enforced by the session command. GitHub's

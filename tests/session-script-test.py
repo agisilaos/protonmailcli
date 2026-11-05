@@ -17,8 +17,10 @@ from pathlib import Path
 import subprocess
 import sys
 
-assert not any(key.startswith("PMAIL_E2E_") for key in os.environ)
+assert not any(key.startswith("PMAIL_") for key in os.environ)
 assert sys.argv[sys.argv.index("--sandbox") + 1] == "read-only"
+assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
+assert not subprocess.check_output(["git", "remote"])
 for revision in ("HEAD", "HEAD^"):
     sha = subprocess.check_output(["git", "rev-parse", revision], text=True).strip()
     assert sha in sys.argv[-1]
@@ -32,7 +34,7 @@ import subprocess
 import sys
 
 assert sys.argv[1:] == ["--ci"]
-assert not any(key.startswith("PMAIL_E2E_") for key in os.environ)
+assert not any(key.startswith("PMAIL_") for key in os.environ)
 assert not subprocess.check_output(["git", "status", "--porcelain"])
 out = Path(os.environ["PROTONMAILCLI_RELEASE_CHECK_DIR"])
 assert not out.is_relative_to(Path.cwd())
@@ -62,14 +64,15 @@ class SessionTests(unittest.TestCase):
 
         self.env = {
             key: value for key, value in os.environ.items()
-            if not key.startswith(("GIT_", "PMAIL_E2E_", "SESSION_TEST_"))
+            if not key.startswith(("GIT_", "PMAIL_", "SESSION_TEST_"))
         }
         self.env.update(
             HOME=str(self.root), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
             GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
             GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.invalid",
             PROTONMAILCLI_CODEX=str(reviewer), PMAIL_E2E_BRIDGE="1",
-            PMAIL_E2E_REAL_SEND="1", SESSION_TEST_REMOTE=str(self.remote),
+            PMAIL_E2E_REAL_SEND="1", PMAIL_SMTP_PASSWORD="fixture",
+            SESSION_TEST_REMOTE=str(self.remote), SESSION_TEST_WORKTREE=str(self.worktree),
         )
         self.git(self.root, "init", "--quiet", "--bare", "--initial-branch=master", self.remote)
         self.git(self.root, "init", "--quiet", "--initial-branch=master", self.repo)
@@ -144,10 +147,11 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), head)
         self.assertEqual(self.remote_tip(), self.base)
 
-    def test_end_preserves_ignored_credentials(self):
+    def test_land_and_end_preserve_ignored_credentials(self):
         credential = self.worktree / "fixture.pass"
         credential.write_text("fixture")
-        self.assertIn("move ignored files", self.session(self.worktree, "end", status=1))
+        for command in ("land", "end"):
+            self.assertIn("move ignored files", self.session(self.worktree, command, status=1))
         self.assertEqual(credential.read_text(), "fixture")
 
     def test_unmanaged_branch_cannot_land(self):
@@ -185,6 +189,72 @@ class SessionTests(unittest.TestCase):
             self.worktree, "land", status=1, SESSION_TEST_MOVE_REMOTE="1",
         ))
         self.assertEqual(self.remote_tip(), advance)
+
+    def test_rewind_after_an_attempt_preserves_the_remote_rewrite(self):
+        self.change(self.worktree, "session-change")
+        self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        self.session(self.worktree, "land", status=1, SESSION_TEST_GATE_EXIT="17")
+        self.git(self.remote, "update-ref", "refs/heads/master", self.base)
+        self.assertIn("no longer descends", self.session(self.worktree, "land", status=1))
+        self.assertEqual(self.remote_tip(), self.base)
+
+    def test_merge_commits_are_preserved_on_refusal(self):
+        self.change(self.worktree, "session-change")
+        self.git(self.repo, "switch", "--quiet", "-c", "side")
+        self.change(self.repo, "side-change")
+        self.git(self.worktree, "merge", "--quiet", "--no-ff", "-m", "Merge side", "side")
+        merge = self.git(self.worktree, "rev-parse", "HEAD")
+        self.assertIn("contains merge commits", self.session(self.worktree, "land", status=1))
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), merge)
+        self.assertEqual(self.remote_tip(), self.base)
+
+    def test_lease_prevents_recreating_a_branch_deleted_just_before_push(self):
+        self.change(self.worktree, "session-change")
+        git = self.root / "git"
+        git.write_text("""#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+real_git = os.environ["SESSION_TEST_REAL_GIT"]
+if sys.argv[1:2] == ["-C"] and sys.argv[3:4] == ["push"]:
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_REMOTE"], "update-ref", "-d", "refs/heads/master"],
+        check=True,
+    )
+os.execv(real_git, [real_git, *sys.argv[1:]])
+""")
+        git.chmod(0o755)
+        self.assertIn("stale info", self.session(
+            self.worktree, "land", status=1,
+            PATH=os.pathsep.join([str(self.root), self.env["PATH"]]),
+            SESSION_TEST_REAL_GIT=shutil.which("git"),
+        ))
+        self.assertEqual(self.git(self.remote, "for-each-ref", "refs/heads/master"), "")
+
+    def test_smoke_binary_is_built_outside_the_checkout(self):
+        script = self.worktree / "scripts/smoke-agent.sh"
+        shutil.copy2(ROOT / "scripts/smoke-agent.sh", script)
+        gitless_bin = self.root / "bin"
+        gitless_bin.mkdir()
+        go = gitless_bin / "go"
+        go.write_text("""#!/bin/sh
+test "$1" = build && test "$2" = -o || exit 22
+printf '%s\\n' "$3" > "$SESSION_TEST_BINARY_PATH"
+exit 23
+""")
+        go.chmod(0o755)
+        recorded_path = self.root / "smoke-path"
+        result = subprocess.run(
+            [script], cwd=self.worktree, env={
+                **self.env, "PATH": os.pathsep.join([str(gitless_bin), self.env["PATH"]]),
+                "SESSION_TEST_BINARY_PATH": str(recorded_path),
+            }, capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 23, result.stderr)
+        binary = Path(recorded_path.read_text().strip()).resolve()
+        self.assertFalse(binary.is_relative_to(self.worktree))
+        self.assertFalse(binary.parent.exists())
 
     def test_start_uses_remote_default_without_switching_primary_checkout(self):
         self.git(self.repo, "switch", "--quiet", "-c", "main")
