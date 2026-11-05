@@ -36,6 +36,10 @@ class SessionError(Exception):
     pass
 
 
+class RetainedCandidate(SessionError):
+    pass
+
+
 class SessionTerminated(KeyboardInterrupt):
     pass
 
@@ -52,7 +56,7 @@ def session_environment():
     if result.returncode:
         raise SessionError("could not determine Git's repository-local environment variables")
     local = set(result.stdout.splitlines()) | SHELL_ENV | {
-        "GIT_ATTR_SOURCE", "GIT_NAMESPACE", "GIT_QUARANTINE_PATH",
+        "GIT_ATTR_SOURCE", "GIT_EXTERNAL_DIFF", "GIT_NAMESPACE", "GIT_QUARANTINE_PATH",
     }
     return {
         key: value for key, value in os.environ.items()
@@ -88,8 +92,7 @@ def checkout_inspection(cwd=ROOT):
     return [*hooks_disabled(cwd), "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"]
 
 
-def default_tip(remote):
-    config = git("config", "--null", "--list", "--includes")
+def default_tip(remote, config):
     env = transport_environment(config, session_environment(), remote)
     rows = git(
         f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", LOOKUP_REMOTE, "HEAD",
@@ -105,13 +108,13 @@ def default_tip(remote):
     raise SessionError("could not resolve the default branch of origin")
 
 
-def fetch_default(remote, git_options=()):
-    branch, _ = default_tip(remote)
+def fetch_default(remote, config, git_options=()):
+    branch, _ = default_tip(remote, config)
     ref = f"refs/heads/{branch}"
     git(*git_options, "fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--refmap=", "--",
         "origin", ref)
     base = git("rev-parse", "--verify", "FETCH_HEAD")
-    if default_tip(remote) != (branch, base):
+    if default_tip(remote, config) != (branch, base):
         raise SessionError("origin's default branch changed during fetch; retry")
     return branch, base
 
@@ -129,7 +132,7 @@ def origin_endpoint(push=False):
     remote = git("remote", "get-url", "origin")
     if push and remote != git("remote", "get-url", "--push", "--all", "origin"):
         raise SessionError("origin must use the same single URL for fetch and push")
-    return absolute_endpoint(remote)
+    return absolute_endpoint(remote), config
 
 
 def worktree_path(main_checkout, name):
@@ -139,8 +142,8 @@ def worktree_path(main_checkout, name):
 def start(main_checkout, name):
     if not SESSION_NAME.fullmatch(name):
         raise SessionError("use a session name such as mailbox-preview")
-    remote = origin_endpoint()
-    branch, base = fetch_default(remote)
+    remote, config = origin_endpoint()
+    branch, base = fetch_default(remote, config)
     session = f"fix/{name}"
     if session == branch:
         raise SessionError("the session branch name matches the remote default branch")
@@ -241,6 +244,8 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
     live_index = Path(git("rev-parse", "--path-format=absolute", "--git-path", "index"))
     prepared_index = candidate.parent / "installation-index"
     index_lock = live_index.with_name("index.lock")
+    receipt = f"refs/worktree/protonmailcli/install/{candidate.parent.name}"
+    retained = False
     # Hold Git's live index lock while the candidate's detached checkout
     # updates the live files against a private copy of the index.
     checkout = [
@@ -254,27 +259,50 @@ def install_candidate(candidate, head, original_head, branch_ref, branch_update)
             if git("symbolic-ref", "--quiet", "HEAD") != branch_ref or git("rev-parse", "HEAD") != original_head:
                 raise SessionError("the session changed before applying the candidate")
             ready = False
+            checkout_started = False
             try:
                 if live_index.exists():
                     shutil.copy2(live_index, prepared_index)
+                checkout_started = True
                 git(*checkout, head, extra_env=env, capture=False)
                 with prepared_index.open("rb") as source:
                     shutil.copyfileobj(source, lock)
                 lock.flush()
                 os.fsync(lock.fileno())
                 ready = True
-                update_session_refs(branch_ref, branch_update)
+                update_session_refs(branch_ref, f"{branch_update}create {receipt} {head}\n")
                 index_lock.replace(live_index)
-            except (OSError, subprocess.CalledProcessError, KeyboardInterrupt):
-                current = git("rev-parse", "HEAD")
-                if ready and current == head and owns_index_lock(index_lock, lock):
-                    index_lock.replace(live_index)
-                elif git("rev-parse", "HEAD", cwd=candidate) == head:
-                    git(*checkout, original_head, extra_env=env, capture=False)
+            except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
+                try:
+                    if ready and ref_exists(receipt):
+                        if owns_index_lock(index_lock, lock):
+                            index_lock.replace(live_index)
+                    elif git("rev-parse", "HEAD", cwd=candidate) == head:
+                        git(*checkout, original_head, extra_env=env, capture=False)
+                    elif checkout_started and isinstance(error, KeyboardInterrupt):
+                        raise SessionError("candidate checkout was interrupted")
+                except (SessionError, OSError, subprocess.CalledProcessError, KeyboardInterrupt) as recovery_error:
+                    retained = True
+                    raise RetainedCandidate(
+                        f"candidate {head} recovery files retained at {candidate.parent}"
+                    ) from recovery_error
                 raise
     finally:
-        prepared_index.unlink(missing_ok=True)
-        git(*options, "update-ref", "--no-deref", "HEAD", head, cwd=candidate)
+        if not retained:
+            if ref_exists(receipt):
+                git(*checkout_inspection(), "update-ref", "-d", receipt, head)
+            prepared_index.unlink(missing_ok=True)
+            git(*options, "update-ref", "--no-deref", "HEAD", head, cwd=candidate)
+
+
+def ref_exists(ref):
+    try:
+        git("rev-parse", "--verify", "--quiet", ref)
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+        return False
+    return True
 
 
 def rebase_candidate(main_checkout, session, previous_base, base, original_head):
@@ -286,6 +314,7 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
 
     holding = Path(tempfile.mkdtemp(prefix="protonmailcli-rebase-"))
     candidate = holding / "checkout"
+    retained = False
     try:
         git(*checkout_inspection(), "worktree", "add", "--detach", "--no-checkout",
             candidate, original_head)
@@ -314,11 +343,15 @@ def rebase_candidate(main_checkout, session, previous_base, base, original_head)
             if git("branch", "--show-current") != session or git("rev-parse", "HEAD") != head:
                 raise SessionError("the session changed during candidate installation; run land again")
             return head
+        except RetainedCandidate:
+            retained = True
+            raise
         finally:
-            try:
-                git(*checkout_inspection(), "worktree", "remove", candidate)
-            except (OSError, subprocess.CalledProcessError) as error:
-                raise SessionError(f"temporary rebase worktree retained at {candidate}") from error
+            if not retained:
+                try:
+                    git(*checkout_inspection(), "worktree", "remove", candidate)
+                except (OSError, subprocess.CalledProcessError) as error:
+                    raise SessionError(f"temporary rebase worktree retained at {candidate}") from error
     finally:
         if not candidate.exists():
             holding.rmdir()
@@ -356,7 +389,7 @@ def review(base, head, evidence, checkout, env):
         "--sandbox", "read-only", "--ephemeral", "--output-schema", schema,
         "--output-last-message", verdict,
         f"Statically review the committed change from {base} to {head} in this checkout. "
-        "Inspect the diff and relevant tracked code in this checkout. The caller runs "
+        f"Use git diff --no-ext-diff --no-textconv {base} {head} and read relevant tracked code. The caller runs "
         "tests and records any checkpoint separately. Keep your work read-only. "
         "Report actionable regressions, safety issues, or missed requirements in the "
         "documented workflow. Treat the remote service and configured hooks as trusted. "
@@ -410,7 +443,7 @@ def qualify(session, base, head, evidence):
             raise SessionError(f"the release check did not produce an executable; see {evidence / 'release-check.log'}")
 
 
-def push_qualified(remote, branch, base, head, dry_run):
+def push_qualified(remote, config, branch, base, head, dry_run):
     git_executable = shutil.which("git")
     if not git_executable:
         raise SessionError("could not locate Git for the pre-push check")
@@ -419,8 +452,10 @@ def push_qualified(remote, branch, base, head, dry_run):
     config_hooks = supports_config_hooks(git("version"))
     with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
         alias = Path(directory).name
-        config = git("config", "--null", "--list", "--includes")
         probe_env = transport_environment(config, {}, remote)
+        current_config = git("config", "--null", "--list", "--includes")
+        if transport_environment(current_config, {}, remote) != probe_env:
+            raise SessionError("origin's transport settings changed during qualification")
         alias_env = with_config({}, list(endpoint_settings(config, alias, remote)))
         effective = git("config", "--null", "--list", "--includes", extra_env=alias_env)
         if transport_environment(effective, {}, remote) != probe_env:
@@ -517,9 +552,9 @@ if not expected.issubset(advertisement.stdout.splitlines()):
 def land(main_checkout, dry_run):
     session, previous_base = current_session(main_checkout)
     original_head = git("rev-parse", "HEAD")
-    remote = origin_endpoint(push=True)
+    remote, config = origin_endpoint(push=True)
     no_hooks = checkout_inspection() if dry_run else []
-    branch, base = fetch_default(remote, git_options=no_hooks)
+    branch, base = fetch_default(remote, config, git_options=no_hooks)
     if current_session(main_checkout) != (session, previous_base) or git("rev-parse", "HEAD") != original_head:
         raise SessionError("the session changed during fetch; run land again")
     if session == branch:
@@ -538,9 +573,9 @@ def land(main_checkout, dry_run):
     qualify(session, base, head, evidence)
     if current_session(main_checkout) != (session, base) or git("rev-parse", "HEAD") != head:
         raise SessionError("the session changed during qualification; run land again")
-    if default_tip(remote) != (branch, base):
+    if default_tip(remote, config) != (branch, base):
         raise SessionError("origin's default branch changed during qualification; run land again")
-    push_qualified(remote, branch, base, head, dry_run)
+    push_qualified(remote, config, branch, base, head, dry_run)
     action = "Dry run passed for" if dry_run else "Landed"
     print(f"{action} {head} on origin/{branch}. Evidence: {evidence}")
 
@@ -553,14 +588,14 @@ def registered_worktree(path, main_checkout):
 def end(main_checkout):
     session, session_base = current_session(main_checkout)
     head = git("rev-parse", "HEAD")
-    remote = origin_endpoint()
-    branch, base = fetch_default(remote)
+    remote, config = origin_endpoint()
+    branch, base = fetch_default(remote, config)
     if session == branch:
         raise SessionError("the default branch cannot be ended")
     require_ancestor(head, base, f"session HEAD is not on origin/{branch}")
     if current_session(main_checkout) != (session, session_base) or git("rev-parse", "HEAD") != head:
         raise SessionError("the session changed during cleanup; run end again")
-    if default_tip(remote) != (branch, base):
+    if default_tip(remote, config) != (branch, base):
         raise SessionError("origin's default branch changed during cleanup; run end again")
     # Move the checkout away from its working path before the last inspection.
     # A refused cleanup restores the original path or leaves the files at the

@@ -23,8 +23,10 @@ import subprocess
 import sys
 
 assert not any(key.startswith("PMAIL_") for key in os.environ)
+assert "GIT_EXTERNAL_DIFF" not in os.environ
 assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_ATTR_SOURCE"} & os.environ.keys()
 assert sys.argv[sys.argv.index("--sandbox") + 1] == "read-only"
+assert "--no-ext-diff --no-textconv" in sys.argv[-1]
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
 if os.environ.get("SESSION_TEST_EXPECT_CONDITIONAL_HOOK"):
@@ -77,6 +79,11 @@ if os.environ.get("SESSION_TEST_SWAP_PUSHURL"):
     subprocess.run(
         ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "remote", "set-url", "--push", "origin",
          os.environ["SESSION_TEST_SWAP_PUSHURL"]],
+        check=True,
+    )
+if os.environ.get("SESSION_TEST_CHANGE_TRANSPORT"):
+    subprocess.run(
+        ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "config", "core.sshCommand", "ssh -F fixture"],
         check=True,
     )
 if os.environ.get("SESSION_TEST_REWRITE_PUSHURL"):
@@ -148,7 +155,7 @@ class SessionTests(unittest.TestCase):
         result = subprocess.run(
             ["scripts/session", *args], cwd=cwd, env={
                 **self.env, "SHELLOPTS": "noexec", "BASHOPTS": "extglob",
-                "CDPATH": "/fixture", "GIT_ATTR_SOURCE": "HEAD^", **env,
+                "CDPATH": "/fixture", "GIT_ATTR_SOURCE": "HEAD^", "GIT_EXTERNAL_DIFF": "/usr/bin/true", **env,
             },
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
@@ -549,6 +556,13 @@ if sys.argv[1:2] == ["-C"] and "ls-remote" in sys.argv[3:]:
         ))
         self.assertEqual(self.remote_tip(), advance)
 
+    def test_transport_change_during_qualification_refuses_push(self):
+        self.change(self.worktree, "session-change")
+        self.assertIn("origin's transport settings changed during qualification", self.session(
+            self.worktree, "land", status=1, SESSION_TEST_CHANGE_TRANSPORT="1",
+        ))
+        self.assertEqual(self.remote_tip(), self.base)
+
     def test_landing_pins_the_original_remote_when_push_url_changes(self):
         head = self.change(self.worktree, "session-change")
         fork = self.root / "fork.git"
@@ -774,6 +788,44 @@ if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
         self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "A  session-change")
         self.assertFalse((self.worktree / "remote-change").exists())
         self.assertEqual(self.remote_tip(), advance)
+
+    def test_matching_head_without_a_transaction_receipt_does_not_publish_the_candidate_index(self):
+        self.change(self.worktree, "session-change")
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if "update-ref" in sys.argv[3:] and "--stdin" in sys.argv[3:]:
+    updates = sys.stdin.read()
+    candidate = updates.splitlines()[0].split()[2]
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_WORKTREE"], "reset", "--soft", candidate],
+        check=True,
+    )
+    sys.exit(subprocess.run([real_git, *sys.argv[1:]], input=updates, text=True).returncode)
+""")
+        self.session(self.worktree, "land", status=1, **env)
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD^"), advance)
+        self.assertFalse((self.worktree / "remote-change").exists())
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "D  remote-change")
+        self.assertEqual(self.remote_tip(), advance)
+
+    def test_interrupted_partial_installation_retains_recovery_files(self):
+        original = self.change(self.worktree, "session-change")
+        self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        env = self.git_wrapper("""
+if "checkout" in sys.argv[3:] and "--no-overwrite-ignore" in sys.argv[3:]:
+    import signal
+    Path(os.environ["SESSION_TEST_WORKTREE"], "partial-candidate").write_text("partial")
+    os.kill(os.getppid(), signal.SIGTERM)
+    sys.exit(17)
+""")
+        self.assertIn("recovery files retained", self.session(
+            self.worktree, "land", status=1, TMPDIR=str(self.root), **env,
+        ))
+        self.assertEqual(self.git(self.worktree, "rev-parse", "HEAD"), original)
+        self.assertTrue(list(self.root.glob("protonmailcli-rebase-*/installation-index")))
+        self.assertEqual((self.worktree / "partial-candidate").read_text(), "partial")
 
     def test_rebase_install_locks_the_live_index_against_concurrent_commits(self):
         self.change(self.worktree, "session-change")

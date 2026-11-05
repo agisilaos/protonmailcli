@@ -45,7 +45,7 @@ this prompt:
    The configured pre-push hook runs for a real landing.
    The session checks the default branch again inside the pre-push hook
    using the resolved destination and its configured transport settings,
-   including protocol options.
+   including protocol options. It records those settings before fetching.
    A temporary push alias must use the same transport settings as `origin`.
    Pinned HTTP connections require a destination that works without redirects.
    Git's ref update guards the branch tip, and a server-side default-branch
@@ -53,6 +53,8 @@ this prompt:
 3. If the rebase reports conflicts, the session branch keeps its original
    commits. Resolve the conflicts on that branch before retrying.
    If installation is interrupted, inspect the session status before retrying.
+   The command reports the recovery directory if a partial installation
+   needs inspection.
    If review reports findings, address them and commit before
    retrying. If the gate fails or the remote advances, inspect the
    reported result and rerun from the clean worktree. If the remote rewound
