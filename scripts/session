@@ -63,7 +63,7 @@ def session_environment():
     }
 
 
-def git(*args, cwd=ROOT, capture=True, extra_env=None, input_text=None):
+def git(*args, cwd=ROOT, capture=True, extra_env=None, input_text=None, umask=-1):
     env = {**session_environment(), "GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": ""}
     env.update(extra_env or {})
     result = subprocess.run(
@@ -73,6 +73,7 @@ def git(*args, cwd=ROOT, capture=True, extra_env=None, input_text=None):
         text=True,
         env=env,
         input=input_text,
+        umask=umask,
     )
     return result.stdout.rstrip("\n") if capture else None
 
@@ -178,7 +179,7 @@ def start(main_checkout, name):
         git(
             *hooks_disabled(cwd=path),
             "-c", f"core.hooksPath={os.devnull}",
-            "restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=path,
+            "restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=path, umask=0o022,
         )
     except (OSError, subprocess.CalledProcessError, KeyboardInterrupt) as error:
         if not path.exists():
@@ -464,7 +465,8 @@ def qualify(session, base, head, evidence):
         git("remote", "remove", "origin", cwd=checkout, extra_env=env)
         if git("rev-parse", "HEAD", cwd=checkout, extra_env=env) != head:
             raise SessionError("the session changed before qualification; run land again")
-        git("restore", "--source=HEAD", "--staged", "--worktree", "--", ".", cwd=checkout, extra_env=env)
+        git("restore", "--source=HEAD", "--staged", "--worktree", "--", ".",
+            cwd=checkout, extra_env=env, umask=0o022)
         if git("status", "--porcelain", "--untracked-files=all", "--ignored=matching",
                cwd=checkout, extra_env=env):
             raise SessionError("the qualification checkout is dirty")

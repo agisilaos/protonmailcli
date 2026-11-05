@@ -2,6 +2,7 @@
 
 Use one branch and worktree per implementation chat in a standard clone with
 trusted Git hooks and a trusted `origin` that uses a standard Git transport.
+Landing requires the resolved fetch and push URLs for `origin` to match.
 The primary checkout is
 the place to start or list sessions. Read-only investigations can use an
 existing checkout.

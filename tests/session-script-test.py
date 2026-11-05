@@ -29,6 +29,8 @@ assert sys.argv[sys.argv.index("--sandbox") + 1] == "read-only"
 assert "--no-ext-diff --no-textconv" in sys.argv[-1]
 assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
 assert not subprocess.check_output(["git", "remote"])
+assert Path("scripts/session_transport.py").stat().st_mode & 0o777 == 0o644
+assert Path("scripts/release-check.sh").stat().st_mode & 0o777 == 0o755
 if os.environ.get("SESSION_TEST_EXPECT_CONDITIONAL_HOOK"):
     events = subprocess.run(
         ["git", "config", "--get-all", "hook.fixture-reference.event"],
@@ -151,13 +153,13 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
 
-    def session(self, cwd, *args, status=0, **env):
+    def session(self, cwd, *args, status=0, umask=-1, **env):
         result = subprocess.run(
             ["scripts/session", *args], cwd=cwd, env={
                 **self.env, "SHELLOPTS": "noexec", "BASHOPTS": "extglob",
                 "CDPATH": "/fixture", "GIT_ATTR_SOURCE": "HEAD^", "GIT_EXTERNAL_DIFF": "/usr/bin/true", **env,
             },
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, umask=umask,
         )
         self.assertEqual(result.returncode, status, result.stdout)
         return result.stdout
@@ -1284,6 +1286,15 @@ fi
         self.session(self.worktree, "land", **env)
         self.assertEqual(self.remote_tip(), head)
         self.assertFalse(marker.exists())
+
+    def test_restrictive_umask_does_not_change_tracked_checkout_modes(self):
+        private = self.root / "repo-private"
+        self.session(self.repo, "start", "private", umask=0o077)
+        self.assertEqual((private / "scripts/session_transport.py").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((private / "scripts/release-check.sh").stat().st_mode & 0o777, 0o755)
+        head = self.change(private, "session-change")
+        self.session(private, "land", umask=0o077, SESSION_TEST_WORKTREE=str(private))
+        self.assertEqual(self.remote_tip(), head)
 
 
 if __name__ == "__main__":
