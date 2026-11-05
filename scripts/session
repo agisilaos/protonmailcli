@@ -69,6 +69,10 @@ def current_session(main_checkout):
     name = branch.removeprefix("fix/")
     if name == branch or not SESSION_NAME.fullmatch(name) or ROOT != worktree_path(main_checkout, name):
         raise SessionError("run from the checkout made by scripts/session start")
+    try:
+        base = git("rev-parse", "--verify", "--quiet", SESSION_BASE)
+    except subprocess.CalledProcessError as error:
+        raise SessionError("this checkout has no session record from scripts/session start") from error
     for marker in (
         "rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD",
         "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_START",
@@ -80,7 +84,10 @@ def current_session(main_checkout):
         raise SessionError("commit the session's changes or set them aside before continuing")
     if git("ls-files", "--others", "--ignored", "--exclude-standard"):
         raise SessionError("move ignored files out of the session checkout before continuing")
-    return branch
+    tracked = git("ls-files", "-v", "-z").split("\0")
+    if any(entry.startswith("S ") or entry[:1].islower() for entry in tracked):
+        raise SessionError("restore normal index tracking before continuing")
+    return branch, base
 
 
 def require_ancestor(ancestor, descendant, message):
@@ -102,7 +109,7 @@ def run_logged(command, path, cwd=ROOT, extra_env=None):
         raise SessionError(f"{command[0]} exited {result.returncode}; see {path}")
 
 
-def review(session, base, head, evidence):
+def review(base, head, evidence, checkout):
     schema = evidence / "review-schema.json"
     schema.write_text(json.dumps({
         "type": "object",
@@ -113,25 +120,18 @@ def review(session, base, head, evidence):
         "additionalProperties": False,
     }))
     verdict = evidence / "review.json"
-    with tempfile.TemporaryDirectory(prefix="protonmailcli-review-") as directory:
-        checkout = Path(directory) / "checkout"
-        git("clone", "--quiet", "--no-local", "--single-branch", "--no-tags", "--branch", session,
-            ROOT, checkout)
-        git("remote", "remove", "origin", cwd=checkout)
-        if git("rev-parse", "HEAD", cwd=checkout) != head:
-            raise SessionError("the session changed before review; run land again")
-        run_logged([
-            os.environ.get("PROTONMAILCLI_CODEX", "codex"), "exec",
-            "--sandbox", "read-only", "--ephemeral", "--output-schema", schema,
-            "--output-last-message", verdict,
-            f"Review the committed change from {base} to {head} in this checkout. "
-            "This is a read-only review of those exact commits. Inspect the diff and "
-            "relevant tracked code and repository instructions. Review only this checkout. "
-            "Report actionable regressions, safety issues, and missed requirements introduced "
-            "by the change. Give a path and line for each finding. Return an empty findings "
-            "array only if the review is complete and there are no actionable findings. "
-            "Report any inability to complete the review as a finding.",
-        ], evidence / "review.log", cwd=checkout)
+    run_logged([
+        os.environ.get("PROTONMAILCLI_CODEX", "codex"), "exec",
+        "--sandbox", "read-only", "--ephemeral", "--output-schema", schema,
+        "--output-last-message", verdict,
+        f"Statically review the committed change from {base} to {head} in this checkout. "
+        "Inspect the diff and relevant tracked code in this checkout. The caller runs "
+        "tests and records any checkpoint separately. Keep your work read-only. "
+        "Report actionable regressions, safety issues, or missed requirements introduced "
+        "by the change. Give a path and line for each finding. Return an empty findings "
+        "array when the static review is complete and there are no actionable findings. "
+        "If the committed diff cannot be read, report that as a finding.",
+    ], evidence / "review.log", cwd=checkout)
     try:
         result = json.loads(verdict.read_text())
         findings = result["findings"]
@@ -144,21 +144,35 @@ def review(session, base, head, evidence):
         raise SessionError(f"Codex reported {len(findings)} finding(s); see {verdict}")
 
 
+def qualify(session, base, head, evidence):
+    with tempfile.TemporaryDirectory(prefix="protonmailcli-qualification-") as directory:
+        checkout = Path(directory) / "checkout"
+        git("clone", "--quiet", "--no-local", "--single-branch", "--no-tags", "--branch", session,
+            ROOT, checkout)
+        git("remote", "remove", "origin", cwd=checkout)
+        if git("rev-parse", "HEAD", cwd=checkout) != head:
+            raise SessionError("the session changed before qualification; run land again")
+        review(base, head, evidence, checkout)
+        run_logged(
+            ["scripts/release-check.sh", "--ci"], evidence / "release-check.log", cwd=checkout,
+            extra_env={"PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build")},
+        )
+
+
 def land(main_checkout, dry_run):
-    session = current_session(main_checkout)
+    session, previous_base = current_session(main_checkout)
     if git("remote", "get-url", "origin") != git("remote", "get-url", "--push", "--all", "origin"):
         raise SessionError("origin must use the same single URL for fetch and push")
     branch, base = fetch_default()
     if session == branch:
         raise SessionError("run land from a feature branch")
-    previous_base = git("rev-parse", "--verify", SESSION_BASE)
     require_ancestor(previous_base, base, f"origin/{branch} no longer descends from this session's base")
     if git("rev-list", "--max-count=1", "--merges", f"{base}..HEAD"):
         raise SessionError("session contains merge commits; prepare a linear branch before landing")
     # Remember this base even when the rebase or qualification stops.
     git("update-ref", SESSION_BASE, base, previous_base)
     git("rebase", "--no-autostash", "--no-update-refs", "--no-fork-point", "--no-rebase-merges",
-        base, capture=False)
+        "--reapply-cherry-picks", base, capture=False)
     head = git("rev-parse", "HEAD")
     require_ancestor(base, head, "the candidate must be a fast-forward from the reviewed base")
     if head == base:
@@ -167,14 +181,8 @@ def land(main_checkout, dry_run):
     evidence_root = Path.home() / "Library/Logs/protonmailcli/sessions"
     evidence_root.mkdir(parents=True, exist_ok=True)
     evidence = Path(tempfile.mkdtemp(prefix=f"{session[4:]}-", dir=evidence_root))
-    review(session, base, head, evidence)
-    if current_session(main_checkout) != session or git("rev-parse", "HEAD") != head:
-        raise SessionError("the session changed during review; run land again")
-    run_logged(
-        ["scripts/release-check.sh", "--ci"], evidence / "release-check.log",
-        extra_env={"PROTONMAILCLI_RELEASE_CHECK_DIR": str(evidence / "build")},
-    )
-    if current_session(main_checkout) != session or git("rev-parse", "HEAD") != head:
+    qualify(session, base, head, evidence)
+    if current_session(main_checkout) != (session, base) or git("rev-parse", "HEAD") != head:
         raise SessionError("the session changed during qualification; run land again")
     if default_tip() != (branch, base):
         raise SessionError("origin's default branch changed during qualification; run land again")
@@ -190,7 +198,7 @@ def land(main_checkout, dry_run):
 
 
 def end(main_checkout):
-    session = current_session(main_checkout)
+    session, _ = current_session(main_checkout)
     branch, base = fetch_default()
     if session == branch:
         raise SessionError("the default branch cannot be ended")

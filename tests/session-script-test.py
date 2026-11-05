@@ -35,6 +35,8 @@ import sys
 
 assert sys.argv[1:] == ["--ci"]
 assert not any(key.startswith("PMAIL_") for key in os.environ)
+assert Path.cwd() != Path(os.environ["SESSION_TEST_WORKTREE"])
+assert not subprocess.check_output(["git", "remote"])
 assert not subprocess.check_output(["git", "status", "--porcelain"])
 out = Path(os.environ["PROTONMAILCLI_RELEASE_CHECK_DIR"])
 assert not out.is_relative_to(Path.cwd())
@@ -42,7 +44,8 @@ out.mkdir()
 (out / "protonmailcli").touch()
 if os.environ.get("SESSION_TEST_MOVE_REMOTE"):
     subprocess.run(
-        ["git", "push", os.environ["SESSION_TEST_REMOTE"], "refs/heads/advance:refs/heads/master"],
+        ["git", "-C", os.environ["SESSION_TEST_PRIMARY"], "push", os.environ["SESSION_TEST_REMOTE"],
+         "refs/heads/advance:refs/heads/master"],
         check=True,
     )
 sys.exit(int(os.environ.get("SESSION_TEST_GATE_EXIT", "0")))
@@ -73,6 +76,7 @@ class SessionTests(unittest.TestCase):
             PROTONMAILCLI_CODEX=str(reviewer), PMAIL_E2E_BRIDGE="1",
             PMAIL_E2E_REAL_SEND="1", PMAIL_SMTP_PASSWORD="fixture",
             SESSION_TEST_REMOTE=str(self.remote), SESSION_TEST_WORKTREE=str(self.worktree),
+            SESSION_TEST_PRIMARY=str(self.repo),
         )
         self.git(self.root, "init", "--quiet", "--bare", "--initial-branch=master", self.remote)
         self.git(self.root, "init", "--quiet", "--initial-branch=master", self.repo)
@@ -161,6 +165,21 @@ class SessionTests(unittest.TestCase):
         ))
         self.assertEqual(self.remote_tip(), self.base)
 
+    def test_end_refuses_a_matching_worktree_created_manually(self):
+        manual = self.root / "repo-manual"
+        self.git(self.repo, "worktree", "add", "-b", "fix/manual", manual, self.base)
+        self.assertIn("no session record", self.session(manual, "end", status=1))
+        self.assertTrue(manual.is_dir())
+
+    def test_hidden_tracked_edits_are_preserved(self):
+        path = self.worktree / ".gitignore"
+        self.git(self.worktree, "update-index", "--assume-unchanged", ".gitignore")
+        path.write_text("hidden edit")
+        self.assertEqual(self.git(self.worktree, "status", "--porcelain"), "")
+        for command in ("land", "end"):
+            self.assertIn("normal index tracking", self.session(self.worktree, command, status=1))
+        self.assertEqual(path.read_text(), "hidden edit")
+
     def test_review_findings_and_invalid_verdict_stop_before_gate(self):
         self.change(self.worktree, "review-me")
         for review, diagnostic in (
@@ -198,6 +217,16 @@ class SessionTests(unittest.TestCase):
         self.git(self.remote, "update-ref", "refs/heads/master", self.base)
         self.assertIn("no longer descends", self.session(self.worktree, "land", status=1))
         self.assertEqual(self.remote_tip(), self.base)
+
+    def test_rebase_reapplies_a_patch_previously_reverted_on_the_remote(self):
+        self.change(self.worktree, "session-change")
+        (self.repo / "session-change").write_text("session-change")
+        self.git(self.repo, "add", "session-change")
+        self.git(self.repo, "commit", "--quiet", "-m", "Apply the same patch upstream")
+        self.git(self.repo, "revert", "--no-edit", "HEAD")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        self.session(self.worktree, "land")
+        self.assertEqual(self.git(self.remote, "show", "refs/heads/master:session-change"), "session-change")
 
     def test_merge_commits_are_preserved_on_refusal(self):
         self.change(self.worktree, "session-change")
