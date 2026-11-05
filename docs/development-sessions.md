@@ -31,7 +31,8 @@ this prompt:
    build artifacts, out of the checkout before landing.
 2. Run `scripts/session land --dry-run` to rehearse a landing, or
    `scripts/session land` to publish an authorized landing. Both rebase the
-   local branch, then use a fresh checkout with isolated Git configuration for
+   local branch after checking the fetched commit against the resolved
+   remote. They use a fresh checkout with isolated Git configuration for
    a read-only Codex review and one run of `scripts/release-check.sh --ci`. A real
    landing fast-forwards the same remote default branch from the exact tip used
    during qualification. Landings take turns across worktrees of the same clone.

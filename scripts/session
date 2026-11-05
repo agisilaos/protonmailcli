@@ -14,7 +14,9 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
-from session_transport import LOOKUP_REMOTE, endpoint_settings, supports_config_hooks, transport_environment, with_config
+from session_transport import (
+    LOOKUP_REMOTE, config_entries, push_settings, supports_config_hooks, transport_environment, with_config,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,10 +92,11 @@ def fetch_default(remote, git_options=()):
     ref = f"refs/heads/{branch}"
     tracking = f"refs/remotes/origin/{branch}"
     git(*git_options, "fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--refmap=", "--",
-        "origin", f"+{ref}:{tracking}")
-    base = git("rev-parse", tracking)
+        "origin", ref)
+    base = git("rev-parse", "--verify", "FETCH_HEAD")
     if default_tip(remote) != (branch, base):
         raise SessionError("origin's default branch changed during fetch; retry")
+    git(*git_options, "update-ref", tracking, base)
     return branch, base
 
 
@@ -258,15 +261,17 @@ def push_qualified(remote, branch, base, head, dry_run):
     with tempfile.TemporaryDirectory(prefix="protonmailcli-push-") as directory:
         alias = Path(directory).name
         config = git("config", "--null", "--list", "--includes")
-        endpoint_env = with_config({}, list(endpoint_settings(config, alias, remote)))
+        endpoint_env = with_config({}, list(push_settings(config, alias, remote)))
+        probe_env = transport_environment(config, {}, remote)
         shutil.copy2(Path(__file__).with_name("session_transport.py"), directory)
         hook = Path(directory) / "pre-push"
         hook.write_text("""#!/usr/bin/env python3
+import json
 import os
 import subprocess
 import sys
 import tempfile
-from session_transport import LOOKUP_REMOTE, transport_environment
+from session_transport import LOOKUP_REMOTE
 
 destination = sys.argv[2]
 if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
@@ -274,8 +279,10 @@ if destination != os.environ["PROTONMAILCLI_QUALIFIED_URL"]:
 
 git = os.environ["PROTONMAILCLI_GIT"]
 env = os.environ.copy()
+probe_config = json.loads(env.pop("PROTONMAILCLI_PROBE_CONFIG"))
 for key in list(env):
-    if key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+    if (key in {"GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
+            or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))):
         env.pop(key)
 mode = os.environ["PROTONMAILCLI_RUN_PRE_PUSH"]
 if mode == "configured":
@@ -296,11 +303,13 @@ elif mode == "file":
         if status:
             sys.exit(status)
 
-# Reuse the transport settings without re-resolving the push URL.
-config = subprocess.check_output([git, "config", "--null", "--list", "--includes"], text=True, env=env)
+# Reuse the pinned transport settings even if a user hook changed Git config.
+for key in ("GIT_CONFIG", "GIT_COMMON_DIR", "GIT_WORK_TREE"):
+    env.pop(key, None)
+env.update(probe_config)
 advertisement = subprocess.run(
     [git, f"--git-dir={os.devnull}", "ls-remote", "--symref", "--", LOOKUP_REMOTE, "HEAD"],
-    stdout=subprocess.PIPE, text=True, env=transport_environment(config, env, destination),
+    stdout=subprocess.PIPE, text=True, env=env,
 )
 if advertisement.returncode:
     sys.exit(advertisement.returncode)
@@ -322,6 +331,7 @@ if not expected.issubset(advertisement.stdout.splitlines()):
                 alias, f"{head}:refs/heads/{branch}", capture=False,
                 extra_env={
                     **endpoint_env,
+                    "PROTONMAILCLI_PROBE_CONFIG": json.dumps(probe_env),
                     "PROTONMAILCLI_QUALIFIED_URL": remote,
                     "PROTONMAILCLI_QUALIFIED_BRANCH": branch,
                     "PROTONMAILCLI_QUALIFIED_BASE": base,
@@ -420,11 +430,20 @@ def end(main_checkout):
         raise SessionError("the session branch changed during cleanup and was retained")
     alias = f"protonmailcli-cleanup-{holding.name.rsplit('-', 1)[-1]}"
     verified_ref = f"refs/protonmailcli/cleanup/{alias}"
+    config = git("config", "--null", "--list", "--includes", cwd=main_checkout)
+    merge_targets = dict.fromkeys([
+        f"refs/heads/{branch}",
+        *(value for key, value in config_entries(config) if key == f"branch.{session}.merge"),
+    ])
+    refspecs = [
+        part for target in merge_targets
+        for part in ("-c", f"remote.{alias}.fetch=+{target}:{verified_ref}")
+    ]
     git("update-ref", verified_ref, base, "", cwd=main_checkout)
     try:
         git(
             "-c", f"remote.{alias}.url=unused",
-            "-c", f"remote.{alias}.fetch=+refs/heads/{branch}:{verified_ref}",
+            *refspecs,
             "-c", f"branch.{session}.remote={alias}", "-c", f"branch.{session}.merge=refs/heads/{branch}",
             "branch", "--delete", "--", session, cwd=main_checkout, capture=False,
         )

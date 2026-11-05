@@ -357,6 +357,8 @@ if "branch" in sys.argv[3:] and "--delete" in sys.argv[3:]:
         self.git(self.repo, "branch", "protected-local", self.base)
         self.git(self.repo, "config", "--replace-all", "remote.origin.fetch",
                  "+refs/heads/main:refs/heads/protected-local")
+        self.git(self.repo, "config", "branch.fix/mailbox-preview.remote", "origin")
+        self.git(self.repo, "config", "branch.fix/mailbox-preview.merge", "refs/heads/fix/mailbox-preview")
         self.session(self.worktree, "end")
         self.assertEqual(self.git(self.repo, "branch", "--list", "fix/mailbox-preview"), "")
         self.assertEqual(self.git(self.repo, "rev-parse", "protected-local"), self.base)
@@ -483,6 +485,13 @@ git config "url.$SESSION_TEST_FORK.insteadOf" "$SESSION_TEST_REMOTE"
         self.git(self.repo, "config", "remote.origin.proxyAuthMethod", "basic")
         for helper in ("first", "", "last"):
             self.git(self.repo, "config", "--add", "credential.helper", helper)
+        hook = self.repo / ".git/hooks/pre-push"
+        hook.write_text("""#!/bin/sh
+set -e
+git config remote.origin.proxyAuthMethod digest
+git config core.askPass /fixture/changed-askpass
+""")
+        hook.chmod(0o755)
         marker = self.root / "transport-checked"
         env = self.git_wrapper("""
 if "push" in sys.argv[3:] and any(arg.startswith("core.hooksPath=") for arg in sys.argv[3:]):
@@ -505,6 +514,7 @@ if sys.argv[1:3] == ["--git-dir=/dev/null", "ls-remote"]:
 """)
         self.session(self.worktree, "land", SESSION_TEST_TRANSPORT_CHECK=str(marker), **env)
         self.assertTrue(marker.is_file())
+        self.assertEqual(self.git(self.repo, "config", "--get", "remote.origin.proxyAuthMethod"), "digest")
         self.assertEqual(self.remote_tip(), head)
 
     def test_branch_switch_during_fetch_stops_before_rebase(self):
@@ -613,6 +623,26 @@ exit 23
         self.session(self.repo, "start", "refmap")
         self.assertEqual(self.git(self.root / "repo-refmap", "rev-parse", "HEAD"), advance)
         self.assertEqual(self.git(self.repo, "rev-parse", "protected-local"), self.base)
+
+    def test_fetch_from_a_changed_origin_preserves_the_shared_tracking_ref(self):
+        self.change(self.worktree, "session-change")
+        fork = self.root / "fork.git"
+        self.git(self.repo, "clone", "--quiet", "--bare", self.remote, fork)
+        advance = self.change(self.repo, "remote-change")
+        self.git(self.repo, "push", "--quiet", "origin", "master")
+        self.git(self.repo, "update-ref", "refs/remotes/origin/master", advance)
+        env = self.git_wrapper("""
+if sys.argv[3:4] == ["fetch"]:
+    subprocess.run(
+        [real_git, "-C", os.environ["SESSION_TEST_PRIMARY"], "remote", "set-url", "origin",
+         os.environ["SESSION_TEST_FORK"]],
+        check=True,
+    )
+""")
+        self.assertIn("default branch changed during fetch", self.session(
+            self.worktree, "land", status=1, SESSION_TEST_FORK=str(fork), **env,
+        ))
+        self.assertEqual(self.git(self.repo, "rev-parse", "refs/remotes/origin/master"), advance)
 
     def test_git_repository_environment_cannot_redirect_qualification(self):
         head = self.change(self.worktree, "session-change")

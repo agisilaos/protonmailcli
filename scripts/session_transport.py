@@ -23,6 +23,14 @@ def endpoint_settings(config, alias, remote):
             yield f"remote.{alias}.{key.rsplit('.', 1)[1]}", value
 
 
+def push_settings(config, alias, remote):
+    yield from endpoint_settings(config, alias, remote)
+    for key, value in config_entries(config):
+        if (key in {"core.sshcommand", "core.gitproxy", "ssh.variant"}
+                or (key.startswith(("http.", "https.")) and key.endswith((".proxy", ".proxyauthmethod")))):
+            yield key, value
+
+
 def with_config(environment, settings):
     env = environment.copy()
     for key in list(env):
