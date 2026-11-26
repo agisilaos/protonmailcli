@@ -25,7 +25,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
 		if g.dryRun {
-			return map[string]any{"action": "draft.create", "wouldCreate": true, "source": "local"}, false, nil
+			return map[string]any{"action": "draft.create", "wouldCreate": true, "source": "local", "createPath": "local_state"}, false, nil
 		}
 		now := time.Now().UTC()
 		id := fmt.Sprintf("d_%d", now.UnixNano())
