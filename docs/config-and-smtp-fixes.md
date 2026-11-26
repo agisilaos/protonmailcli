@@ -44,7 +44,8 @@ Only use the public certificate obtained from the Bridge instance you intend to
 trust. This adds its certificate to normal system trust. Certificate validity and
 hostname verification remain enabled; the configured host must match a name or
 IP address in the certificate. The PEM file must provide trust for both endpoints
-if their certificates differ. An unreadable or invalid PEM file fails IMAP setup
+if their certificates differ. Every certificate block in the bundle must be
+complete and parse as an X.509 certificate. An unreadable or invalid PEM file fails IMAP setup
 before a connection is opened. The CLI reports these local trust configuration
 failures as `config_error` (exit 3, `retryable: false`); correct the configuration
 before retrying. The PEM must be a regular file; named pipes and devices are

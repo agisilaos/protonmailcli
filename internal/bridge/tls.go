@@ -1,8 +1,10 @@
 package bridge
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -25,11 +27,49 @@ func bridgeTLSConfig(protocol, host, certificateFile string) (*tls.Config, error
 	if err != nil {
 		return nil, fmt.Errorf("%w: load system certificate roots: %w", ErrTLSConfig, err)
 	}
-	if !roots.AppendCertsFromPEM(certPEM) {
-		return nil, fmt.Errorf("%w: %s TLS certificate file contains no PEM certificates", ErrTLSConfig, protocol)
+	if err := addBridgeCertificates(roots, certPEM); err != nil {
+		return nil, fmt.Errorf("%w: %s TLS certificate file: %w", ErrTLSConfig, protocol, err)
 	}
 	config.RootCAs = roots
 	return config, nil
+}
+
+// Decode one delimited certificate at a time. pem.Decode on a whole bundle
+// can skip an invalid entry and silently return the next valid certificate.
+func addBridgeCertificates(roots *x509.CertPool, data []byte) error {
+	start, offset := -1, 0
+	found := false
+	for line := range bytes.Lines(data) {
+		offset += len(line)
+		switch string(bytes.TrimSpace(line)) {
+		case "-----BEGIN CERTIFICATE-----":
+			if start >= 0 {
+				return errors.New("certificate is missing its end marker")
+			}
+			start = offset - len(line)
+		case "-----END CERTIFICATE-----":
+			if start < 0 {
+				return errors.New("certificate is missing its begin marker")
+			}
+			block, _ := pem.Decode(data[start:offset])
+			if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+				return errors.New("invalid certificate PEM block")
+			}
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return fmt.Errorf("invalid certificate: %w", err)
+			}
+			roots.AddCert(cert)
+			start, found = -1, true
+		}
+	}
+	if start >= 0 {
+		return errors.New("certificate is missing its end marker")
+	}
+	if !found {
+		return errors.New("contains no PEM certificates")
+	}
+	return nil
 }
 
 func readCertificateFile(path string) ([]byte, error) {
