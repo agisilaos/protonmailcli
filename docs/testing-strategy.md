@@ -51,6 +51,12 @@ Method:
 - local fake Bridge adapter with deterministic responses
 - verify generated adapter requests and returned state changes
 
+`TestDialIMAPRejectsInvalidServerCertificateBeforeLogin` exercises the real IMAP
+STARTTLS handshake against local certificates with an untrusted issuer or wrong
+hostname. It supplies no credentials and requires a certificate verification
+error before any LOGIN command. Trusted local workflow fixtures cover the
+successful path.
+
 ### 4) End-to-end tests (real Bridge, optional CI stage)
 
 Scope:
