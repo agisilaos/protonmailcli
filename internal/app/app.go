@@ -335,29 +335,34 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 	cfg.Profile = opts.profile
 	if useInteractive {
 		r := bufio.NewReader(a.Stdin)
-		fmt.Fprint(a.Stderr, "Profile [default]: ")
-		if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-			cfg.Profile = strings.TrimSpace(v)
+		prompts := &commandOutput{writer: a.Stderr}
+		ask := func(prompt string) string {
+			if _, err := fmt.Fprint(prompts, prompt); err != nil {
+				return ""
+			}
+			answer, _ := r.ReadString('\n')
+			return strings.TrimSpace(answer)
 		}
-		fmt.Fprint(a.Stderr, "Bridge host [127.0.0.1]: ")
-		if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-			cfg.Bridge.Host = strings.TrimSpace(v)
+		if v := ask("Profile [default]: "); v != "" {
+			cfg.Profile = v
 		}
-		fmt.Fprint(a.Stderr, "Bridge SMTP port [1025]: ")
-		if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-			fmt.Sscanf(strings.TrimSpace(v), "%d", &cfg.Bridge.SMTPPort)
+		if v := ask("Bridge host [127.0.0.1]: "); v != "" {
+			cfg.Bridge.Host = v
 		}
-		fmt.Fprint(a.Stderr, "Bridge IMAP port [1143]: ")
-		if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-			fmt.Sscanf(strings.TrimSpace(v), "%d", &cfg.Bridge.IMAPPort)
+		if v := ask("Bridge SMTP port [1025]: "); v != "" {
+			fmt.Sscanf(v, "%d", &cfg.Bridge.SMTPPort)
 		}
-		fmt.Fprint(a.Stderr, "Bridge username/email: ")
-		if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-			cfg.Bridge.Username = strings.TrimSpace(v)
+		if v := ask("Bridge IMAP port [1143]: "); v != "" {
+			fmt.Sscanf(v, "%d", &cfg.Bridge.IMAPPort)
 		}
-		fmt.Fprint(a.Stderr, "SMTP password file path (optional): ")
-		if v, _ := r.ReadString('\n'); strings.TrimSpace(v) != "" {
-			cfg.Bridge.PasswordFile = strings.TrimSpace(v)
+		if v := ask("Bridge username/email: "); v != "" {
+			cfg.Bridge.Username = v
+		}
+		if v := ask("SMTP password file path (optional): "); v != "" {
+			cfg.Bridge.PasswordFile = v
+		}
+		if prompts.err != nil {
+			return fmt.Errorf("write setup prompt: %w", prompts.err)
 		}
 	} else {
 		cfg.Bridge.Host = opts.host

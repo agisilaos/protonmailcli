@@ -68,6 +68,9 @@ brew install protonmailcli
 ./protonmailcli setup --interactive
 ```
 
+Setup writes prompts to stderr. If a prompt cannot be delivered, setup exits
+with status 1 before saving the configuration.
+
 This prompts for profile + Bridge host/ports/username and writes config to:
 
 - `~/.config/protonmailcli/config.toml`
