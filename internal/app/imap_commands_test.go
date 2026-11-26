@@ -164,7 +164,7 @@ func TestSaveDraftWithFallbackWhenAppendFails(t *testing.T) {
 	}
 
 	fake := &fakeIMAPDraftClient{searchUIDs: map[string][]string{"INBOX": {"88"}, "Drafts": {"99"}}, draftMailbox: "Drafts"}
-	openBridgeClientFn = func(_ config.Config, _ *model.State, _ string) (imapDraftClient, string, string, error) {
+	openBridgeClientFn = func(_ config.Config, _ *model.State, _ *bridge.TLSPolicy) (imapDraftClient, string, string, error) {
 		return fake, "u", "p", nil
 	}
 
@@ -254,6 +254,8 @@ type fakeIMAPDraftClient struct {
 	searchUIDs   map[string][]string
 	moved        bool
 }
+
+func (f *fakeIMAPDraftClient) TLSPolicy() *bridge.TLSPolicy { return nil }
 
 func (f *fakeIMAPDraftClient) AppendDraft(raw string) (string, error) {
 	if f.appendErr != nil {

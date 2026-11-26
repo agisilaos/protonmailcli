@@ -16,6 +16,7 @@ type SMTPConfig struct {
 	Password    string
 	Timeout     time.Duration
 	TLSCertFile string
+	TLSPolicy   *TLSPolicy
 }
 
 type SendInput struct {
@@ -36,7 +37,7 @@ func Send(cfg SMTPConfig, in SendInput) error {
 			return fmt.Errorf("SMTP envelope recipient must not contain CR or LF")
 		}
 	}
-	tlsConfig, err := bridgeTLSConfig("SMTP", cfg.Host, cfg.TLSCertFile)
+	tlsConfig, err := cfg.TLSPolicy.configFor("SMTP", cfg.Host, cfg.TLSCertFile)
 	if err != nil {
 		return err
 	}

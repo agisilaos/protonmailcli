@@ -52,6 +52,11 @@ before retrying. The PEM must be a regular file; named pipes and devices are
 rejected before certificate parsing. Regular PEM bundles have no added size
 limit, and symbolic links to regular files are supported.
 
+Each command validates its local certificate configuration before dialing IMAP
+or reserving a fresh delivery receipt. SMTP and any draft-fallback IMAP
+reconnection use the trust loaded for that command. Certificate file changes
+take effect on the next command.
+
 IMAP always requires STARTTLS, with TLS 1.2 or newer, before authentication.
 For SMTP, setting `tls_cert_file` requires the server to advertise STARTTLS.
 Without this setting, normal system certificate trust and automatic SMTP STARTTLS

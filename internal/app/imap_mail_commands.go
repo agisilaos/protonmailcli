@@ -339,14 +339,14 @@ func saveDraftWithFallback(c imapDraftClient, cfg config.Config, st *model.State
 	if errors.Is(err, bridge.ErrAppendUncertain) {
 		return "", "", err
 	}
-	uid, err = createDraftViaMoveFallback(cfg, st, username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")), extraHeaders)
+	uid, err = createDraftViaMoveFallback(cfg, st, c.TLSPolicy(), username, to, subject, body, strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")), extraHeaders)
 	if err != nil {
 		return "", "", err
 	}
 	return uid, "smtp_move_fallback", nil
 }
 
-func createDraftViaMoveFallback(cfg config.Config, st *model.State, username string, to []string, subject, body, envPassword string, extraHeaders map[string]string) (string, error) {
+func createDraftViaMoveFallback(cfg config.Config, st *model.State, policy *bridge.TLSPolicy, username string, to []string, subject, body, envPassword string, extraHeaders map[string]string) (string, error) {
 	_, password, err := resolveBridgeCredentials(cfg, st, "")
 	if err != nil {
 		if strings.TrimSpace(envPassword) == "" {
@@ -359,7 +359,7 @@ func createDraftViaMoveFallback(cfg config.Config, st *model.State, username str
 	for k, v := range extraHeaders {
 		headers[k] = v
 	}
-	if err := smtpSendFn(bridgeSMTPConfig(cfg, username, password), bridge.SendInput{
+	if err := smtpSendFn(bridgeSMTPConfig(cfg, username, password, policy), bridge.SendInput{
 		From:         username,
 		To:           to,
 		EnvelopeTo:   []string{username},
@@ -369,7 +369,7 @@ func createDraftViaMoveFallback(cfg config.Config, st *model.State, username str
 	}); err != nil {
 		return "", err
 	}
-	c2, _, _, err := openBridgeClientFn(cfg, st, "")
+	c2, _, _, err := openBridgeClientFn(cfg, st, policy)
 	if err != nil {
 		return "", fmt.Errorf("%w: SMTP accepted fallback; %v", bridge.ErrAppendUncertain, err)
 	}
@@ -496,7 +496,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err := reserveSend(st, opts.idempotencyKey, "message.send", payload, checkpoint); err != nil {
 			return nil, false, err
 		}
-		err = bridge.Send(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body, ExtraHeaders: draftThreadHeaders(d)})
+		err = bridge.Send(bridgeSMTPConfig(cfg, username, pass, c.TLSPolicy()), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body, ExtraHeaders: draftThreadHeaders(d)})
 		if err != nil {
 			if opts.idempotencyKey != "" {
 				return nil, false, pendingSendError("send attempt for " + opts.draftID + " did not confirm delivery: " + err.Error())
@@ -598,7 +598,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			if err := reserveSend(st, it.IdempotencyKey, "imap.message.send-item", payload, checkpoint); err != nil {
 				return nil, false, err
 			}
-			if err := smtpSendFn(bridgeSMTPConfig(cfg, username, pass), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body, ExtraHeaders: draftThreadHeaders(d)}); err != nil {
+			if err := smtpSendFn(bridgeSMTPConfig(cfg, username, pass, c.TLSPolicy()), bridge.SendInput{From: username, To: d.To, Subject: d.Subject, Body: d.Body, ExtraHeaders: draftThreadHeaders(d)}); err != nil {
 				if opts.idempotencyKey != "" || it.IdempotencyKey != "" {
 					return nil, false, pendingSendError("send attempt for " + it.DraftID + " did not confirm delivery: " + err.Error())
 				}

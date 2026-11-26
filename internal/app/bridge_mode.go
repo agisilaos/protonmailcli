@@ -38,6 +38,10 @@ func resolveBridgeCredentials(cfg config.Config, st *model.State, passwordFileOv
 }
 
 func bridgeClient(cfg config.Config, st *model.State, passwordFileOverride string) (*bridge.IMAPClient, string, string, error) {
+	return bridgeClientWithPolicy(cfg, st, passwordFileOverride, nil)
+}
+
+func bridgeClientWithPolicy(cfg config.Config, st *model.State, passwordFileOverride string, policy *bridge.TLSPolicy) (*bridge.IMAPClient, string, string, error) {
 	username, password, err := resolveBridgeCredentials(cfg, st, passwordFileOverride)
 	if err != nil {
 		return nil, "", "", err
@@ -48,7 +52,11 @@ func bridgeClient(cfg config.Config, st *model.State, passwordFileOverride strin
 			timeout = d
 		}
 	}
-	c, err := bridge.DialIMAP(bridge.IMAPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.IMAPPort, Username: username, Password: password, TLSCertFile: config.Expand(cfg.Bridge.TLSCertFile)}, timeout)
+	c, err := bridge.DialIMAP(bridge.IMAPConfig{
+		Host: cfg.Bridge.Host, Port: cfg.Bridge.IMAPPort,
+		Username: username, Password: password,
+		TLSCertFile: config.Expand(cfg.Bridge.TLSCertFile), TLSPolicy: policy,
+	}, timeout)
 	if err != nil {
 		if errors.Is(err, bridge.ErrTLSConfig) {
 			return nil, "", "", cliError{exit: 3, code: "config_error", msg: err.Error(), hint: "Check bridge.tls_cert_file and local certificate trust"}
@@ -120,10 +128,14 @@ func validMessageUID(uid string) error {
 	return nil
 }
 
-func bridgeSMTPConfig(cfg config.Config, username, password string) bridge.SMTPConfig {
+func bridgeSMTPConfig(cfg config.Config, username, password string, policy *bridge.TLSPolicy) bridge.SMTPConfig {
 	timeout := 30 * time.Second
 	if parsed, err := time.ParseDuration(cfg.Timeout); err == nil && parsed > 0 {
 		timeout = parsed
 	}
-	return bridge.SMTPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Username: username, Password: password, Timeout: timeout, TLSCertFile: config.Expand(cfg.Bridge.TLSCertFile)}
+	return bridge.SMTPConfig{
+		Host: cfg.Bridge.Host, Port: cfg.Bridge.SMTPPort, Timeout: timeout,
+		Username: username, Password: password,
+		TLSCertFile: config.Expand(cfg.Bridge.TLSCertFile), TLSPolicy: policy,
+	}
 }

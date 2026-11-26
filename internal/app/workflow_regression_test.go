@@ -248,7 +248,7 @@ func TestPB08FallbackPreservesIntendedRecipients(t *testing.T) {
 	t.Cleanup(func() { smtpSendFn = oldSend; openBridgeClientFn = oldOpen })
 	var sent bridge.SendInput
 	smtpSendFn = func(_ bridge.SMTPConfig, in bridge.SendInput) error { sent = in; return nil }
-	openBridgeClientFn = func(config.Config, *model.State, string) (imapDraftClient, string, string, error) {
+	openBridgeClientFn = func(config.Config, *model.State, *bridge.TLSPolicy) (imapDraftClient, string, string, error) {
 		return &fakeIMAPDraftClient{draftMailbox: "Drafts", searchUIDs: map[string][]string{"INBOX": {"88"}, "Drafts": {"99"}}}, "", "", nil
 	}
 	code, out := runWorkflow(t, args, "")
@@ -264,7 +264,7 @@ func TestPB09FallbackNeverReturnsSourceUID(t *testing.T) {
 	t.Cleanup(func() { smtpSendFn = oldSend; openBridgeClientFn = oldOpen })
 	sends := 0
 	smtpSendFn = func(bridge.SMTPConfig, bridge.SendInput) error { sends++; return nil }
-	openBridgeClientFn = func(config.Config, *model.State, string) (imapDraftClient, string, string, error) {
+	openBridgeClientFn = func(config.Config, *model.State, *bridge.TLSPolicy) (imapDraftClient, string, string, error) {
 		return &fakeIMAPDraftClient{draftMailbox: "Drafts", searchUIDs: map[string][]string{"INBOX": {"88"}, "Drafts": {}}}, "", "", nil
 	}
 	for i := 0; i < 2; i++ {

@@ -29,10 +29,11 @@ type IMAPConfig struct {
 	Username    string
 	Password    string
 	TLSCertFile string
+	TLSPolicy   *TLSPolicy
 }
 
 func (cfg IMAPConfig) tlsConfig() (*tls.Config, error) {
-	return bridgeTLSConfig("IMAP", cfg.Host, cfg.TLSCertFile)
+	return cfg.TLSPolicy.configFor("IMAP", cfg.Host, cfg.TLSCertFile)
 }
 
 type DraftMessage struct {
@@ -50,12 +51,13 @@ type DraftMessage struct {
 }
 
 type IMAPClient struct {
-	conn    net.Conn
-	r       *bufio.Reader
-	w       *bufio.Writer
-	tag     int
-	timeout time.Duration
-	debug   bool
+	tlsPolicy *TLSPolicy
+	conn      net.Conn
+	r         *bufio.Reader
+	w         *bufio.Writer
+	tag       int
+	timeout   time.Duration
+	debug     bool
 }
 
 var ErrMessageNotFound = errors.New("message not found")
@@ -86,7 +88,11 @@ func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &IMAPClient{conn: conn, r: bufio.NewReader(conn), w: bufio.NewWriter(conn), tag: 1, timeout: timeout, debug: strings.TrimSpace(os.Getenv("PMAIL_IMAP_DEBUG")) == "1"}
+	c := &IMAPClient{
+		conn: conn, r: bufio.NewReader(conn), w: bufio.NewWriter(conn),
+		tag: 1, timeout: timeout, debug: strings.TrimSpace(os.Getenv("PMAIL_IMAP_DEBUG")) == "1",
+		tlsPolicy: &TLSPolicy{config: tlsConfig, certificateFile: cfg.TLSCertFile},
+	}
 	if err := c.conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		_ = c.Close()
 		return nil, err
@@ -110,6 +116,10 @@ func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+func (c *IMAPClient) TLSPolicy() *TLSPolicy {
+	return c.tlsPolicy
 }
 
 func (c *IMAPClient) Close() error {

@@ -17,6 +17,7 @@ import (
 )
 
 type imapDraftClient interface {
+	TLSPolicy() *bridge.TLSPolicy
 	AppendDraft(raw string) (string, error)
 	DraftMailboxName() (string, error)
 	SearchUIDs(mailbox, criteria string) ([]string, error)
@@ -39,8 +40,8 @@ type sendManyItem struct {
 }
 
 var smtpSendFn = bridge.Send
-var openBridgeClientFn = func(cfg config.Config, st *model.State, passwordFile string) (imapDraftClient, string, string, error) {
-	return bridgeClient(cfg, st, passwordFile)
+var openBridgeClientFn = func(cfg config.Config, st *model.State, policy *bridge.TLSPolicy) (imapDraftClient, string, string, error) {
+	return bridgeClientWithPolicy(cfg, st, "", policy)
 }
 
 func cmdMailboxIMAP(action string, args []string, g globalOptions, cfg config.Config, st *model.State) (any, bool, error) {
