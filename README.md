@@ -68,10 +68,10 @@ brew install protonmailcli
 ./protonmailcli setup --interactive
 ```
 
-Setup writes prompts to stderr. If a prompt cannot be delivered, input fails, or
-input ends before an answer, setup exits with status 1 before saving the
-configuration. Press Enter to accept a default; a nonempty final answer does not
-require a trailing newline.
+Setup writes prompts to stderr. Press Enter after each answer or to accept a
+default. Only the final password-file path can end with EOF after a nonempty
+answer. Earlier EOF, a missing final answer, or a prompt or input error exits
+with status 1 and preserves the existing configuration.
 
 Interactive `auth login` also writes prompts to stderr. If a prompt cannot be
 delivered, login exits with status 1 before reading an answer or saving login

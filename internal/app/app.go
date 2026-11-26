@@ -337,7 +337,7 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 		r := bufio.NewReader(a.Stdin)
 		prompts := &commandOutput{writer: a.Stderr}
 		var askErr error
-		ask := func(prompt string) string {
+		ask := func(prompt string, final bool) string {
 			if askErr != nil {
 				return ""
 			}
@@ -347,28 +347,28 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 			}
 			answer, err := r.ReadString('\n')
 			answer = strings.TrimSpace(answer)
-			if err != nil && !(errors.Is(err, io.EOF) && answer != "") {
+			if err != nil && !(final && errors.Is(err, io.EOF) && answer != "") {
 				askErr = fmt.Errorf("read setup input: %w", err)
 				return ""
 			}
 			return answer
 		}
-		if v := ask("Profile [default]: "); v != "" {
+		if v := ask("Profile [default]: ", false); v != "" {
 			cfg.Profile = v
 		}
-		if v := ask("Bridge host [127.0.0.1]: "); v != "" {
+		if v := ask("Bridge host [127.0.0.1]: ", false); v != "" {
 			cfg.Bridge.Host = v
 		}
-		if v := ask("Bridge SMTP port [1025]: "); v != "" {
+		if v := ask("Bridge SMTP port [1025]: ", false); v != "" {
 			fmt.Sscanf(v, "%d", &cfg.Bridge.SMTPPort)
 		}
-		if v := ask("Bridge IMAP port [1143]: "); v != "" {
+		if v := ask("Bridge IMAP port [1143]: ", false); v != "" {
 			fmt.Sscanf(v, "%d", &cfg.Bridge.IMAPPort)
 		}
-		if v := ask("Bridge username/email: "); v != "" {
+		if v := ask("Bridge username/email: ", false); v != "" {
 			cfg.Bridge.Username = v
 		}
-		if v := ask("SMTP password file path (optional): "); v != "" {
+		if v := ask("SMTP password file path (optional): ", true); v != "" {
 			cfg.Bridge.PasswordFile = v
 		}
 		if askErr != nil {
