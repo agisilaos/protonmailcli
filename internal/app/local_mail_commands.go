@@ -24,12 +24,13 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
+		if g.dryRun {
+			return map[string]any{"action": "draft.create", "wouldCreate": true, "source": "local"}, false, nil
+		}
 		now := time.Now().UTC()
 		id := fmt.Sprintf("d_%d", now.UnixNano())
 		d := model.Draft{ID: id, To: opts.to, Subject: opts.subject, Body: b, Tags: opts.tags, CreatedAt: now, UpdatedAt: now}
-		if !g.dryRun {
-			st.Drafts[id] = d
-		}
+		st.Drafts[id] = d
 		return localDraftResponse{Draft: d, CreatePath: "local_state", Source: "local"}, true, nil
 	case "update":
 		fs, opts := newIMAPDraftUpdateFlags()

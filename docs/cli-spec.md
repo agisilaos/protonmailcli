@@ -215,7 +215,9 @@ Exit behavior:
 
 - Human mode prints the result fields as indented JSON. For example, `draft create`
   shows the draft ID you can pass to `draft get`, and `mailbox list` shows the
-  available mailbox names and IDs. A success with no result fields prints `ok`.
+  available mailbox names and IDs. A fresh `--dry-run draft create` reports a
+  creation plan with `wouldCreate`. Only a stored draft has a receipt ID.
+  A success with no result fields prints `ok`.
   Failures print the error message and code, followed by any result fields.
   For example, a failed `doctor` report identifies each endpoint and its check result.
 - `--plain`: stable tab-delimited line output.

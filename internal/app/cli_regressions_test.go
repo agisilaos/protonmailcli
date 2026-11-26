@@ -89,6 +89,18 @@ func TestFirstDryRunDoesNotCreateState(t *testing.T) {
 	}
 }
 
+func TestLocalDraftCreatePreviewReturnsPlan(t *testing.T) {
+	c := newRegressionCLI(t)
+	code, out := c.run("", "--dry-run", "draft", "create", "--to", "preview@example.invalid", "--body", "Preview")
+	data := regressionData(t, out)
+	if code != 0 || data["action"] != "draft.create" || data["wouldCreate"] != true || data["source"] != "local" || data["draft"] != nil {
+		t.Fatalf("expected a creation plan without a draft receipt: exit=%d %s", code, out)
+	}
+	if _, err := os.Stat(c.state); !os.IsNotExist(err) {
+		t.Fatalf("preview wrote state: %v", err)
+	}
+}
+
 func TestInvalidArgumentsCannotDeleteDraft(t *testing.T) {
 	c := newRegressionCLI(t)
 	code, out := c.run("", "draft", "create", "--to", "recipient@example.invalid", "--body", "keep me")
