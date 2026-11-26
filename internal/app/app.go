@@ -336,12 +336,22 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 	if useInteractive {
 		r := bufio.NewReader(a.Stdin)
 		prompts := &commandOutput{writer: a.Stderr}
+		var askErr error
 		ask := func(prompt string) string {
-			if _, err := fmt.Fprint(prompts, prompt); err != nil {
+			if askErr != nil {
 				return ""
 			}
-			answer, _ := r.ReadString('\n')
-			return strings.TrimSpace(answer)
+			if _, err := fmt.Fprint(prompts, prompt); err != nil {
+				askErr = fmt.Errorf("write setup prompt: %w", err)
+				return ""
+			}
+			answer, err := r.ReadString('\n')
+			answer = strings.TrimSpace(answer)
+			if err != nil && !(errors.Is(err, io.EOF) && answer != "") {
+				askErr = fmt.Errorf("read setup input: %w", err)
+				return ""
+			}
+			return answer
 		}
 		if v := ask("Profile [default]: "); v != "" {
 			cfg.Profile = v
@@ -361,8 +371,8 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 		if v := ask("SMTP password file path (optional): "); v != "" {
 			cfg.Bridge.PasswordFile = v
 		}
-		if prompts.err != nil {
-			return fmt.Errorf("write setup prompt: %w", prompts.err)
+		if askErr != nil {
+			return askErr
 		}
 	} else {
 		cfg.Bridge.Host = opts.host

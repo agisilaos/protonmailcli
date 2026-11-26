@@ -68,8 +68,10 @@ brew install protonmailcli
 ./protonmailcli setup --interactive
 ```
 
-Setup writes prompts to stderr. If a prompt cannot be delivered, setup exits
-with status 1 before saving the configuration.
+Setup writes prompts to stderr. If a prompt cannot be delivered, input fails, or
+input ends before an answer, setup exits with status 1 before saving the
+configuration. Press Enter to accept a default; a nonempty final answer does not
+require a trailing newline.
 
 This prompts for profile + Bridge host/ports/username and writes config to:
 
