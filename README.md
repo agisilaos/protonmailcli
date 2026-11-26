@@ -73,6 +73,10 @@ input ends before an answer, setup exits with status 1 before saving the
 configuration. Press Enter to accept a default; a nonempty final answer does not
 require a trailing newline.
 
+Interactive `auth login` also writes prompts to stderr. If a prompt cannot be
+delivered, login exits with status 1 before reading an answer or saving login
+state.
+
 This prompts for profile + Bridge host/ports/username and writes config to:
 
 - `~/.config/protonmailcli/config.toml`

@@ -36,13 +36,18 @@ func cmdAuth(action string, args []string, g globalOptions, cfg config.Config, s
 				return nil, false, cliError{exit: 2, code: "validation_error", msg: "--username and --password-file are required in non-interactive mode"}
 			}
 			r := bufio.NewReader(runtimeStdinReader)
+			prompts := &commandOutput{writer: runtimeStderr}
 			if user == "" {
-				fmt.Fprint(runtimeStderr, "Bridge username/email: ")
+				if _, err := fmt.Fprint(prompts, "Bridge username/email: "); err != nil {
+					return nil, false, fmt.Errorf("write auth prompt: %w", err)
+				}
 				v, _ := r.ReadString('\n')
 				user = strings.TrimSpace(v)
 			}
 			if passFile == "" {
-				fmt.Fprint(runtimeStderr, "Bridge password file path: ")
+				if _, err := fmt.Fprint(prompts, "Bridge password file path: "); err != nil {
+					return nil, false, fmt.Errorf("write auth prompt: %w", err)
+				}
 				v, _ := r.ReadString('\n')
 				passFile = strings.TrimSpace(v)
 			}
