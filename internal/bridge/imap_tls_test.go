@@ -83,6 +83,7 @@ func TestDialIMAPRejectsInvalidServerCertificateBeforeLogin(t *testing.T) {
 				cfg.TLSCertFile = certificateFile
 			}
 			client, dialErr := DialIMAP(cfg, time.Second)
+			listener.Close()
 			if client != nil {
 				client.Close()
 			}
