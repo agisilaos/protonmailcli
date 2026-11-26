@@ -12,6 +12,7 @@ import (
 
 func localPreviewData(t *testing.T, c regressionCLI, mode, input string, args ...string) map[string]any {
 	t.Helper()
+	t.Setenv("PMAIL_OUTPUT", "")
 	argv := []string{"--no-input", "--config", c.config, "--state", c.state}
 	if mode != "human" {
 		argv = append(argv, "--"+mode)
