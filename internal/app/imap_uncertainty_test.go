@@ -65,6 +65,8 @@ func draftIMAPServer(t *testing.T, behavior string) (imapTestEndpoint, *atomic.I
 							return
 						}
 						r = bufio.NewReader(c)
+					case "LIST":
+						fmt.Fprintf(c, "* LIST () NIL Drafts\r\n%s OK listed\r\n", tag)
 					case "UID":
 						if len(fields) > 2 && fields[2] == "SEARCH" {
 							if behavior == "fetch-failure" {
@@ -123,17 +125,22 @@ func imapCommandArgs(t *testing.T, endpoint imapTestEndpoint) []string {
 	cfg := config.Default()
 	cfg.Timeout = "2s"
 	cfg.Bridge.Host = "127.0.0.1"
-	cfg.Bridge.IMAPPort = endpoint.port
 	cfg.Bridge.Username = "synthetic@example.invalid"
 	cfg.Bridge.TLSCertFile = filepath.Join(root, "trusted-fixture.pem")
-	if err := os.WriteFile(cfg.Bridge.TLSCertFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: endpoint.certificate}), 0600); err != nil {
-		t.Fatal(err)
-	}
+	configureIMAPTestEndpoint(t, &cfg, endpoint)
 	p := filepath.Join(root, "config.toml")
 	if err := config.Save(p, cfg); err != nil {
 		t.Fatal(err)
 	}
 	return []string{"--json", "--config", p, "--state", filepath.Join(root, "state.json")}
+}
+
+func configureIMAPTestEndpoint(t *testing.T, cfg *config.Config, endpoint imapTestEndpoint) {
+	t.Helper()
+	cfg.Bridge.IMAPPort = endpoint.port
+	if err := os.WriteFile(cfg.Bridge.TLSCertFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: endpoint.certificate}), 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestUncertainDraftDoesNotAdvertiseRetry(t *testing.T) {
@@ -159,7 +166,7 @@ func TestUncertainDraftDoesNotAdvertiseRetry(t *testing.T) {
 			if exit != 4 || count.Load() != 1 || smtpCalls != 0 {
 				t.Fatalf("uncertain dispatch: exit=%d appends=%d smtp=%d output=%s", exit, count.Load(), smtpCalls, out.String())
 			}
-			for _, want := range []string{`"retryable":false`, `"code":"imap_draft_create_uncertain"`, `"category":"uncertain"`, `Inspect Drafts before retrying`} {
+			for _, want := range []string{`"retryable":false`, `"code":"imap_draft_create_uncertain"`, `"category":"uncertain"`, `Inspect INBOX and Drafts before retrying`} {
 				if !strings.Contains(out.String(), want) {
 					t.Fatalf("missing %q: %s", want, out.String())
 				}

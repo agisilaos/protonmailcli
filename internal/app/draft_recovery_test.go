@@ -146,7 +146,8 @@ func TestInterruptedDraftKeepsPendingIntent(t *testing.T) {
 	}
 	_ = cmd.Wait()
 	var out bytes.Buffer
-	if exit := Run(args, strings.NewReader(""), &out, io.Discard); exit != 4 || count.Load() != 1 || !strings.Contains(out.String(), "unfinished recovery record") {
+	if exit := Run(args, strings.NewReader(""), &out, io.Discard); exit != 4 || count.Load() != 1 || !strings.Contains(out.String(), "unfinished recovery record") ||
+		!strings.Contains(out.String(), "INBOX") || !strings.Contains(out.String(), "Drafts") {
 		t.Fatalf("interrupted replay exit=%d appends=%d output=%s", exit, count.Load(), out.String())
 	}
 }

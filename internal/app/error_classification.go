@@ -14,6 +14,7 @@ var errorCodeClasses = map[string]classifiedError{
 	"config_missing":              {Category: "config", Retryable: false},
 	"config_error":                {Category: "config", Retryable: false},
 	"state_error":                 {Category: "runtime", Retryable: false},
+	"state_busy":                  {Category: "conflict", Retryable: true},
 	"state_save_failed":           {Category: "runtime", Retryable: false},
 	"auth_missing":                {Category: "auth", Retryable: false},
 	"not_found":                   {Category: "not_found", Retryable: false},

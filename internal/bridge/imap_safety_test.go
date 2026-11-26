@@ -22,7 +22,7 @@ func TestAppendDraftUsesAssignedUID(t *testing.T) {
 		{"truncated", "", ""},
 	} {
 		t.Run(response.name, func(t *testing.T) {
-			transcript := "A0001 OK list\r\nA0002 OK selected\r\n+ ready\r\n"
+			transcript := "* LIST () NIL Drafts\r\nA0001 OK list\r\nA0002 OK selected\r\n+ ready\r\n"
 			if response.completion != "" {
 				transcript += "A0003 " + response.completion + "\r\n"
 			}
@@ -150,6 +150,28 @@ func TestListMessagesCompleteAndEmpty(t *testing.T) {
 			messages, err := c.ListMessages("INBOX", "ALL")
 			if err != nil || len(messages) != count {
 				t.Fatalf("messages=%v err=%v", messages, err)
+			}
+		})
+	}
+}
+
+func TestAppendWaitsForTaggedRejectionOrContinuation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reply   string
+		wantUID string
+		wantErr error
+	}{
+		{"rejected", "* 1 EXISTS\r\nA0003 no cannot append\r\n", "", ErrAppendRejected},
+		{"accepted", "* OK [ALERT] maintenance scheduled\r\n+ ready\r\nA0003 ok [APPENDUID 12 41] appended\r\n", "41", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transcript := "* LIST () NIL Drafts\r\nA0001 OK listed\r\nA0002 OK selected\r\n" + tc.reply
+			var sent bytes.Buffer
+			c := &IMAPClient{r: bufio.NewReader(strings.NewReader(transcript)), w: bufio.NewWriter(&sent), tag: 1}
+			uid, err := c.AppendDraft("fixture body")
+			if uid != tc.wantUID || !errors.Is(err, tc.wantErr) || strings.Contains(sent.String(), "fixture body") != (tc.wantUID != "") {
+				t.Fatalf("uid=%q err=%v commands=%q", uid, err, sent.String())
 			}
 		})
 	}

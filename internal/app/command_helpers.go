@@ -28,7 +28,7 @@ func validateLeafArguments(rest []string) error {
 		if err := fs.Parse(rest[n:]); err != nil {
 			unknown := strings.TrimPrefix(err.Error(), "flag provided but not defined: ")
 			switch unknown {
-			case "-json", "-plain", "-no-input", "-dry-run", "-n", "-config", "-state", "-profile":
+			case "-json", "-plain", "-no-input", "-dry-run", "-n", "-config", "-state", "-profile", "-expect-account":
 				name := "-" + unknown
 				if unknown == "-n" {
 					name = "-n"

@@ -1,6 +1,9 @@
 package app
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMailboxActionListTypedResponse(t *testing.T) {
 	boxes := []mailboxInfo{{ID: "inbox", Name: "INBOX", Kind: "system"}}
@@ -35,5 +38,14 @@ func TestMailboxActionResolveTypedResponse(t *testing.T) {
 	}
 	if resp.MatchedBy != "id_exact" || resp.Source != "imap" {
 		t.Fatalf("unexpected response: %#v", resp)
+	}
+}
+
+func TestMailboxAmbiguityHintQuotesExactShellArguments(t *testing.T) {
+	boxes := []mailboxInfo{{ID: "cost_usd", Name: "Cost $USD's"}, {ID: "cost_usd", Name: "Cost-USD"}}
+	_, _, err := mailboxAction("resolve", []string{"--name", "cost_usd"}, boxes, "imap")
+	failure, ok := err.(cliError)
+	if !ok || !strings.Contains(failure.hint, `'Cost $USD'\''s'`) || !strings.Contains(failure.hint, "'Cost-USD'") {
+		t.Fatalf("hint must preserve each name when pasted into a shell: %v (%v)", failure.hint, err)
 	}
 }

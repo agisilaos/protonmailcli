@@ -6,14 +6,17 @@ import (
 	"path/filepath"
 )
 
-// replaceState preserves the previous file until the replacement is complete.
+// replaceState preserves the previous file until publication. A subsequent
+// directory-sync failure leaves the replacement visible and returns an error.
 func replaceState(path string, data []byte) error {
 	mode := os.FileMode(0600)
+	var original os.FileInfo
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("state target is not a regular file: %s", path)
 		}
 		mode = info.Mode().Perm()
+		original = info
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -23,6 +26,9 @@ func replaceState(path string, data []byte) error {
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
+	if err := preserveStateGroup(f, original); err != nil {
+		return err
+	}
 	if err := f.Chmod(mode); err != nil {
 		return err
 	}
@@ -35,5 +41,5 @@ func replaceState(path string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	return publishState(f.Name(), path)
 }

@@ -18,8 +18,19 @@ func useLocalStateMode() bool {
 	return strings.TrimSpace(os.Getenv("PMAIL_USE_LOCAL_STATE")) == "1"
 }
 
+func effectiveBridgeUsername(cfg config.Config, st *model.State) string {
+	return firstNonEmpty(st.Bridge.ActiveUsername, st.Auth.Username, cfg.Bridge.Username)
+}
+
+func (g globalOptions) checkExpectedAccount(cfg config.Config, st *model.State) error {
+	if g.expectAccount != "" && effectiveBridgeUsername(cfg, st) != g.expectAccount {
+		return cliError{exit: 2, code: "validation_error", msg: "the selected Bridge username does not match --expect-account", hint: "Check the active Bridge account in the selected config and state"}
+	}
+	return nil
+}
+
 func resolveBridgeCredentials(cfg config.Config, st *model.State, passwordFileOverride string) (string, string, error) {
-	username := firstNonEmpty(st.Bridge.ActiveUsername, st.Auth.Username, cfg.Bridge.Username)
+	username := effectiveBridgeUsername(cfg, st)
 	if username == "" {
 		return "", "", cliError{exit: 3, code: "config_error", msg: "bridge username is missing", hint: "Run setup or auth login"}
 	}
@@ -76,15 +87,11 @@ func parseUID(id string) (string, error) {
 	if v == "" {
 		return "", fmt.Errorf("empty id")
 	}
-	if strings.HasPrefix(v, "imap:") {
+	if isQualifiedIMAPID(v) {
 		_, uid, err := parseMailboxUID(v, "Drafts")
 		return uid, err
 	}
 	return v, nil
-}
-
-func imapDraftID(uid string) string {
-	return "imap:Drafts:" + uid
 }
 
 func imapMessageID(uid string) string {
@@ -92,11 +99,33 @@ func imapMessageID(uid string) string {
 }
 
 func imapMessageIDForMailbox(mailbox, uid string) string {
-	box := strings.TrimSpace(mailbox)
-	if box == "" {
-		box = "INBOX"
+	// The literal Drafts name must be distinguishable from older receipts that
+	// used imap:Drafts as an alias for whichever mailbox currently has the role.
+	if mailbox == "Drafts" {
+		return "imap-v2:" + mailbox + ":" + uid
 	}
-	return "imap:" + box + ":" + uid
+	return imapMessagePayloadID(mailbox, uid)
+}
+
+// Keep canonical request hashes compatible with existing follow-up receipts.
+func imapMessagePayloadID(mailbox, uid string) string {
+	if mailbox == "" {
+		mailbox = "INBOX"
+	}
+	return "imap:" + mailbox + ":" + uid
+}
+
+func isQualifiedIMAPID(id string) bool {
+	v := strings.TrimSpace(id)
+	return strings.HasPrefix(v, "imap:") || strings.HasPrefix(v, "imap-v2:")
+}
+
+func isLegacyDraftID(id string) bool {
+	if strings.HasPrefix(strings.TrimSpace(id), "imap-v2:") {
+		return false
+	}
+	mailbox, _, err := parseMailboxUID(id, "Drafts")
+	return err == nil && mailbox == "Drafts"
 }
 
 func parseMailboxUID(id, defaultMailbox string) (string, string, error) {
@@ -104,12 +133,16 @@ func parseMailboxUID(id, defaultMailbox string) (string, string, error) {
 	if v == "" {
 		return "", "", fmt.Errorf("empty id")
 	}
-	if strings.HasPrefix(v, "imap:") {
+	if isQualifiedIMAPID(v) {
+		prefix := "imap:"
+		if strings.HasPrefix(v, "imap-v2:") {
+			prefix = "imap-v2:"
+		}
 		split := strings.LastIndex(v, ":")
-		if split <= len("imap:") || split == len(v)-1 {
+		if split <= len(prefix) || split == len(v)-1 {
 			return "", "", fmt.Errorf("invalid imap id")
 		}
-		box, uid := v[len("imap:"):split], v[split+1:]
+		box, uid := v[len(prefix):split], v[split+1:]
 		if err := validMessageUID(uid); err != nil {
 			return "", "", err
 		}

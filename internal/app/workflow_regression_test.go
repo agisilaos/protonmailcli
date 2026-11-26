@@ -13,6 +13,7 @@ import (
 	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 	"protonmailcli/internal/model"
+	"protonmailcli/internal/store"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,16 +23,35 @@ import (
 
 // workflowServer is a loopback-only IMAP peer. It never contacts a mail provider.
 type workflowServer struct {
-	mu            sync.Mutex
-	commands      []string
-	appended      []string
-	draftBox      string
-	boxes         []string
-	fetchFailure  bool
-	appendFailure bool
-	deleteFailure bool
-	missing       bool
-	raw           string
+	mu                   sync.Mutex
+	commands             []string
+	appended             []string
+	draftBox             string
+	boxes                []string
+	listRows             []string
+	unavailableMailbox   string
+	fetchFailure         bool
+	listFailure          bool
+	lowercaseSearch      bool
+	appendFailure        bool
+	appendCompletionLost bool
+	deleteFailure        bool
+	moveCompletionLost   bool
+	missing              bool
+	raw                  string
+	afterAppend          func()
+}
+
+// workflowOpenedMailbox checks the transcript for either IMAP selection mode.
+func workflowOpenedMailbox(commands []string, mailbox string) bool {
+	for _, command := range commands {
+		_, rest, _ := strings.Cut(command, " ")
+		verb, argument, _ := strings.Cut(rest, " ")
+		if (verb == "SELECT" || verb == "EXAMINE") && (mailbox == "" || argument == strconv.Quote(mailbox)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *workflowServer) snapshot() ([]string, []string) {
@@ -90,15 +110,35 @@ func newWorkflowServer(t *testing.T, s *workflowServer) imapTestEndpoint {
 					case "CAPABILITY":
 						fmt.Fprintf(c, "* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\n%s OK capabilities\r\n", tag)
 					case "LIST":
-						fmt.Fprintf(c, "* LIST (\\Drafts) \"/\" %q\r\n", s.draftBox)
-						for _, b := range s.boxes {
-							fmt.Fprintf(c, "* LIST () \"/\" %q\r\n", b)
+						if s.listFailure {
+							fmt.Fprintf(c, "%s NO synthetic list failure\r\n", tag)
+							continue
+						}
+						if len(s.listRows) > 0 {
+							for _, row := range s.listRows {
+								fmt.Fprint(c, row+"\r\n")
+							}
+						} else {
+							fmt.Fprintf(c, "* LIST (\\Drafts) \"/\" %q\r\n", s.draftBox)
+							for _, b := range s.boxes {
+								fmt.Fprintf(c, "* LIST () \"/\" %q\r\n", b)
+							}
 						}
 						fmt.Fprintf(c, "%s OK listed\r\n", tag)
+					case "SELECT", "EXAMINE":
+						if s.unavailableMailbox != "" && strings.TrimSpace(strings.TrimPrefix(line, tag+" "+cmd+" ")) == strconv.Quote(s.unavailableMailbox) {
+							fmt.Fprintf(c, "%s NO mailbox unavailable\r\n", tag)
+						} else {
+							fmt.Fprintf(c, "%s OK opened\r\n", tag)
+						}
 					case "UID":
 						switch fields[2] {
 						case "SEARCH":
-							fmt.Fprintf(c, "* SEARCH 41\r\n%s OK searched\r\n", tag)
+							response := "SEARCH"
+							if s.lowercaseSearch {
+								response = "search"
+							}
+							fmt.Fprintf(c, "* %s 41\r\n%s OK searched\r\n", response, tag)
 						case "FETCH":
 							if s.fetchFailure {
 								fmt.Fprintf(c, "%s NO synthetic fetch failure\r\n", tag)
@@ -110,6 +150,11 @@ func newWorkflowServer(t *testing.T, s *workflowServer) imapTestEndpoint {
 								s.mu.Unlock()
 								fmt.Fprintf(c, "* 1 FETCH (UID %s FLAGS () BODY[] {%d}\r\n%s\r\n)\r\n%s OK fetched\r\n", fields[3], len(raw), raw, tag)
 							}
+						case "MOVE":
+							if s.moveCompletionLost {
+								return // The synthetic MOVE executes, but its tagged reply is lost.
+							}
+							fmt.Fprintf(c, "%s OK moved\r\n", tag)
 						default:
 							if s.deleteFailure && fields[2] == "STORE" {
 								fmt.Fprintf(c, "%s NO deletion rejected\r\n", tag)
@@ -135,6 +180,12 @@ func newWorkflowServer(t *testing.T, s *workflowServer) imapTestEndpoint {
 						s.appended = append(s.appended, string(data[:n]))
 						uid := 90 + len(s.appended)
 						s.mu.Unlock()
+						if s.afterAppend != nil {
+							s.afterAppend()
+						}
+						if s.appendCompletionLost {
+							return
+						}
 						fmt.Fprintf(c, "%s OK [APPENDUID 123 %d] appended\r\n", tag, uid)
 					case "LOGOUT":
 						fmt.Fprintf(c, "%s OK bye\r\n", tag)
@@ -184,7 +235,7 @@ func TestPB20ColonMailboxIDRoundTrip(t *testing.T) {
 	args := append(imapCommandArgs(t, newWorkflowServer(t, s)), "message", "get", "--message-id", "imap:Project:2026:41")
 	code, out := runWorkflow(t, args, "")
 	cmds, _ := s.snapshot()
-	if code != 0 || !strings.Contains(strings.Join(cmds, "\n"), `SELECT "Project:2026"`) || !strings.Contains(out, `"id":"imap:Project:2026:41"`) {
+	if code != 0 || !strings.Contains(strings.Join(cmds, "\n"), `EXAMINE "Project:2026"`) || !strings.Contains(out, `"id":"imap:Project:2026:41"`) {
 		t.Fatalf("exit=%d out=%s commands=%v", code, out, cmds)
 	}
 }
@@ -205,7 +256,7 @@ func TestPB22DraftListingUsesDiscoveredMailbox(t *testing.T) {
 			args := append(imapCommandArgs(t, newWorkflowServer(t, s)), cmd...)
 			code, out := runWorkflow(t, args, "")
 			cmds, _ := s.snapshot()
-			if code != 0 || !strings.Contains(strings.Join(cmds, "\n"), `SELECT "Brouillons"`) {
+			if code != 0 || !strings.Contains(strings.Join(cmds, "\n"), `EXAMINE "Brouillons"`) {
 				t.Fatalf("exit=%d out=%s commands=%v", code, out, cmds)
 			}
 		})
@@ -269,7 +320,7 @@ func TestPB09FallbackNeverReturnsSourceUID(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		code, out := runWorkflow(t, args, "")
-		if code != 4 || !strings.Contains(out, `"code":"imap_draft_create_uncertain"`) || strings.Contains(out, "imap:Drafts:88") || sends != 1 {
+		if code != 4 || !strings.Contains(out, `"code":"imap_draft_create_uncertain"`) || (strings.Contains(out, "imap:Drafts:88") || strings.Contains(out, "imap-v2:Drafts:88")) || sends != 1 {
 			t.Fatalf("run=%d exit=%d sends=%d out=%s", i, code, sends, out)
 		}
 	}
@@ -281,6 +332,16 @@ func captureWorkflowSMTP(t *testing.T, args []string) func() []string {
 
 func captureWorkflowSMTPWithCompletion(t *testing.T, args []string, acknowledge bool) func() []string {
 	t.Helper()
+	reply := ""
+	if acknowledge {
+		reply = "250 accepted"
+	}
+	return captureWorkflowSMTPWithReplies(t, args, reply)
+}
+
+func captureWorkflowSMTPWithReplies(t *testing.T, args []string, firstReply string, laterReplies ...string) func() []string {
+	t.Helper()
+	replies := append([]string{firstReply}, laterReplies...)
 	// httptest peers share the fixture certificate trusted by imapCommandArgs.
 	certificate := httptest.NewTLSServer(nil)
 	serverTLS := certificate.TLS.Clone()
@@ -348,11 +409,12 @@ func captureWorkflowSMTPWithCompletion(t *testing.T, args []string, acknowledge 
 						}
 						mu.Lock()
 						messages = append(messages, b.String())
+						reply := replies[min(len(messages)-1, len(replies)-1)]
 						mu.Unlock()
-						if !acknowledge {
+						if reply == "" {
 							return
 						}
-						fmt.Fprint(c, "250 accepted\r\n")
+						fmt.Fprint(c, reply+"\r\n")
 					case "QUIT":
 						fmt.Fprint(c, "221 bye\r\n")
 						return
@@ -592,7 +654,7 @@ func TestDraftUpdatePartialOutcomePreservesConfirmedID(t *testing.T) {
 	args := append(imapCommandArgs(t, newWorkflowServer(t, s)), "draft", "update", "--draft-id", "41", "--subject", "changed")
 	code, out := runWorkflow(t, args, "")
 	_, raw := s.snapshot()
-	if code != 4 || len(raw) != 1 || !strings.Contains(out, `"code":"imap_draft_update_uncertain"`) || !strings.Contains(out, `"retryable":false`) || !strings.Contains(out, "imap:Drafts:91") || !strings.Contains(out, "imap:Drafts:41") {
+	if code != 4 || len(raw) != 1 || !strings.Contains(out, `"code":"imap_draft_update_uncertain"`) || !strings.Contains(out, `"retryable":false`) || !strings.Contains(out, "imap-v2:Drafts:91") || !strings.Contains(out, "imap-v2:Drafts:41") {
 		t.Fatalf("exit=%d out=%s raw=%v", code, out, raw)
 	}
 }
@@ -656,5 +718,86 @@ func TestThreadHeadersParticipateInSendIdempotency(t *testing.T) {
 	code, out := runWorkflow(t, args, "")
 	if code != 6 || !strings.Contains(out, "idempotency_conflict") || len(sent()) != 1 {
 		t.Fatalf("replay exit=%d sends=%d out=%s", code, len(sent()), out)
+	}
+}
+
+func TestIMAPMessageAndTagLockOnlyForReceipts(t *testing.T) {
+	const plainBatch = `[{"draft_id":"41","confirm_send":"41"}]`
+	const keyedItem = `[{"draft_id":"41","confirm_send":"41","idempotency_key":"row"}]`
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		input     string
+		wantBusy  bool
+		wantSends int
+	}{
+		{"tag create", []string{"tag", "create", "--name", "work"}, "", false, 0},
+		{"send", []string{"message", "send", "--draft-id", "41", "--confirm-send", "41"}, "", false, 1},
+		{"send with key", []string{"message", "send", "--draft-id", "41", "--confirm-send", "41", "--idempotency-key", "one"}, "", true, 0},
+		{"batch", []string{"message", "send-many", "--stdin"}, plainBatch, false, 1},
+		{"batch with keyed item", []string{"message", "send-many", "--stdin"}, keyedItem, true, 0},
+		{"batch with key", []string{"message", "send-many", "--stdin", "--idempotency-key", "batch"}, plainBatch, true, 0},
+		{"follow-up", []string{"message", "follow-up", "--message-id", "41", "--body", "status"}, "", false, 0},
+		{"follow-up with key", []string{"message", "follow-up", "--message-id", "41", "--body", "status", "--idempotency-key", "follow"}, "", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &workflowServer{}
+			base := imapCommandArgs(t, newWorkflowServer(t, s))
+			sent := captureWorkflowSMTP(t, base)
+			writer, err := store.New(base[4]).LockWriter()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.Close()
+			code, out := runWorkflow(t, append(base, tc.args...), tc.input)
+			if tc.wantBusy {
+				if code != 6 || !strings.Contains(out, "state_busy") {
+					t.Fatalf("exit=%d out=%s", code, out)
+				}
+				commands, _ := s.snapshot()
+				if len(commands) != 0 {
+					t.Fatalf("contacted IMAP before acquiring lock: %v", commands)
+				}
+			} else if code != 0 {
+				t.Fatalf("exit=%d out=%s", code, out)
+			}
+			if n := len(sent()); n != tc.wantSends {
+				t.Fatalf("SMTP accepted %d messages, want %d", n, tc.wantSends)
+			}
+		})
+	}
+}
+
+func TestCompletedSendBatchReceiptPrecedesItemVerification(t *testing.T) {
+	server := &workflowServer{}
+	base := imapCommandArgs(t, newWorkflowServer(t, server))
+	sent := captureWorkflowSMTP(t, base)
+	itemArgs := append(base, "message", "send-many", "--stdin")
+	commandArgs := append(append([]string(nil), itemArgs...), "--idempotency-key", "batch")
+	const manifest = `[{"draft_id":"41","confirm_send":"41","idempotency_key":"item"}]`
+	if code, out := runWorkflow(t, commandArgs, manifest); code != 0 {
+		t.Fatalf("first batch: %d %s", code, out)
+	}
+	server.mu.Lock()
+	server.raw += " changed"
+	server.mu.Unlock()
+	before, _ := server.snapshot()
+	code, replay := runWorkflow(t, commandArgs, manifest)
+	after, _ := server.snapshot()
+	replayCommands := strings.Join(after[len(before):], "\n")
+	if code != 0 || strings.Contains(replayCommands, "LOGIN ") || strings.Contains(replayCommands, "UID FETCH ") || len(sent()) != 1 {
+		t.Fatalf("command receipt accessed the server: %d %s (%s)", code, replay, replayCommands)
+	}
+	if code, out := runWorkflow(t, itemArgs, manifest); code != 1 || !strings.Contains(out, "idempotency_conflict") || len(sent()) != 1 {
+		t.Fatalf("item receipt did not verify the changed body: %d %s", code, out)
+	}
+}
+
+func TestMessageSearchRecognizesLowercaseIMAPResults(t *testing.T) {
+	server := &workflowServer{lowercaseSearch: true}
+	args := append(imapCommandArgs(t, newWorkflowServer(t, server)), "search", "messages")
+	code, out := runWorkflow(t, args, "")
+	if code != 0 || !strings.Contains(out, `"id":"imap:INBOX:41"`) {
+		t.Fatalf("exit=%d out=%s", code, out)
 	}
 }

@@ -94,7 +94,8 @@ func newIMAPMessageSendFlags() (*flag.FlagSet, *imapMessageSendFlags) {
 }
 
 type imapMessageGetFlags struct {
-	id string
+	id           string
+	passwordFile string
 }
 
 func newIMAPMessageGetFlags() (*flag.FlagSet, *imapMessageGetFlags) {
@@ -102,6 +103,7 @@ func newIMAPMessageGetFlags() (*flag.FlagSet, *imapMessageGetFlags) {
 	fs := flag.NewFlagSet("message get", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.id, "message-id", "", "message id")
+	fs.StringVar(&opts.passwordFile, "password-file", "", "path to Bridge password file for this IMAP read")
 	return fs, opts
 }
 

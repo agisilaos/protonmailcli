@@ -151,29 +151,45 @@ the last message in the mailbox. If an accepted append lacks a valid UID or its
 completion is uncertain, the command fails with inspection guidance and does not
 try the SMTP fallback. Inspect Drafts before retrying: the draft may already
 exist. Servers without a usable APPENDUID cannot provide a confirmed draft ID.
-The public `imap:Drafts:<uid>` format remains unchanged. IMAP `draft create-many`
+IMAP draft IDs contain the exact server mailbox name, for example
+`imap-v2:Drafts:41` or `imap:Brouillons:41`. IMAP `draft create-many`
 returns exit 4 when every item fails and exit 10 for mixed success/failure;
 per-item failure details remain in the batch result.
+The `imap-v2` prefix binds the literal `Drafts` name instead of treating it as the
+legacy alias. Preserve returned IDs unchanged. A first draft operation fails if
+its exact receipt no longer matches the selected Drafts mailbox; it never follows the role
+to a different folder. Older `imap:Drafts:<uid>` receipts and bare draft UIDs keep
+their unambiguous legacy-alias behavior. IDs do not include IMAP UIDVALIDITY;
+after a mailbox is deleted and recreated under the same name, obtain fresh IDs.
 Uncertain creation uses `imap_draft_create_uncertain`; single-command JSON errors
 use category `uncertain` and `retryable: false`. Batch items carry that same error
-code. Inspect Drafts before deciding whether any replacement is needed. Replaying a cached IMAP
-batch with the same idempotency key preserves that exit status.
+code. Inspect Drafts before deciding whether any replacement is needed. If SMTP
+fallback was attempted, inspect both INBOX and Drafts: accepted delivery can
+remain in INBOX when its move to Drafts fails. Replaying a cached IMAP batch with
+the same idempotency key preserves that exit status.
 
 For IMAP `draft create` and `draft create-many`, keyed commands save a pending
 record before dispatch and checkpoint the terminal response, including batches
 with no confirmed successes. Reusing that key replays the saved result without
 sending again. An interruption or failed final save leaves a pending record:
 subsequent runs stop with `imap_draft_create_uncertain`, not an automatic retry.
-Inspect Drafts, retain the key and state, and reconcile every batch item. Use an
-existing draft ID when found; only after independently confirming absence should
-you create missing drafts under a new key (a batch replacement must include only
-missing items). There is no automatic reset or resume of an unfinished batch.
+Retain the key and state, and reconcile every batch item in Drafts and, if SMTP
+fallback was attempted, INBOX. Reuse or reconcile an existing copy when found;
+only after independently confirming absence from both locations should you
+create missing drafts under a new key (a batch replacement must include only
+missing items). An empty Drafts folder alone does not establish absence after
+SMTP fallback. There is no automatic reset or resume of an unfinished batch.
 
-Use one state-writing process at a time. Do not reuse recovery-bearing state with
-older binaries that ignore pending records. Unkeyed commands have no durable replay
-protection. Command-level batch payload identity retains the existing manifest hash: body-file
-paths, rather than their resolved bytes, participate in that hash. Dry runs do not
-reserve keys. This does not provide cross-process locking or power-loss guarantees.
+When two commands try to update the same state file, the second returns
+`state_busy` (exit 6) before making changes. Retry after the first writer finishes.
+IMAP sends, send batches, and follow-ups without command or item keys need only
+read access to local state. IMAP `tag create` also leaves local state untouched.
+Use the same CLI version across writers so they honor the lock and pending records.
+
+A command-level draft batch key covers the manifest and the body files read for
+rows with recipients and a single body source. If a previously recorded file-backed key conflicts, inspect Drafts
+before choosing a new key. Dry runs do not reserve keys, and unkeyed commands
+have no durable replay protection.
 
 `PMAIL_IMAP_DEBUG=1` omits the authentication exchange, including server text that
 could echo credentials. Other protocol diagnostics remain available.
@@ -203,7 +219,10 @@ List live drafts from Bridge IMAP:
 ./protonmailcli --json draft list
 ```
 
-Draft IDs in IMAP mode look like `imap:Drafts:<uid>` and can be passed back to `draft get`, `draft delete`, and `message send`.
+Pass the ID from `draft list` directly to `draft get`, `draft delete`, or `message send`.
+If the CLI reports an ambiguous older receipt, use its `message get` command
+for each candidate mailbox. Compare the recipients, subject, and body before
+choosing the intended draft. The listing covers only the selected Drafts folder.
 
 Create a threaded follow-up draft from an existing message:
 
@@ -458,7 +477,7 @@ The CLI is designed for deterministic agent loops:
 
 1. Start with `--json --no-input`.
 2. Read `nextCursor` and continue until it is empty.
-3. Use returned IDs directly (`imap:Drafts:<uid>`, `imap:INBOX:<uid>`).
+3. Use returned IDs directly (`imap-v2:Drafts:<uid>`, `imap:INBOX:<uid>`).
 4. Use `--dry-run` before mutating commands in planning phases.
 
 Example pagination loop:
@@ -482,8 +501,7 @@ go test ./...
 ```bash
 ./protonmailcli --json --no-input <command> ...
 ```
-3. Read IDs from output and feed them back without transformation:
-  `imap:Drafts:<uid>` for draft operations, `imap:INBOX:<uid>` for message operations.
+3. Read IDs from output and pass them back exactly, including their server mailbox name.
 4. Route by path telemetry when needed:
   use `data.createPath` / `data.sendPath` (or per-item `results[].createPath` / `results[].sendPath`) for deterministic branching.
 5. Use safety-first execution for mutating actions:
@@ -495,12 +513,42 @@ go test ./...
 go test ./internal/app -run TestContractFixtures -v
 ```
 
-Recommended agent sequence for “find and send draft”:
+Recommended agent sequence for “find and send draft”. Set `BRIDGE_CONFIG` and `BRIDGE_STATE`
+to the absolute paths for the intended Bridge instance, `BRIDGE_PROFILE` to
+its profile, and `BRIDGE_ACCOUNT` to its exact username. Refine the search
+until one draft matches, then review its recipients and body.
 
 ```bash
-./protonmailcli --json --no-input search drafts --query "KAOS" --limit 1 --cursor 0
-./protonmailcli --json --no-input message send --draft-id imap:Drafts:1 --confirm-send imap:Drafts:1
+unset draft_id reviewed_context
+reviewed_context=(--config "${BRIDGE_CONFIG:?Set the absolute config path}"
+                 --state "${BRIDGE_STATE:?Set the absolute state path}"
+                 --profile "${BRIDGE_PROFILE:?Set the Bridge profile}"
+                 --expect-account "${BRIDGE_ACCOUNT:?Set the intended Bridge username}") &&
+search_result=$(./protonmailcli --json --no-input "${reviewed_context[@]}" search drafts --query "KAOS") &&
+candidate_id=$(python3 -c 'import json, sys
+data = json.load(sys.stdin)["data"]
+if len(data["drafts"]) != 1 or data.get("total", 1) != 1:
+    sys.exit("Refine the search until exactly one draft matches")
+print(data["drafts"][0]["id"])' <<< "$search_result") &&
+  ./protonmailcli --json --no-input "${reviewed_context[@]}" draft get --draft-id "$candidate_id" &&
+  ./protonmailcli --json --no-input "${reviewed_context[@]}" --dry-run message send --draft-id "$candidate_id" --confirm-send "$candidate_id" &&
+  draft_id=$candidate_id
 ```
+
+After reviewing the preview, send that same draft from the same shell. The send stops
+if the effective Bridge username has changed. The saved options keep the same
+config, state, and profile if the shell defaults change.
+
+```bash
+: "${draft_id:?Select and preview a draft first}" "${reviewed_context[0]:?Restore the reviewed context first}" &&
+./protonmailcli --json --no-input "${reviewed_context[@]}" message send --draft-id "$draft_id" --confirm-send "$draft_id"
+```
+
+For retryable IMAP automation, generate a unique key for each intended send,
+such as a UUID. Before the first attempt, save it with the active Bridge
+username, draft ID, absolute config and state paths, and profile. Set `send_key` to that saved value and add
+`--idempotency-key "$send_key"` to the send command. For retries, use the same
+captured options, draft ID, and key. If delivery is uncertain, inspect it before retrying.
 
 ## Agent Playbooks
 
@@ -521,27 +569,54 @@ Why: avoids shell escaping issues and keeps prompt/content separation clean.
 
 ### 2. Batch draft ingestion from a manifest
 
-Maintain a manifest (`drafts.json`) and create drafts in a loop.
+Maintain a manifest (`drafts.json`) and create the drafts together. Each `to`
+array can contain one or more recipient addresses.
 
 Example manifest shape:
 
 ```json
 [
-  {"to":["a@example.com"],"subject":"Hello A","body_file":"./drafts/a.md"},
-  {"to":["b@example.com"],"subject":"Hello B","body_file":"./drafts/b.md"}
+  {"to":["a@example.com","second@example.com"],"subject":"Hello A","body_file":"./drafts/a.md","idempotency_key":"weekly-001-a"},
+  {"to":["b@example.com"],"subject":"Hello B","body_file":"./drafts/b.md","idempotency_key":"weekly-001-b"}
 ]
 ```
 
-Example execution loop:
+Before the first Bridge batch, set `BATCH_CONFIG` and `BATCH_STATE` to its
+absolute config and state paths, `BATCH_PROFILE` to its profile, and
+`BATCH_ACCOUNT` to the exact Bridge username whose drafts you reviewed.
+Record all four values with the manifest and restore them before a retry.
+
+To check the username, read `data.active` with
+`./protonmailcli --json --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" bridge account list`.
+If the active account is empty, read `data.username` from
+`./protonmailcli --json --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" auth status`.
+Each Bridge batch command below checks the recorded `BATCH_ACCOUNT` again
+before it reads drafts, replays a receipt, or dispatches a row.
+
+Use a distinct item-level `idempotency_key` for each intended draft and omit
+command-level `--idempotency-key` for this workflow. In Bridge mode, a
+command-level key caches the whole result, including partial failures.
+It cannot resume an already completed batch after input corrections. When failed rows report only local
+input errors, correct them and retry with the same item keys and state file,
+without a command-level key. Successful items replay their receipts. Preview the
+manifest first.
 
 ```bash
-jq -c '.[]' drafts.json | while read -r item; do
-  to=$(echo "$item" | jq -r '.to')
-  subject=$(echo "$item" | jq -r '.subject')
-  body_file=$(echo "$item" | jq -r '.body_file')
-  ./protonmailcli --json --no-input draft create --to "$to" --subject "$subject" --body-file "$body_file"
-done
+./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" --dry-run draft create-many --file drafts.json
 ```
+
+After checking the preview, create the drafts.
+
+```bash
+./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" draft create-many --file drafts.json
+```
+
+If Bridge reported a failure after a draft was dispatched, inspect Drafts before
+retrying. When SMTP fallback was attempted, inspect both INBOX and Drafts: a
+failed move can leave the accepted copy in INBOX. Use a fresh item key only after
+confirming the draft is missing from both locations; otherwise reconcile the
+existing copy without dispatching another.
+Follow the [IMAP draft recovery procedure](#imap-draft-identity-and-diagnostics).
 
 ### 3. Search with filters and pagination
 
@@ -564,16 +639,16 @@ Always send with explicit confirmation token in automation.
 
 ```bash
 ./protonmailcli --json --no-input message send \
-  --draft-id imap:Drafts:123 \
-  --confirm-send imap:Drafts:123
+  --draft-id imap-v2:Drafts:123 \
+  --confirm-send imap-v2:Drafts:123
 ```
 
 Preflight before bulk sends:
 
 ```bash
 ./protonmailcli --json --no-input --dry-run message send \
-  --draft-id imap:Drafts:123 \
-  --confirm-send imap:Drafts:123
+  --draft-id imap-v2:Drafts:123 \
+  --confirm-send imap-v2:Drafts:123
 ```
 
 ### 5. Tag-driven triage
@@ -598,28 +673,54 @@ Treat fixture breaks as API contract changes and update fixtures intentionally.
 
 ### 7. Native batch operations
 
+Use the four recorded `BATCH_` variables from the
+[batch ingestion recipe](#2-batch-draft-ingestion-from-a-manifest) for each command.
+
+The command-level keys below apply in Bridge mode. Matching input replays the
+stored batch result, including failures. Changing a recipient or body-file path
+in the manifest returns `idempotency_conflict` (exit 6). Local-state batches
+accept item keys and reject the command-level flag (exit 2).
+To retry a full manifest after correcting local input, reuse its original item keys.
+Every previously successful row must already have its own receipt. See the
+[batch ingestion recipe](#2-batch-draft-ingestion-from-a-manifest).
+If the first send used only a command key, reconcile the outcome and submit
+only rows confirmed unsent. Adding new item keys cannot identify earlier sends.
+For a draft batch without item receipts, submit only drafts confirmed missing.
+
+For an undispatched send row with no saved intent, reuse its original item key.
+An attempted keyed send can remain pending even after an explicit SMTP rejection.
+That key blocks every row in an item-only retry. Keep the original state and
+receipt. Only after independently confirming non-delivery, assign a fresh item key
+to that row. Leave accepted or unresolved sends out of the retry manifest.
+
 Create many drafts from a single manifest:
 
 ```bash
-./protonmailcli --json --no-input draft create-many --file drafts.json --idempotency-key batch-drafts-001
+./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" draft create-many --file drafts.json --idempotency-key batch-drafts-001
 ```
 
 Or pass manifest via stdin:
 
 ```bash
-cat drafts.json | ./protonmailcli --json --no-input draft create-many --stdin --idempotency-key batch-drafts-001
+cat drafts.json | ./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" draft create-many --stdin --idempotency-key batch-drafts-001
 ```
 
-Send many drafts with explicit confirmations:
+Preview the confirmed draft IDs in the reviewed account:
 
 ```bash
-./protonmailcli --json --no-input message send-many --file sends.json --idempotency-key batch-send-001
+./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" --dry-run message send-many --file sends.json --idempotency-key batch-send-001
+```
+
+After reviewing the preview, send the batch:
+
+```bash
+./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" message send-many --file sends.json --idempotency-key batch-send-001
 ```
 
 Or pass send manifest via stdin:
 
 ```bash
-cat sends.json | ./protonmailcli --json --no-input message send-many --stdin --idempotency-key batch-send-001
+cat sends.json | ./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" message send-many --stdin --idempotency-key batch-send-001
 ```
 
 ### 8. Retry-aware errors for agents
@@ -671,8 +772,8 @@ State updates are staged beside the destination and atomically replace it only
 after the complete file is written and closed. Failed staging leaves the previous
 state readable. Existing regular-file permissions are preserved; new files use
 0600. Symlink and directory targets are rejected without replacement. Use a
-regular state file. Run one state-writing process at a time; atomic replacement
-does not provide cross-process locking or a power-loss durability guarantee.
+regular state file. The CLI holds an exclusive writer lock across reads,
+checkpoints, and saves. Recovery after power loss is not guaranteed.
 
 Message search and draft listing fail if any selected message cannot be fetched.
 A failed collection returns an error rather than a successful partial or empty list;

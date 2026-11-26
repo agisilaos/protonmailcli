@@ -4,10 +4,23 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"protonmailcli/internal/model"
+	"protonmailcli/internal/store"
 )
+
+func receiptOperationConflict(st *model.State, key, operation string) error {
+	if record, exists := st.Idempotency[key]; key != "" && exists && record.Operation != operation {
+		return cliError{exit: 6, code: "idempotency_conflict", msg: "idempotency key already used with different operation"}
+	}
+	return nil
+}
 
 func idempotencyLookup(st *model.State, key, op string, payload any) (bool, any, error) {
 	if key == "" {
@@ -29,7 +42,11 @@ func idempotencyLookup(st *model.State, key, op string, payload any) (bool, any,
 	}
 	if rec.Failure != nil {
 		f := rec.Failure
-		return true, nil, cliError{exit: f.Exit, code: f.Code, msg: f.Message, hint: f.Hint}
+		hint := f.Hint
+		if f.Code == "imap_draft_create_uncertain" {
+			hint = withDraftRecoveryHint(hint)
+		}
+		return true, nil, cliError{exit: f.Exit, code: f.Code, msg: f.Message, hint: hint}
 	}
 	if len(rec.Response) == 0 {
 		return true, map[string]any{"ok": true, "replayed": true}, nil
@@ -74,11 +91,34 @@ func idempotencyStore(st *model.State, key, op string, payload, response any) er
 	if st.Idempotency == nil {
 		st.Idempotency = map[string]model.IdempotencyRecord{}
 	}
-	st.Idempotency[key] = model.IdempotencyRecord{Operation: op, PayloadHash: h, Response: b, CreatedAt: time.Now().UTC()}
+	record := model.IdempotencyRecord{Operation: op, PayloadHash: h, Response: b, CreatedAt: time.Now().UTC()}
+	if rows, ok := payload.([]draftCreateBatchPayloadItem); ok {
+		for i, row := range rows {
+			if row.BodyFileFingerprint == unusedDraftBodyFingerprint {
+				if record.SkippedDraftBodies == nil {
+					record.SkippedDraftBodies = make(map[int]bool)
+				}
+				record.SkippedDraftBodies[i] = true
+			}
+		}
+	}
+	st.Idempotency[key] = record
 	return nil
 }
 
 func payloadHash(v any) (string, error) {
+	// JSON replaces malformed UTF-8. Preserve its original bytes in a distinct
+	// representation while keeping existing text-only receipt hashes stable.
+	if payload, ok := v.(map[string]any); ok {
+		if body, ok := payload["body"].(string); ok && !utf8.ValidString(body) {
+			copy := maps.Clone(payload)
+			sum := sha256.Sum256([]byte(body))
+			copy["body"] = struct {
+				SHA256 string `json:"sha256"`
+			}{hex.EncodeToString(sum[:])}
+			v = copy
+		}
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "", err
@@ -87,12 +127,26 @@ func payloadHash(v any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func pendingDraftError() cliError {
-	return cliError{exit: 4, code: "imap_draft_create_uncertain", msg: "draft creation has an unfinished recovery record", hint: "Inspect Drafts before retrying. Keep this key and state; reconcile every batch item. Only after independently confirming absence, use a new key for missing drafts."}
+const draftRecoveryHint = "Inspect INBOX and Drafts before retrying."
+
+// Receipt text is historical, but the possible fallback location is unchanged.
+func withDraftRecoveryHint(text string) string {
+	if strings.Contains(text, draftRecoveryHint) {
+		return text
+	}
+	return strings.TrimSpace(text + " " + draftRecoveryHint)
+}
+
+func pendingDraftError(destination string) cliError {
+	hint := draftRecoveryHint
+	if destination != "" {
+		hint += fmt.Sprintf(" Inspect the original destination mailbox %q even if the Drafts role has moved.", destination)
+	}
+	return cliError{exit: 4, code: "imap_draft_create_uncertain", msg: "draft creation has an unfinished recovery record", hint: hint + " Keep this key and state until you reconcile every batch item. Only after confirming absence from both mailboxes, use a new key for missing drafts."}
 }
 
 // reserveDraft persists intent before any keyed draft can be dispatched.
-func reserveDraft(st *model.State, key, op string, payload any, checkpoint func(model.State) error) error {
+func reserveDraft(st *model.State, key, op string, payload any, destination string, checkpoint func(model.State) error) error {
 	if key == "" {
 		return nil
 	}
@@ -101,6 +155,7 @@ func reserveDraft(st *model.State, key, op string, payload any, checkpoint func(
 	}
 	rec := st.Idempotency[key]
 	rec.Status = "pending"
+	rec.DraftDestination = destination
 	st.Idempotency[key] = rec
 	if err := checkpoint(*st); err != nil {
 		return cliError{exit: 1, code: "state_save_failed", msg: "cannot persist draft intent; no draft dispatched", hint: err.Error()}
@@ -108,21 +163,29 @@ func reserveDraft(st *model.State, key, op string, payload any, checkpoint func(
 	return nil
 }
 
-func completeDraft(st *model.State, key, op string, payload, response any, failure *cliError, checkpoint func(model.State) error) error {
+func completeDraft(st *model.State, key, op string, payload, response any, failure *cliError, sourceID string, checkpoint func(model.State) error) error {
 	if key == "" {
 		return nil
 	}
+	destination := st.Idempotency[key].DraftDestination
 	if err := idempotencyStore(st, key, op, payload, response); err != nil {
 		return err
 	}
 	rec := st.Idempotency[key]
 	rec.Status = "complete"
+	rec.SourceID = sourceID
 	if failure != nil {
 		rec.Failure = &model.IdempotencyFailure{Exit: failure.exit, Code: failure.code, Message: failure.msg, Hint: failure.hint}
 	}
 	st.Idempotency[key] = rec
 	if err := checkpoint(*st); err != nil {
-		return pendingDraftError()
+		failure := pendingDraftError(destination)
+		if errors.Is(err, store.ErrCheckpointUncertain) {
+			failure.msg = "draft receipt was published, but its durability could not be confirmed"
+			failure.hint = "Keep the original key and payload; a matching retry may replay the visible receipt. Retain confirmed outcomes and do not dispatch them again."
+		}
+		failure.hint += " Checkpoint error: " + err.Error()
+		return errors.Join(failure, err)
 	}
 	return nil
 }
@@ -145,7 +208,7 @@ func pendingSendError(detail string) cliError {
 }
 
 // A persisted intent prevents replay after interruption or a failed receipt save.
-func reserveSend(st *model.State, key, op string, payload any, checkpoint func(model.State) error) error {
+func reserveSend(st *model.State, key, op string, payload any, sourceID string, checkpoint func(model.State) error) error {
 	if key == "" {
 		return nil
 	}
@@ -154,6 +217,7 @@ func reserveSend(st *model.State, key, op string, payload any, checkpoint func(m
 	}
 	rec := st.Idempotency[key]
 	rec.Status = "pending"
+	rec.SourceID = sourceID
 	st.Idempotency[key] = rec
 	if err := checkpoint(*st); err != nil {
 		return cliError{exit: 1, code: "state_save_failed", msg: "cannot persist send intent; this send was not dispatched", hint: err.Error()}
@@ -161,7 +225,7 @@ func reserveSend(st *model.State, key, op string, payload any, checkpoint func(m
 	return nil
 }
 
-func completeSend(st *model.State, key, op string, payload, response any, checkpoint func(model.State) error) error {
+func completeSend(st *model.State, key, op string, payload, response any, sourceID string, checkpoint func(model.State) error) error {
 	if key == "" {
 		return nil
 	}
@@ -170,9 +234,15 @@ func completeSend(st *model.State, key, op string, payload, response any, checkp
 	}
 	rec := st.Idempotency[key]
 	rec.Status = "complete"
+	rec.SourceID = sourceID
 	st.Idempotency[key] = rec
 	if err := checkpoint(*st); err != nil {
-		return pendingSendError("send completed but its receipt could not be saved: " + err.Error())
+		failure := pendingSendError("send completed but its receipt could not be saved: " + err.Error())
+		if errors.Is(err, store.ErrCheckpointUncertain) {
+			failure.msg = "send receipt was published, but its durability could not be confirmed"
+			failure.hint = "Keep the original key and payload; a matching retry may replay the visible receipt. Do not dispatch confirmed sends again. Checkpoint error: " + err.Error()
+		}
+		return errors.Join(failure, err)
 	}
 	return nil
 }
@@ -187,7 +257,13 @@ func pendingIdempotencyError(st *model.State, key, op string) error {
 		return nil
 	}
 	if op == "message.send" || op == "message.send-many" || op == "imap.message.send-item" {
-		return pendingSendError("send has an unfinished recovery record")
+		detail := "send has an unfinished recovery record"
+		if sourceID := strings.TrimSpace(rec.SourceID); isQualifiedIMAPID(sourceID) {
+			if mailbox, uid, err := parseMailboxUID(sourceID, ""); err == nil {
+				detail = "send for " + imapMessageIDForMailbox(mailbox, uid) + " has an unfinished recovery record"
+			}
+		}
+		return pendingSendError(detail)
 	}
-	return pendingDraftError()
+	return pendingDraftError(rec.DraftDestination)
 }

@@ -121,12 +121,17 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		}
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
+		changed := false
 		for i, it := range items {
 			if len(it.To) == 0 {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "missing to"})
 				continue
 			}
-			b, err := loadBody(it.Body, it.BodyFile, false)
+			if err := receiptOperationConflict(st, it.IdempotencyKey, "local.draft.create-item"); err != nil {
+				results = append(results, batchItemResponse{Index: i, ErrorCode: "idempotency_conflict", Error: err.Error()})
+				continue
+			}
+			b, err := loadDraftItemBody(it)
 			if err != nil {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: err.Error()})
 				continue
@@ -155,6 +160,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 			id := fmt.Sprintf("d_%d", now.UnixNano())
 			d := model.Draft{ID: id, To: it.To, Subject: it.Subject, Body: b, CreatedAt: now, UpdatedAt: now}
 			st.Drafts[id] = d
+			changed = true
 			result := batchItemResponse{Index: i, OK: true, DraftID: id, CreatePath: "local_state"}
 			if err := idempotencyStore(st, it.IdempotencyKey, "local.draft.create-item", payload, result); err != nil {
 				return nil, false, err
@@ -168,7 +174,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		} else if success > 0 && (len(results)-success) > 0 {
 			resp.exitCode = 10
 		}
-		return resp, success > 0, nil
+		return resp, changed, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown draft action: " + action}
 	}
@@ -235,6 +241,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		}
 		results := make([]batchItemResponse, 0, len(items))
 		success := 0
+		changed := false
 		for i, it := range items {
 			if strings.TrimSpace(it.ConfirmSend) == "" {
 				results = append(results, batchItemResponse{Index: i, OK: false, ErrorCode: "validation_error", Error: "missing confirm_send", DraftID: it.DraftID})
@@ -285,6 +292,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 			m := model.Message{ID: msgID, DraftID: d.ID, From: from, To: d.To, Subject: d.Subject, Body: d.Body, Tags: d.Tags, SentAt: now}
 			st.Messages[msgID] = m
 			st.Drafts[d.ID] = d
+			changed = true
 			result := batchItemResponse{Index: i, OK: true, DraftID: it.DraftID, SendPath: "local_state", SentAt: now.Format(time.RFC3339)}
 			if err := idempotencyStore(st, it.IdempotencyKey, "local.message.send-item", payload, result); err != nil {
 				return nil, false, err
@@ -298,7 +306,7 @@ func cmdMessage(action string, args []string, g globalOptions, cfg config.Config
 		} else if success > 0 && (len(results)-success) > 0 {
 			resp.exitCode = 10
 		}
-		return resp, success > 0, nil
+		return resp, changed, nil
 	case "follow-up":
 		fs, opts := newIMAPMessageFollowUpFlags()
 		if helpData, handled, err := parseFlagSetWithHelp(fs, args, g, "message follow-up", runtimeStdout); err != nil {

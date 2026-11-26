@@ -13,13 +13,13 @@
         "items": { "type": "string", "format": "email" }
       },
       "subject": { "type": "string", "minLength": 1 },
-      "body": { "type": "string" },
+      "body": { "type": "string", "minLength": 1 },
       "body_file": { "type": "string", "minLength": 1 },
       "idempotency_key": { "type": "string", "minLength": 1 }
     },
     "allOf": [
       {
-        "anyOf": [
+        "oneOf": [
           { "required": ["body"] },
           { "required": ["body_file"] }
         ]

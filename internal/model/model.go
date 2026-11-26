@@ -46,12 +46,17 @@ type AuthState struct {
 }
 
 type IdempotencyRecord struct {
-	Status      string              `json:"status,omitempty"`
-	Failure     *IdempotencyFailure `json:"failure,omitempty"`
-	Operation   string              `json:"operation"`
-	PayloadHash string              `json:"payloadHash"`
-	Response    json.RawMessage     `json:"response"`
-	CreatedAt   time.Time           `json:"createdAt"`
+	DraftDestination string              `json:"draftDestination,omitempty"`
+	Status           string              `json:"status,omitempty"`
+	SourceID         string              `json:"sourceId,omitempty"`
+	Failure          *IdempotencyFailure `json:"failure,omitempty"`
+	Operation        string              `json:"operation"`
+	PayloadHash      string              `json:"payloadHash"`
+	Response         json.RawMessage     `json:"response"`
+	CreatedAt        time.Time           `json:"createdAt"`
+
+	// Only draft command receipts whose conflicting rows left a body unread use this field.
+	SkippedDraftBodies map[int]bool `json:"skippedDraftBodies,omitempty"`
 }
 
 type BridgeState struct {

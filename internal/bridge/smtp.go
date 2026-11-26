@@ -1,13 +1,17 @@
 package bridge
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"sort"
 	"strings"
 	"time"
 )
+
+var ErrSMTPDataUncertain = errors.New("SMTP DATA completion is unconfirmed")
 
 type SMTPConfig struct {
 	Host        string
@@ -112,20 +116,78 @@ func Send(cfg SMTPConfig, in SendInput) error {
 			return err
 		}
 	}
-	w, err := c.Data()
+	// Use net/smtp for the transaction and dot encoding, but read DATA's
+	// replies ourselves: net/textproto rejects the code-only spelling SMTP allows.
+	id, err := c.Text.Cmd("DATA")
 	if err != nil {
 		return err
 	}
+	c.Text.StartResponse(id)
+	err = readSMTPDataReply(&c.Text.Reader, 354)
+	c.Text.EndResponse(id)
+	if err != nil {
+		return err
+	}
+	w := c.Text.DotWriter()
 	if _, err := w.Write([]byte(msg)); err != nil {
 		return err
 	}
 	if err := w.Close(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrSMTPDataUncertain, err)
+	}
+	if err := readSMTPDataReply(&c.Text.Reader, 250); err != nil {
+		var reply *textproto.Error
+		if errors.As(err, &reply) && reply.Code >= 400 && reply.Code < 600 {
+			return err
+		}
+		return fmt.Errorf("%w: %w", ErrSMTPDataUncertain, err)
 	}
 	// DATA's successful final response is the acceptance boundary. A cleanup
 	// failure after that must not tell callers to retry an accepted message.
 	_ = c.Quit()
 	return nil
+}
+
+// RFC 5321 section 4.2 permits a final line with just the code. Every line
+// in a multiline SMTP reply must carry the same code. The caller classifies
+// failures according to whether the end-of-DATA marker has been submitted.
+func readSMTPDataReply(reader *textproto.Reader, expectedCode int) error {
+	var code int
+	var message strings.Builder
+	for {
+		// textproto.ReadLine accepts a fragment at EOF and removes either LF or
+		// CRLF. SMTP replies are definitive only after their complete CRLF.
+		line, err := reader.R.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		if !strings.HasSuffix(line, "\r\n") {
+			return textproto.ProtocolError("SMTP DATA reply is missing its terminating CRLF")
+		}
+		line = strings.TrimSuffix(line, "\r\n")
+		if len(line) < 3 || line[0] < '2' || line[0] > '5' ||
+			line[1] < '0' || line[1] > '5' || line[2] < '0' || line[2] > '9' ||
+			(len(line) > 3 && line[3] != ' ' && line[3] != '-') {
+			return textproto.ProtocolError(fmt.Sprintf("invalid SMTP DATA reply: %q", line))
+		}
+		current := int(line[0]-'0')*100 + int(line[1]-'0')*10 + int(line[2]-'0')
+		if code != 0 && code != current {
+			return textproto.ProtocolError(fmt.Sprintf("inconsistent SMTP DATA reply codes: %d and %d", code, current))
+		}
+		code = current
+		if message.Len() > 0 {
+			message.WriteByte('\n')
+		}
+		if len(line) > 3 {
+			message.WriteString(line[4:])
+		}
+		if len(line) == 3 || line[3] == ' ' {
+			if code == expectedCode {
+				return nil
+			}
+			return &textproto.Error{Code: code, Msg: message.String()}
+		}
+	}
 }
 
 // ValidateMessageHeaders rejects line injection before constructing a message

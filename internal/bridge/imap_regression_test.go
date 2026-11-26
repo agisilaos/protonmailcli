@@ -35,6 +35,9 @@ func runIMAPExchange(t *testing.T, run func(*IMAPClient) error, reply func(strin
 			if reply != nil {
 				response = reply(tag, command)
 			}
+			if response == "" && command == `LIST "" "*"` {
+				response = "* LIST () NIL Drafts\r\n" + tag + " OK listed\r\n"
+			}
 			if response == "" {
 				response = tag + " OK done\r\n"
 			}
@@ -98,7 +101,7 @@ func TestIMAPQuotesMailboxBackslashesAndQuotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sent) != 2 || sent[0] != `A0001 SELECT "Work\\2026 \"mail\""` {
+	if len(sent) != 2 || sent[0] != `A0001 EXAMINE "Work\\2026 \"mail\""` {
 		t.Fatalf("mailbox incorrectly escaped: %q", sent)
 	}
 }
@@ -280,7 +283,7 @@ func TestMessagesPreserveBodyWhitespace(t *testing.T) {
 func TestIMAPDiscoveredMailboxQuotesRoundTrip(t *testing.T) {
 	const mailbox = `Projects\2026 "mail"`
 	const raw = "Subject: discovered\r\n\r\nbody"
-	var boxes []string
+	var boxes []Mailbox
 	err, sent := runIMAPExchange(t, func(c *IMAPClient) error {
 		var err error
 		boxes, err = c.ListMailboxes()
@@ -298,10 +301,10 @@ func TestIMAPDiscoveredMailboxQuotesRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(boxes) != 1 || boxes[0] != mailbox {
+	if len(boxes) != 1 || boxes[0].Name != mailbox {
 		t.Fatalf("mailbox name changed: %q", boxes)
 	}
-	if len(sent) != 4 || sent[2] != `A0003 SELECT "Projects\\2026 \"mail\""` {
+	if len(sent) != 4 || sent[2] != `A0003 EXAMINE "Projects\\2026 \"mail\""` {
 		t.Fatalf("discovered mailbox selected incorrectly: %q", sent)
 	}
 }
@@ -438,5 +441,23 @@ func TestGetDraftAcceptsCaseInsensitiveFetchItems(t *testing.T) {
 				t.Fatalf("case-insensitive FETCH items changed result: message=%+v error=%v", message, err)
 			}
 		})
+	}
+}
+
+func TestDiscoverAtomMailboxNames(t *testing.T) {
+	var boxes []Mailbox
+	var drafts string
+	err, _ := runIMAPExchange(t, func(c *IMAPClient) (err error) {
+		boxes, err = c.ListMailboxes()
+		if err != nil {
+			return err
+		}
+		drafts, err = c.DraftMailboxName()
+		return err
+	}, func(tag, command string) string {
+		return "* LIST () NIL INBOX\r\n" + `* LIST (\Drafts) "/" Entwuerfe` + "\r\n" + tag + " OK listed\r\n"
+	})
+	if err != nil || len(boxes) != 2 || boxes[0].Name != "Entwuerfe" || boxes[1].Name != "INBOX" || drafts != "Entwuerfe" {
+		t.Fatalf("mailboxes %+v, Drafts %q, error %v", boxes, drafts, err)
 	}
 }

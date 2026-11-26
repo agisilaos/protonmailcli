@@ -9,7 +9,12 @@ import (
 
 var nonMailboxIDChars = regexp.MustCompile(`[^a-z0-9]+`)
 
-func classifyMailbox(name string) (string, string) {
+func classifyMailbox(name string, flags ...string) (string, string) {
+	for _, flag := range flags {
+		if strings.EqualFold(flag, `\Drafts`) {
+			return "drafts", "system"
+		}
+	}
 	n := strings.TrimSpace(name)
 	l := strings.ToLower(n)
 	switch l {
@@ -37,9 +42,9 @@ func classifyMailbox(name string) (string, string) {
 }
 
 func resolveMailboxQuery(mailboxes []mailboxInfo, query string) (mailboxInfo, string, []mailboxInfo, error) {
-	q := strings.TrimSpace(query)
+	q := query
 	if q == "" {
-		return mailboxInfo{}, "", nil, fmt.Errorf("--name is required")
+		return mailboxInfo{}, "", nil, fmt.Errorf("mailbox name is required")
 	}
 	for _, m := range mailboxes {
 		if m.Name == q {
@@ -71,6 +76,33 @@ func resolveMailboxQuery(mailboxes []mailboxInfo, query string) (mailboxInfo, st
 			return strings.ToLower(matches[i].Name) < strings.ToLower(matches[j].Name)
 		})
 		return mailboxInfo{}, "", matches, fmt.Errorf("ambiguous mailbox name: %q matches %d mailboxes", q, len(matches))
+	}
+	// Surrounding whitespace is part of a server name. Only offer trimmed
+	// convenience lookup after preserving it yielded no match, and when doing
+	// so cannot collapse distinct names onto one another.
+	trimmed := strings.TrimSpace(q)
+	if trimmed == "" {
+		return mailboxInfo{}, "", nil, fmt.Errorf("mailbox name is required")
+	}
+	if trimmed != q {
+		for _, m := range mailboxes {
+			if m.ID == trimmed || strings.EqualFold(strings.TrimSpace(m.Name), trimmed) {
+				matches = append(matches, m)
+			}
+		}
+		if len(matches) == 1 {
+			match := matches[0]
+			matchedBy := "name_casefold"
+			if match.Name == trimmed {
+				matchedBy = "name_exact"
+			} else if match.ID == trimmed {
+				matchedBy = "id_exact"
+			}
+			return match, matchedBy, nil, nil
+		}
+		if len(matches) > 1 {
+			return mailboxInfo{}, "", matches, fmt.Errorf("ambiguous mailbox name: %q matches %d mailboxes after trimming whitespace", q, len(matches))
+		}
 	}
 	return mailboxInfo{}, "", nil, fmt.Errorf("mailbox not found: %q", q)
 }

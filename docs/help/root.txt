@@ -19,4 +19,5 @@ Resources:
 
 Global flags:
   --json --plain --no-input --dry-run --profile <name> --config <path> --state <path>
+  --expect-account <username>  Require this Bridge account for mail commands
   -h, --help  --version

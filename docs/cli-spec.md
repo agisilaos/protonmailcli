@@ -28,6 +28,7 @@ protonmailcli completion <bash|zsh|fish>
 - `--profile <name>`
 - `--config <path>`
 - `--state <path>`
+- `--expect-account <username>` requires an exact match with the effective Bridge username for draft, message, search, mailbox, and tag commands. A mismatch exits 2 before Bridge access or receipt replay. Local-state mode rejects this option.
 
 ## 5. Command tree
 
@@ -83,6 +84,11 @@ bridge
 ```
 
 ## 6. Key subcommand contracts
+
+New receipts for the literal `Drafts` mailbox use `imap-v2:Drafts:<uid>` to
+distinguish exact names from the older `imap:Drafts:<uid>` draft alias. Other
+mailbox names keep `imap:<mailbox>:<uid>`. All ID flags and manifest fields accept
+both formats; reuse the returned ID unchanged.
 
 ### `setup`
 
@@ -145,6 +151,12 @@ Exit behavior:
   - `--body-file <path|->`
   - `--stdin`
 
+### `message get`
+
+- `--message-id <id>` selects the message.
+- `--password-file <path>` supplies the Bridge password file for this IMAP read.
+  `PMAIL_SMTP_PASSWORD` takes precedence when set.
+
 ### `message send`
 
 - `--draft-id <id>` required
@@ -164,7 +176,7 @@ Exit behavior:
 ### `message follow-up`
 
 - `--message-id <id>` required
-  - accepts `imap:<mailbox>:<uid>` or a raw local-state ID
+  - accepts `imap:<mailbox>:<uid>`, `imap-v2:<mailbox>:<uid>`, or a raw local-state ID
 - optional recipients via repeatable `--to <email>`
   - default recipient resolution:
     - received message: original `From`
@@ -193,6 +205,8 @@ Exit behavior:
 
 ### `mailbox list`
 
+Bridge mailbox discovery accepts both unquoted and quoted names, including the mailbox marked for drafts.
+
 - Returns mailbox objects with:
   - `id` (stable canonical ID)
   - `name` (server mailbox name)
@@ -205,9 +219,15 @@ Exit behavior:
   - exact mailbox name
   - exact canonical mailbox ID
   - case-insensitive name (only when unique)
+- Matching preserves whitespace in server names. Trimming surrounding query
+  whitespace is a fallback only when it identifies one mailbox.
+- `search messages --mailbox` uses the same lookup and returns the exact server
+  name in its mailbox field and message IDs.
 - Returns:
   - `mailbox` object (`id`, `name`, `kind`)
   - `matchedBy` (`name_exact`, `id_exact`, `name_casefold`)
+
+Ambiguous mailbox lookups include shell-quoted exact names for a subsequent lookup.
 
 ## 7. I/O contract
 
@@ -238,6 +258,8 @@ Exit behavior:
   include `ok`, `error`, `message`, and `hint`. The error text fields escape
   backslash, tab, carriage return, and line feed as `\\`, `\t`, `\r`, and
   `\n`. When a result is available, the final `data` value is compact JSON.
+  For an uncertain send batch it identifies the processed rows, including
+  confirmed draft IDs and the row whose delivery needs reconciliation.
 - `--json`: exactly one JSON envelope object.
 
 ### stderr

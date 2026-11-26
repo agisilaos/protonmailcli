@@ -84,3 +84,7 @@ func TestFailedSavePreservesPreviousFile(t *testing.T) {
 	}
 
 }
+
+func TestStateCheckpointWithOpenSnapshot(t *testing.T) {
+	checkStateCheckpointWithOpenSnapshot(t, t.TempDir())
+}

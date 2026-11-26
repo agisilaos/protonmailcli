@@ -1,6 +1,8 @@
 Usage of message get:
   -message-id string
     	message id
+  -password-file string
+    	path to Bridge password file for this IMAP read
 
 Requires --message-id.
 Example: protonmailcli message get --message-id 123

@@ -20,6 +20,7 @@ type imapDraftClient interface {
 	TLSPolicy() *bridge.TLSPolicy
 	AppendDraft(raw string) (string, error)
 	DraftMailboxName() (string, error)
+	ExamineDraftDestination() error
 	SearchUIDs(mailbox, criteria string) ([]string, error)
 	MoveUID(srcMailbox, uid, dstMailbox string) error
 	Close() error
@@ -31,6 +32,41 @@ type draftCreateItem struct {
 	Body           string   `json:"body,omitempty"`
 	BodyFile       string   `json:"body_file,omitempty"`
 	IdempotencyKey string   `json:"idempotency_key,omitempty"`
+	bodyProvided   bool
+	fileProvided   bool
+}
+
+func (it *draftCreateItem) UnmarshalJSON(data []byte) error {
+	type plainItem draftCreateItem
+	var decoded plainItem
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields struct {
+		Body     json.RawMessage `json:"body"`
+		BodyFile json.RawMessage `json:"body_file"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*it = draftCreateItem(decoded)
+	it.bodyProvided = fields.Body != nil
+	it.fileProvided = fields.BodyFile != nil
+	return nil
+}
+
+func (it draftCreateItem) bodySourceError() error {
+	if (it.bodyProvided || it.Body != "") && (it.fileProvided || it.BodyFile != "") {
+		return fmt.Errorf("provide only one of body or body_file")
+	}
+	return nil
+}
+
+func loadDraftItemBody(it draftCreateItem) (string, error) {
+	if err := it.bodySourceError(); err != nil {
+		return "", err
+	}
+	return loadBody(it.Body, it.BodyFile, false)
 }
 
 type sendManyItem struct {
@@ -67,8 +103,8 @@ func cmdMailboxIMAP(action string, args []string, g globalOptions, cfg config.Co
 	}
 	res := make([]mailboxInfo, 0, len(boxes))
 	for _, b := range boxes {
-		id, kind := classifyMailbox(b)
-		res = append(res, mailboxInfo{ID: id, Name: b, Kind: kind})
+		id, kind := classifyMailbox(b.Name, b.Flags...)
+		res = append(res, mailboxInfo{ID: id, Name: b.Name, Kind: kind})
 	}
 	return mailboxAction(action, args, res, "imap")
 }
@@ -80,6 +116,14 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 	} else if handled {
 		return helpData, false, nil
 	}
+	if flagWasSet(fs, "mailbox") {
+		if action == "drafts" {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--mailbox is only supported for search messages"}
+		}
+		if opts.mailbox == "" {
+			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--mailbox requires a mailbox name"}
+		}
+	}
 	c, _, _, err := bridgeClient(cfg, st, "")
 	if err != nil {
 		return nil, false, err
@@ -90,9 +134,6 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 		return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 	}
 	if action == "drafts" {
-		if strings.TrimSpace(opts.mailbox) != "" {
-			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--mailbox is only supported for search messages"}
-		}
 		mailbox, err := c.DraftMailboxName()
 		if err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
@@ -107,7 +148,7 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 		paged, next := paginateMessages(items, start, lim)
 		out := make([]draftRecord, 0, len(paged))
 		for _, m := range paged {
-			out = append(out, draftRecord{ID: imapDraftID(m.UID), UID: m.UID, To: m.To, From: m.From, Subject: m.Subject, Date: m.Date.UTC().Format(time.RFC3339)})
+			out = append(out, draftRecord{ID: imapMessageIDForMailbox(mailbox, m.UID), UID: m.UID, To: m.To, From: m.From, Subject: m.Subject, Date: m.Date.UTC().Format(time.RFC3339)})
 		}
 		return draftListResponse{Drafts: out, Count: len(out), Total: len(items), NextCursor: next, Source: "imap"}, false, nil
 	}
@@ -115,8 +156,21 @@ func cmdSearchIMAP(action string, args []string, g globalOptions, cfg config.Con
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "search supports messages|drafts"}
 	}
 	targetMailbox := "INBOX"
-	if strings.TrimSpace(opts.mailbox) != "" {
-		targetMailbox = strings.TrimSpace(opts.mailbox)
+	if opts.mailbox != "" {
+		boxes, err := c.ListMailboxes()
+		if err != nil {
+			return nil, false, cliError{exit: 4, code: "imap_search_failed", msg: err.Error()}
+		}
+		mailboxes := make([]mailboxInfo, 0, len(boxes))
+		for _, box := range boxes {
+			id, kind := classifyMailbox(box.Name, box.Flags...)
+			mailboxes = append(mailboxes, mailboxInfo{ID: id, Name: box.Name, Kind: kind})
+		}
+		mailbox, _, ambiguous, err := resolveMailboxQuery(mailboxes, opts.mailbox)
+		if err != nil {
+			return nil, false, mailboxResolutionError(err, ambiguous, "--mailbox")
+		}
+		targetMailbox = mailbox.Name
 	}
 	items, err := c.ListMessages(targetMailbox, criteria)
 	if err != nil {
@@ -207,7 +261,7 @@ func cmdTagIMAP(action string, args []string, g globalOptions, cfg config.Config
 		if err := c.SetKeyword(mailbox, uid, opts.tag, action == "add"); err != nil {
 			return nil, false, cliError{exit: 4, code: "imap_tag_update_failed", msg: err.Error()}
 		}
-		return tagUpdateResponse{MessageID: imapMessageIDForMailbox(mailbox, uid), Tag: opts.tag, Changed: true, Source: "imap"}, true, nil
+		return tagUpdateResponse{MessageID: imapMessageIDForMailbox(mailbox, uid), Tag: opts.tag, Changed: true, Source: "imap"}, false, nil
 	default:
 		return nil, false, cliError{exit: 2, code: "usage_error", msg: "unknown tag action: " + action}
 	}

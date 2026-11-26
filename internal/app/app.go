@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,21 +20,24 @@ import (
 )
 
 type App struct {
-	checkpoint func(model.State) error
-	Stdout     io.Writer
-	Stderr     io.Writer
-	Stdin      io.Reader
+	loadState       func(write bool, operation string, keys ...string) error
+	stateWriteError func() error
+	checkpoint      func(model.State) error
+	Stdout          io.Writer
+	Stderr          io.Writer
+	Stdin           io.Reader
 }
 
 type globalOptions struct {
-	mode      output.Mode
-	noInput   bool
-	profile   string
-	dryRun    bool
-	showHelp  bool
-	showVer   bool
-	config    string
-	statePath string
+	mode          output.Mode
+	noInput       bool
+	profile       string
+	dryRun        bool
+	showHelp      bool
+	showVer       bool
+	config        string
+	statePath     string
+	expectAccount string
 }
 
 type cliError struct {
@@ -132,6 +134,17 @@ func (a App) runCommand(args []string) int {
 		return a.exitWithError(err, fallbackMode(g.mode), g.profile, requestID, start)
 	}
 
+	if g.expectAccount != "" {
+		switch rest[0] {
+		case "draft", "message", "search", "mailbox", "tag":
+			if useLocalStateMode() {
+				return a.exitWithError(cliError{exit: 2, code: "validation_error", msg: "--expect-account requires Bridge mode"}, fallbackMode(g.mode), g.profile, requestID, start)
+			}
+		default:
+			return a.exitWithError(cliError{exit: 2, code: "usage_error", msg: "--expect-account applies to Bridge draft, message, search, mailbox and tag commands"}, fallbackMode(g.mode), g.profile, requestID, start)
+		}
+	}
+
 	cfgPath := g.config
 	if cfgPath == "" {
 		cfgPath = config.DefaultConfigPath()
@@ -162,6 +175,7 @@ func (a App) runCommand(args []string) int {
 		}
 		return a.exitWithError(cliError{exit: 3, code: "config_error", msg: "cannot load configuration: " + err.Error(), hint: "Check the configuration file and PMAIL_OUTPUT/PMAIL_TIMEOUT settings"}, fallbackMode(g.mode), g.profile, requestID, start)
 	}
+	g.config = cfgPath
 	if g.profile == "" {
 		g.profile = cfg.Profile
 	}
@@ -172,30 +186,114 @@ func (a App) runCommand(args []string) int {
 		g.mode = output.ModeHuman
 	}
 
-	st := store.New(g.statePath)
-	state, err := st.Load()
-	if err != nil {
-		return a.exitWithError(cliError{exit: 1, code: "state_error", msg: err.Error()}, g.mode, g.profile, requestID, start)
-	}
-
-	if a.checkpoint == nil {
-		a.checkpoint = st.Save
-	}
-	data, changed, err := a.dispatch(rest, g, cfg, &state)
+	data, err := a.dispatchWithState(rest, g, cfg)
 	if err != nil {
 		return a.exitWithError(err, g.mode, g.profile, requestID, start, data)
-	}
-	exitCode := normalizeExitCode(data)
-	if changed && !g.dryRun {
-		if err := st.Save(state); err != nil {
-			return a.exitWithError(cliError{exit: 1, code: "state_save_failed", msg: err.Error()}, g.mode, g.profile, requestID, start)
-		}
 	}
 	if g.dryRun {
 		fmt.Fprintln(a.Stderr, "dry-run: no changes applied")
 	}
 	_ = output.PrintSuccess(a.Stdout, g.mode, data, g.profile, requestID, start)
-	return exitCode
+	return normalizeExitCode(data)
+}
+
+func (a App) dispatchWithState(rest []string, g globalOptions, cfg config.Config) (any, error) {
+	st := store.New(g.statePath)
+	var err error
+	var state model.State
+	var writer *store.Writer
+	var writeError error
+	a.stateWriteError = func() error { return writeError }
+	defer func() {
+		if writer != nil {
+			writer.Close()
+		}
+	}()
+	a.loadState = func(write bool, operation string, keys ...string) error {
+		if write && !g.dryRun {
+			writer, err = st.LockWriter()
+			if errors.Is(err, store.ErrBusy) {
+				return cliError{exit: 6, code: "state_busy", msg: err.Error(), hint: "Retry when the other command finishes"}
+			}
+			if err != nil {
+				writeError = cliError{exit: 1, code: "state_error", msg: err.Error()}
+				if store.IsWritePermissionError(err) {
+					// Reads, validation, and matching receipts need only a snapshot.
+					// A fresh state change still requires the writer capability.
+					if saved, readErr := st.Load(); readErr == nil {
+						state = saved
+						if err := g.checkExpectedAccount(cfg, &state); err != nil {
+							return err
+						}
+						for _, key := range keys {
+							if pending := pendingIdempotencyError(&saved, key, operation); pending != nil {
+								return pending
+							}
+						}
+						return nil
+					}
+				}
+				return writeError
+			}
+			st = writer.Store
+		}
+		state, err = st.Load()
+		if err != nil {
+			return cliError{exit: 1, code: "state_error", msg: err.Error()}
+		}
+		return g.checkExpectedAccount(cfg, &state)
+	}
+	// These remote commands need their parsed receipt keys to select the lock and report recovery.
+	remoteReceipts := !useLocalStateMode() && (rest[0] == "message" ||
+		(rest[0] == "draft" && len(rest) > 1 && (rest[1] == "create" || rest[1] == "create-many")))
+	if !remoteReceipts {
+		if err := a.loadState(writesState(rest), ""); err != nil {
+			return nil, err
+		}
+	}
+
+	checkpoint := a.checkpoint
+	a.checkpoint = func(saved model.State) error {
+		if writeError != nil {
+			return writeError
+		}
+		if checkpoint != nil {
+			return checkpoint(saved)
+		}
+		return st.Save(saved)
+	}
+	data, changed, err := a.dispatch(rest, g, cfg, &state)
+	if err != nil {
+		return data, err
+	}
+	if changed && !g.dryRun {
+		if writeError != nil {
+			return nil, writeError
+		}
+		if err := st.Save(state); err != nil {
+			return nil, cliError{exit: 1, code: "state_save_failed", msg: err.Error()}
+		}
+	}
+	return data, nil
+}
+
+// These commands may save state or checkpoint a remote operation before dispatch completes.
+func writesState(rest []string) bool {
+	if len(rest) < 2 {
+		return false
+	}
+	switch rest[0] + " " + rest[1] {
+	case "auth login", "auth logout",
+		"draft create", "draft create-many",
+		"message send", "message send-many", "message follow-up",
+		"filter create", "filter delete", "filter apply":
+		return true
+	case "draft update", "draft delete", "tag create", "tag add", "tag remove":
+		return useLocalStateMode()
+	case "bridge account":
+		return len(rest) >= 3 && rest[2] == "use"
+	}
+	return false
 }
 
 func fallbackMode(m output.Mode) output.Mode {
@@ -275,6 +373,12 @@ func parseGlobal(args []string) (globalOptions, []string, error) {
 			g.showHelp = true
 		case "--version":
 			g.showVer = true
+		case "--expect-account":
+			i++
+			if i >= len(args) || strings.TrimSpace(args[i]) == "" {
+				return g, nil, fmt.Errorf("--expect-account requires a Bridge username")
+			}
+			g.expectAccount = args[i]
 		case "--profile":
 			i++
 			if i >= len(args) {
@@ -323,6 +427,7 @@ Resources:
 
 Global flags:
   --json --plain --no-input --dry-run --profile <name> --config <path> --state <path>
+  --expect-account <username>  Require this Bridge account for mail commands
   -h, --help  --version`)
 }
 
@@ -505,14 +610,14 @@ func (a App) dispatchDraft(action string, args []string, g globalOptions, cfg co
 	if useLocalStateMode() {
 		return cmdDraft(action, args, g, state)
 	}
-	return cmdDraftIMAP(action, args, g, cfg, state, a.checkpoint)
+	return a.cmdDraftIMAP(action, args, g, cfg, state)
 }
 
 func (a App) dispatchMessage(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
 	if useLocalStateMode() {
 		return cmdMessage(action, args, g, cfg, state)
 	}
-	return cmdMessageIMAP(action, args, g, cfg, state, a.checkpoint)
+	return a.cmdMessageIMAP(action, args, g, cfg, state)
 }
 
 func dispatchSearch(action string, args []string, g globalOptions, cfg config.Config, state *model.State) (any, bool, error) {
@@ -591,7 +696,7 @@ func doctorConfigPrereqs(cfg config.Config) (map[string]any, bool) {
 }
 
 func doctorAuthPrereqs(cfg config.Config, st *model.State) (map[string]any, bool) {
-	username := firstNonEmpty(st.Bridge.ActiveUsername, st.Auth.Username, cfg.Bridge.Username)
+	username := effectiveBridgeUsername(cfg, st)
 	passwordFromEnv := strings.TrimSpace(os.Getenv("PMAIL_SMTP_PASSWORD")) != ""
 	passwordFile := firstNonEmpty(st.Auth.PasswordFile, cfg.Bridge.PasswordFile)
 	passwordFileReadable := false
@@ -650,11 +755,8 @@ func loadBody(body, bodyFile string, stdinBody bool) (string, error) {
 		b, err := readAllStdinFn()
 		return string(b), err
 	}
-	b, err := os.ReadFile(filepath.Clean(bodyFile))
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	body, _, err := readOpenedBodyFile(bodyFile)
+	return body, err
 }
 
 func contains(xs []string, x string) bool {
@@ -696,7 +798,7 @@ _protonmailcli_completions() {
     word="${COMP_WORDS[i]}"
     if [[ ${#path[@]} -gt 0 && "$word" == -* ]]; then return; fi
     case "$word" in
-      --profile|--config|--state) ((i++)); [[ $i -lt $COMP_CWORD ]] || return ;;
+      --profile|--config|--state|--expect-account) ((i++)); [[ $i -lt $COMP_CWORD ]] || return ;;
       --json|--plain|--no-input|--dry-run|-n) ;;
       -*) return ;;
       *) path+=("$word") ;;

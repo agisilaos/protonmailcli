@@ -100,7 +100,11 @@ func TestUnacknowledgedKeyedSMTPIsNotReplayed(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			args, input, _ := sendRecoveryArgs(t, mode)
 			sent := captureWorkflowSMTPWithCompletion(t, args, false)
-			for i := 0; i < 2; i++ {
+			inputs := []string{input, input}
+			if mode == "batch" {
+				inputs = append(inputs, "truncated", `[{"draft_id":"52","confirm_send":"52"}]`)
+			}
+			for i, input := range inputs {
 				code, out := runWorkflow(t, args, input)
 				if code != 4 || len(sent()) != 1 || !strings.Contains(out, "imap_send_uncertain") || !strings.Contains(out, `"retryable":false`) {
 					t.Fatalf("run=%d exit=%d sends=%d out=%s", i, code, len(sent()), out)
@@ -118,6 +122,57 @@ func TestKeyedSMTPDryRunDoesNotPersistIntent(t *testing.T) {
 			_, err := os.Stat(args[4])
 			if code != 0 || len(sent()) != 0 || !os.IsNotExist(err) {
 				t.Fatalf("exit=%d sends=%d stateErr=%v out=%s", code, len(sent()), err, out)
+			}
+		})
+	}
+}
+
+func TestReadonlyStateReportsPendingRecoveryWithoutDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		op    string
+		args  []string
+		input string
+	}{
+		{"message.send", []string{"message", "send", "--draft-id", "41", "--confirm-send", "41", "--idempotency-key", "request"}, ""},
+		{"message.send-many", []string{"message", "send-many", "--stdin", "--idempotency-key", "request"}, "truncated"},
+		{"imap.message.send-item", []string{"message", "send-many", "--stdin"}, `[{"draft_id":"41","confirm_send":"41","idempotency_key":"request"}]`},
+		{"message.follow-up", []string{"message", "follow-up", "--message-id", "41", "--idempotency-key", "request"}, ""},
+		{"draft.create", []string{"draft", "create", "--to", "test@example.invalid", "--body", "text", "--idempotency-key", "request"}, ""},
+		{"draft.create-many", []string{"draft", "create-many", "--stdin", "--idempotency-key", "request"}, "truncated"},
+		{"imap.draft.create-item", []string{"draft", "create-many", "--stdin"}, `[{"to":["test@example.invalid"],"body":"hello","idempotency_key":"request"}]`},
+	} {
+		t.Run(tc.op, func(t *testing.T) {
+			s := &workflowServer{}
+			args := imapCommandArgs(t, newWorkflowServer(t, s))
+			dir := t.TempDir()
+			args[4] = filepath.Join(dir, "state.json")
+			saved := fmt.Sprintf(`{"idempotency":{"request":{"operation":%q,"status":"pending"}}}`, tc.op)
+			if err := os.WriteFile(args[4], []byte(saved), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(dir, 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+			if f, err := os.CreateTemp(dir, "probe-"); err == nil {
+				f.Close()
+				t.Skip("filesystem permits writes in a read-only directory")
+			}
+			code, out := runWorkflow(t, append(args, tc.args...), tc.input)
+			want := "imap_draft_create_uncertain"
+			if strings.Contains(tc.op, "send") {
+				want = "imap_send_uncertain"
+			}
+			if code != 4 || !strings.Contains(out, want) || !strings.Contains(out, `"retryable":false`) {
+				t.Fatalf("exit=%d out=%s", code, out)
+			}
+			commands, _ := s.snapshot()
+			if len(commands) != 0 {
+				t.Fatalf("contacted Bridge: %v", commands)
+			}
+			current, err := os.ReadFile(args[4])
+			if err != nil || string(current) != saved {
+				t.Fatalf("recovery altered state: %q %v", current, err)
 			}
 		})
 	}

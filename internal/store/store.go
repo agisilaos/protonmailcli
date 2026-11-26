@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -11,11 +12,71 @@ import (
 )
 
 type Store struct {
-	path string
+	path      string
+	directory *os.File
 }
 
 func New(path string) *Store {
 	return &Store{path: path}
+}
+
+var ErrBusy = errors.New("another command is updating this state file")
+
+// ErrCheckpointUncertain means the replacement is visible, but its directory
+// entry could not be confirmed durable. A caller must not assume it is absent.
+var ErrCheckpointUncertain = errors.New("state checkpoint published but parent directory durability could not be confirmed")
+
+// IsWritePermissionError identifies denied writes for which reading a saved
+// receipt may still succeed.
+func IsWritePermissionError(err error) bool {
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, readOnlyVolume)
+}
+
+// Writer exposes the state path associated with the held lock.
+type Writer struct {
+	*Store
+	io.Closer
+	directory *os.File
+}
+
+func (w *Writer) Close() error {
+	return errors.Join(w.Closer.Close(), w.directory.Close())
+}
+
+// LockWriter covers the entire read-modify-write cycle, including checkpoints.
+// The lock file stays in place because the state file is atomically replaced.
+func (s *Store) LockWriter() (*Writer, error) {
+	path, err := prepareStatePath(s.path)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	lock, err := lockWriter(path)
+	if err != nil {
+		dir.Close()
+		return nil, err
+	}
+	pinned := &Store{path: path, directory: dir}
+	if err := pinned.checkDirectory(); err != nil {
+		lock.Close()
+		dir.Close()
+		return nil, err
+	}
+	return &Writer{Store: pinned, Closer: lock, directory: dir}, nil
+}
+
+func statWriterLock(file *os.File) (os.FileInfo, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != 0 {
+		return nil, fmt.Errorf("state lock must be an empty regular file: %s", file.Name())
+	}
+	return info, nil
 }
 
 func emptyState() model.State {
@@ -29,15 +90,37 @@ func emptyState() model.State {
 	}
 }
 
+func (s *Store) checkDirectory() error {
+	if s.directory == nil {
+		return nil
+	}
+	expected, err := s.directory.Stat()
+	if err != nil {
+		return err
+	}
+	actual, err := os.Stat(filepath.Dir(s.path))
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(expected, actual) {
+		return errors.New("state directory changed while its writer lock was held")
+	}
+	return nil
+}
+
 func (s *Store) Load() (model.State, error) {
-	_, err := os.Stat(s.path)
+	if err := s.checkDirectory(); err != nil {
+		return model.State{}, err
+	}
+	file, err := openStateSnapshot(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return emptyState(), nil
 	}
 	if err != nil {
 		return model.State{}, err
 	}
-	b, err := os.ReadFile(s.path)
+	b, err := io.ReadAll(file)
+	file.Close()
 	if err != nil {
 		return model.State{}, err
 	}
@@ -64,12 +147,16 @@ func (s *Store) Load() (model.State, error) {
 }
 
 func (s *Store) Save(st model.State) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := s.checkDirectory(); err != nil {
+		return err
+	}
+	path, err := prepareStatePath(s.path)
+	if err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
-	return replaceState(s.path, b)
+	return replaceState(path, b)
 }

@@ -15,10 +15,12 @@ import (
 	"net/mail"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding/ianaindex"
 )
@@ -51,25 +53,28 @@ type DraftMessage struct {
 }
 
 type IMAPClient struct {
-	tlsPolicy *TLSPolicy
-	conn      net.Conn
-	r         *bufio.Reader
-	w         *bufio.Writer
-	tag       int
-	timeout   time.Duration
-	debug     bool
+	conn         net.Conn
+	r            *bufio.Reader
+	w            *bufio.Writer
+	tag          int
+	timeout      time.Duration
+	debug        bool
+	draftMailbox *DraftMailbox
+	tlsPolicy    *TLSPolicy
 }
 
 var ErrMessageNotFound = errors.New("message not found")
 
+var ErrAppendRejected = errors.New("IMAP server rejected APPEND")
+
 var ErrAppendUncertain = errors.New("draft append outcome or identity is uncertain; inspect Drafts before retrying")
 
 var (
-	literalRe   = regexp.MustCompile(`\{(\d+)\}\r?$`)
-	uidRe       = regexp.MustCompile(`(?i)UID\s+(\d+)`)
-	flagsRe     = regexp.MustCompile(`(?i)FLAGS\s+\(([^)]*)\)`)
-	nameRe      = regexp.MustCompile(`"((?:\\["\\]|[^"\\])*)"\s*$`)
-	listFlagsRe = regexp.MustCompile(`^\* LIST \(([^)]*)\)`)
+	literalRe = regexp.MustCompile(`\{(\d+)\}\r?$`)
+	uidRe     = regexp.MustCompile(`(?i)UID\s+(\d+)`)
+	flagsRe   = regexp.MustCompile(`(?i)FLAGS\s+\(([^)]*)\)`)
+	// Flags, delimiter, mailbox name (quoted, literal, or atom), then optional LIST extensions.
+	listMailboxRe = regexp.MustCompile(`(?i)^\* LIST \(([^)]*)\) (?:NIL|"(?:\\.|[^"\\])*") (?:"((?:\\["\\]|[^"\\])*)"|\{([0-9]+)\}|([^\s(){"]+))(.*)$`)
 )
 
 func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
@@ -131,23 +136,92 @@ func (c *IMAPClient) Close() error {
 	return c.conn.Close()
 }
 
-func (c *IMAPClient) ListMailboxes() ([]string, error) {
-	lines, err := c.simpleLines(`LIST "" "*"`)
+type Mailbox struct {
+	Name  string
+	Flags []string
+}
+
+func (c *IMAPClient) ListMailboxes() ([]Mailbox, error) {
+	boxes, err := c.listMailboxRows()
 	if err != nil {
 		return nil, err
 	}
-	boxes := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if !strings.HasPrefix(line, "* LIST") {
-			continue
+	sort.SliceStable(boxes, func(i, j int) bool { return boxes[i].Name < boxes[j].Name })
+	unique := boxes[:0]
+	for _, box := range boxes {
+		if len(unique) == 0 || unique[len(unique)-1].Name != box.Name {
+			unique = append(unique, Mailbox{Name: box.Name})
 		}
-		m := nameRe.FindStringSubmatch(line)
-		if len(m) == 2 {
-			boxes = append(boxes, unescapeIMAPQuoted(m[1]))
+		merged := &unique[len(unique)-1]
+		for _, flag := range box.Flags {
+			if !merged.hasFlag(flag) {
+				merged.Flags = append(merged.Flags, flag)
+			}
 		}
 	}
-	sort.Strings(boxes)
+	return unique, nil
+}
+
+func (m Mailbox) hasFlag(flag string) bool {
+	return slices.ContainsFunc(m.Flags, func(f string) bool { return strings.EqualFold(f, flag) })
+}
+
+// Keep wire order for special-use selection; consume literal bytes before reading
+// the next protocol line. An incomplete listing cannot establish draft identity.
+func (c *IMAPClient) listMailboxRows() ([]Mailbox, error) {
+	boxes := []Mailbox{}
+	err := c.commandLines(`LIST "" "*"`, func(line string) error {
+		words := strings.Fields(line)
+		if len(words) < 2 || words[0] != "*" || !strings.EqualFold(words[1], "LIST") {
+			if len(words) > 1 && words[0] == "*" && literalRe.MatchString(line) {
+				return errors.New("unsupported literal in response to LIST")
+			}
+			return nil
+		}
+		box, err := c.readListedMailbox(line)
+		if err != nil {
+			return err
+		}
+		boxes = append(boxes, box)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 	return boxes, nil
+}
+
+func (c *IMAPClient) readListedMailbox(line string) (Mailbox, error) {
+	fields := listMailboxRe.FindStringSubmatch(line)
+	if fields == nil {
+		return Mailbox{}, errors.New("invalid IMAP LIST mailbox row")
+	}
+	name := fields[4]
+	tail := fields[5]
+	if fields[3] != "" {
+		size, err := strconv.ParseUint(fields[3], 10, 32)
+		if err != nil || tail != "" {
+			return Mailbox{}, errors.New("invalid IMAP LIST mailbox literal")
+		}
+		var literal strings.Builder
+		if _, err := io.CopyN(&literal, c.r, int64(size)); err != nil {
+			return Mailbox{}, fmt.Errorf("read IMAP LIST mailbox literal: %w", err)
+		}
+		name = literal.String()
+		tail, err = c.readLine()
+		if err != nil {
+			return Mailbox{}, err
+		}
+	} else if name == "" {
+		name = unescapeIMAPQuoted(fields[2])
+	}
+	if tail != "" && (!strings.HasPrefix(tail, " (") || !strings.HasSuffix(tail, ")")) {
+		return Mailbox{}, errors.New("unsupported IMAP LIST mailbox data")
+	}
+	if name == "" || !utf8.ValidString(name) || validateIMAPString(name) != nil {
+		return Mailbox{}, errors.New("unsupported IMAP LIST mailbox name")
+	}
+	return Mailbox{Name: name, Flags: strings.Fields(fields[1])}, nil
 }
 
 func (c *IMAPClient) ListDrafts() ([]DraftMessage, error) {
@@ -162,7 +236,7 @@ func (c *IMAPClient) ListMessages(mailbox, criteria string) ([]DraftMessage, err
 	if err := validateSearchCriteria(criteria); err != nil {
 		return nil, err
 	}
-	if err := c.selectMailbox(mailbox); err != nil {
+	if err := c.examineMailbox(mailbox); err != nil {
 		return nil, err
 	}
 	uids, err := c.searchUID(criteria)
@@ -189,10 +263,19 @@ func (c *IMAPClient) GetDraft(uid string) (DraftMessage, error) {
 	if err != nil {
 		return DraftMessage{}, err
 	}
-	if err := c.selectMailbox(mb); err != nil {
+	return c.GetMessage(mb, uid)
+}
+
+// GetMessage fetches a known UID from its exact mailbox without a SEARCH or
+// special-use mailbox lookup.
+func (c *IMAPClient) GetMessage(mailbox, uid string) (DraftMessage, error) {
+	if err := validateUID(uid); err != nil {
 		return DraftMessage{}, err
 	}
-	return c.fetchUID(mb, uid)
+	if err := c.examineMailbox(mailbox); err != nil {
+		return DraftMessage{}, err
+	}
+	return c.fetchUID(mailbox, uid)
 }
 
 func (c *IMAPClient) AppendDraft(raw string) (string, error) {
@@ -212,13 +295,16 @@ func (c *IMAPClient) AppendDraft(raw string) (string, error) {
 	if err := c.w.Flush(); err != nil {
 		return "", err
 	}
-	line, err := c.readLine()
+	line, err := c.readAppendReply(tag)
 	if err != nil {
 		return "", err
 	}
 	c.debugf("S: %s", line)
 	if !strings.HasPrefix(line, "+") {
-		return "", fmt.Errorf("imap append rejected: %s", line)
+		if appendRejected(tag, strings.Fields(line)) {
+			return "", fmt.Errorf("%w: %s", ErrAppendRejected, line)
+		}
+		return "", fmt.Errorf("expected IMAP APPEND continuation: %s", line)
 	}
 
 	c.debugf("C: [literal %d bytes]", len(raw))
@@ -228,27 +314,51 @@ func (c *IMAPClient) AppendDraft(raw string) (string, error) {
 	if err := c.w.Flush(); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrAppendUncertain, err)
 	}
+	line, err = c.readAppendReply(tag)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrAppendUncertain, err)
+	}
+	fields := strings.Fields(line)
+	if appendRejected(tag, fields) {
+		return "", fmt.Errorf("%w: %s", ErrAppendRejected, line)
+	}
+	// APPENDUID identifies this append even when another client writes concurrently.
+	if len(fields) >= 5 && fields[0] == tag && strings.EqualFold(fields[1], "OK") &&
+		strings.EqualFold(fields[2], "[APPENDUID") && strings.HasSuffix(fields[4], "]") {
+		validity, validityErr := strconv.ParseUint(fields[3], 10, 32)
+		uid, uidErr := strconv.ParseUint(strings.TrimSuffix(fields[4], "]"), 10, 32)
+		if validityErr == nil && uidErr == nil && validity > 0 && uid > 0 {
+			return strconv.FormatUint(uid, 10), nil
+		}
+	}
+	return "", ErrAppendUncertain
+}
+
+// APPEND may receive unsolicited status or mailbox updates before either the
+// literal continuation or the tagged completion.
+func (c *IMAPClient) readAppendReply(tag string) (string, error) {
 	for {
 		line, err := c.readLine()
 		if err != nil {
-			return "", fmt.Errorf("%w: %v", ErrAppendUncertain, err)
+			return "", err
 		}
-		if strings.HasPrefix(line, tag+" OK") {
-			// APPENDUID identifies this append even when another client writes concurrently.
-			fields := strings.Fields(line)
-			if len(fields) >= 5 && strings.EqualFold(fields[2], "[APPENDUID") && strings.HasSuffix(fields[4], "]") {
-				validity, validityErr := strconv.ParseUint(fields[3], 10, 32)
-				uid, uidErr := strconv.ParseUint(strings.TrimSuffix(fields[4], "]"), 10, 32)
-				if validityErr == nil && uidErr == nil && validity > 0 && uid > 0 {
-					return strconv.FormatUint(uid, 10), nil
-				}
-			}
-			return "", ErrAppendUncertain
+		if strings.HasPrefix(line, "+") || strings.HasPrefix(line, tag+" ") {
+			return line, nil
 		}
-		if strings.HasPrefix(line, tag+" NO") || strings.HasPrefix(line, tag+" BAD") {
-			return "", fmt.Errorf("imap append failed: %s", line)
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "*" && !strings.EqualFold(fields[1], "BYE") && !literalRe.MatchString(line) {
+			continue
 		}
+		// An unsupported literal may leave unread bytes on the connection.
+		if c.conn != nil {
+			_ = c.conn.Close()
+		}
+		return "", fmt.Errorf("unexpected IMAP response during APPEND: %s", line)
 	}
+}
+
+func appendRejected(tag string, fields []string) bool {
+	return len(fields) >= 2 && fields[0] == tag && (strings.EqualFold(fields[1], "NO") || strings.EqualFold(fields[1], "BAD"))
 }
 
 func (c *IMAPClient) DeleteDraft(uid string) error {
@@ -333,6 +443,13 @@ func (c *IMAPClient) login(user, pass string) error {
 	return nil
 }
 
+func (c *IMAPClient) examineMailbox(mailbox string) error {
+	if err := validateIMAPString(mailbox); err != nil {
+		return fmt.Errorf("invalid mailbox: %w", err)
+	}
+	return c.simple(fmt.Sprintf(`EXAMINE "%s"`, escape(mailbox)))
+}
+
 func (c *IMAPClient) selectMailbox(mailbox string) error {
 	if err := validateIMAPString(mailbox); err != nil {
 		return fmt.Errorf("invalid mailbox: %w", err)
@@ -349,11 +466,8 @@ func (c *IMAPClient) searchUID(criteria string) ([]string, error) {
 		return nil, err
 	}
 	for _, line := range lines {
-		if strings.HasPrefix(line, "* SEARCH") {
-			parts := strings.Fields(line)
-			if len(parts) <= 2 {
-				return []string{}, nil
-			}
+		parts := strings.Fields(line)
+		if len(parts) >= 2 && parts[0] == "*" && strings.EqualFold(parts[1], "SEARCH") {
 			for _, uid := range parts[2:] {
 				if err := validateUID(uid); err != nil {
 					return nil, fmt.Errorf("invalid UID in SEARCH response: %w", err)
@@ -420,7 +534,8 @@ func (c *IMAPClient) fetchUID(mailbox, uid string) (DraftMessage, error) {
 			}
 			continue
 		}
-		if strings.HasPrefix(line, tag+" OK") {
+		switch taggedStatus(line, tag) {
+		case "OK":
 			if !fetched {
 				return DraftMessage{}, ErrMessageNotFound
 			}
@@ -432,8 +547,7 @@ func (c *IMAPClient) fetchUID(mailbox, uid string) (DraftMessage, error) {
 			msg.Mailbox = mailbox
 			msg.Flags = flags
 			return msg, nil
-		}
-		if strings.HasPrefix(line, tag+" NO") || strings.HasPrefix(line, tag+" BAD") {
+		case "NO", "BAD":
 			return DraftMessage{}, fmt.Errorf("imap fetch failed: %s", line)
 		}
 	}
@@ -513,29 +627,54 @@ func (c *IMAPClient) simple(cmd string) error {
 }
 
 func (c *IMAPClient) simpleLines(cmd string) ([]string, error) {
-	tag := c.nextTag()
-	if _, err := c.w.WriteString(fmt.Sprintf("%s %s\r\n", tag, cmd)); err != nil {
+	var lines []string
+	err := c.commandLines(cmd, func(line string) error {
+		lines = append(lines, line)
+		return nil
+	})
+	if err != nil {
 		return nil, err
+	}
+	return lines, nil
+}
+
+func (c *IMAPClient) commandLines(cmd string, visit func(string) error) error {
+	tag := c.nextTag()
+	if _, err := fmt.Fprintf(c.w, "%s %s\r\n", tag, cmd); err != nil {
+		return err
 	}
 	if err := c.w.Flush(); err != nil {
-		return nil, err
+		return err
 	}
 	c.debugf("C: %s %s", tag, cmd)
-	lines := []string{}
 	for {
 		line, err := c.readLine()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		c.debugf("S: %s", line)
-		lines = append(lines, line)
-		if strings.HasPrefix(line, tag+" OK") {
-			return lines, nil
+		if err := visit(line); err != nil {
+			// A failed decoder can leave unread literal bytes and a tagged reply.
+			if c.conn != nil {
+				_ = c.conn.Close()
+			}
+			return err
 		}
-		if strings.HasPrefix(line, tag+" NO") || strings.HasPrefix(line, tag+" BAD") {
-			return nil, fmt.Errorf("imap command failed: %s", line)
+		switch taggedStatus(line, tag) {
+		case "OK":
+			return nil
+		case "NO", "BAD":
+			return fmt.Errorf("imap command failed: %s", line)
 		}
 	}
+}
+
+func taggedStatus(line, tag string) string {
+	replyTag, response, tagged := strings.Cut(line, " ")
+	if !tagged || replyTag != tag {
+		return ""
+	}
+	status, _, _ := strings.Cut(response, " ")
+	return strings.ToUpper(status)
 }
 
 func (c *IMAPClient) nextTag() string {
@@ -565,43 +704,86 @@ func (c *IMAPClient) debugf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "imap-debug: "+format+"\n", args...)
 }
 
-func (c *IMAPClient) DraftMailboxName() (string, error) {
-	lines, err := c.simpleLines(`LIST "" "*"`)
+// DraftMailbox retains the exact server names that a legacy imap:Drafts ID could address.
+type DraftMailbox struct {
+	Name              string
+	AmbiguousLegacyID bool
+	LegacyCandidates  []string
+}
+
+// Pin discovery to this connection so validation, reads, writes, and receipts
+// use the same mailbox even if another client changes its special-use flags.
+func (c *IMAPClient) ResolveDraftMailbox() (DraftMailbox, error) {
+	if c.draftMailbox != nil {
+		return *c.draftMailbox, nil
+	}
+	boxes, err := c.listMailboxRows()
 	if err != nil {
-		return "", err
+		return DraftMailbox{}, err
 	}
-	for _, line := range lines {
-		if !strings.HasPrefix(line, "* LIST") {
-			continue
+	// A later row can identify the same exact name as nonselectable.
+	unselectable := make(map[string]bool)
+	for _, box := range boxes {
+		if box.hasFlag(`\Noselect`) {
+			unselectable[box.Name] = true
 		}
-		fm := listFlagsRe.FindStringSubmatch(line)
-		if len(fm) != 2 {
-			continue
+	}
+	var selected string
+	var candidates []string
+	roleAdvertised := false
+	for _, box := range boxes {
+		draftsRole := box.hasFlag(`\Drafts`)
+		roleAdvertised = roleAdvertised || draftsRole
+		if draftsRole && selected == "" && !unselectable[box.Name] {
+			selected = box.Name
 		}
-		flags := strings.Fields(strings.TrimSpace(fm[1]))
-		isDraft := false
-		for _, f := range flags {
-			if strings.EqualFold(f, `\Drafts`) {
-				isDraft = true
-				break
+		if draftsRole || strings.EqualFold(box.Name, "Drafts") {
+			candidates = append(candidates, box.Name)
+		}
+	}
+	slices.Sort(candidates)
+	candidates = slices.Compact(candidates)
+	if selected == "" {
+		if roleAdvertised {
+			return DraftMailbox{LegacyCandidates: candidates, AmbiguousLegacyID: len(candidates) > 1}, errors.New("no selectable special-use Drafts mailbox in IMAP listing")
+		}
+		for _, name := range candidates {
+			if unselectable[name] {
+				continue
 			}
+			if selected != "" {
+				return DraftMailbox{LegacyCandidates: candidates, AmbiguousLegacyID: true}, fmt.Errorf("ambiguous Drafts mailbox: no special-use role distinguishes %q", candidates)
+			}
+			selected = name
 		}
-		if !isDraft {
-			continue
-		}
-		m := nameRe.FindStringSubmatch(line)
-		if len(m) == 2 {
-			return unescapeIMAPQuoted(m[1]), nil
+		if selected == "" {
+			return DraftMailbox{}, errors.New("no selectable Drafts mailbox in IMAP listing")
 		}
 	}
-	return "Drafts", nil
+	c.draftMailbox = &DraftMailbox{Name: selected, LegacyCandidates: candidates, AmbiguousLegacyID: len(candidates) > 1}
+	return *c.draftMailbox, nil
+}
+
+func (c *IMAPClient) DraftMailboxName() (string, error) {
+	box, err := c.ResolveDraftMailbox()
+	return box.Name, err
+}
+
+// ExamineDraftDestination verifies that the resolved mailbox can be opened
+// without changing message state or appending a draft.
+func (c *IMAPClient) ExamineDraftDestination() error {
+	name, err := c.DraftMailboxName()
+	if err != nil {
+		return err
+	}
+	return c.examineMailbox(name)
 }
 
 func (c *IMAPClient) SearchUIDs(mailbox, criteria string) ([]string, error) {
 	if err := validateSearchCriteria(criteria); err != nil {
 		return nil, err
 	}
-	if err := c.selectMailbox(mailbox); err != nil {
+	if err := c.examineMailbox(mailbox); err != nil {
 		return nil, err
 	}
 	return c.searchUID(criteria)

@@ -2,8 +2,8 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -163,21 +163,21 @@ func TestSaveDraftWithFallbackWhenAppendFails(t *testing.T) {
 		return nil
 	}
 
-	fake := &fakeIMAPDraftClient{searchUIDs: map[string][]string{"INBOX": {"88"}, "Drafts": {"99"}}, draftMailbox: "Drafts"}
+	fake := &fakeIMAPDraftClient{searchUIDs: map[string][]string{"INBOX": {"88"}, "Brouillons": {"99"}}, draftMailbox: "Changed role"}
 	openBridgeClientFn = func(_ config.Config, _ *model.State, _ *bridge.TLSPolicy) (imapDraftClient, string, string, error) {
 		return fake, "u", "p", nil
 	}
 
-	primary := &fakeIMAPDraftClient{appendErr: fmt.Errorf("append failed")}
+	primary := &fakeIMAPDraftClient{appendErr: bridge.ErrAppendRejected, draftMailbox: "Brouillons"}
 	t.Setenv("PMAIL_SMTP_PASSWORD", "secret")
 	cfg := config.Default()
 	cfg.Bridge.Username = "u@example.com"
-	uid, createPath, err := saveDraftWithFallback(primary, cfg, &model.State{Auth: model.AuthState{Username: "u@example.com"}}, "u@example.com", []string{"a@example.com"}, "s", "b", "raw", nil)
+	draft, createPath, err := saveDraftWithFallback(primary, cfg, &model.State{Auth: model.AuthState{Username: "u@example.com"}}, "u@example.com", []string{"a@example.com"}, "s", "b", "raw", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if uid != "99" {
-		t.Fatalf("expected uid 99 got %s", uid)
+	if draft.UID != "99" || draft.ID != "imap:Brouillons:99" {
+		t.Fatalf("unexpected fallback draft: %+v", draft)
 	}
 	if createPath != "smtp_move_fallback" {
 		t.Fatalf("expected fallback path, got %s", createPath)
@@ -189,12 +189,12 @@ func TestSaveDraftWithFallbackWhenAppendFails(t *testing.T) {
 
 func TestSaveDraftWithFallbackReturnsAppendPathOnSuccess(t *testing.T) {
 	primary := &fakeIMAPDraftClient{appendUID: "77"}
-	uid, createPath, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "u@example.com", []string{"a@example.com"}, "s", "b", "raw", nil)
+	draft, createPath, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "u@example.com", []string{"a@example.com"}, "s", "b", "raw", nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if uid != "77" {
-		t.Fatalf("expected uid 77 got %s", uid)
+	if draft.UID != "77" || draft.ID != "imap-v2:Drafts:77" {
+		t.Fatalf("unexpected appended draft: %+v", draft)
 	}
 	if createPath != "imap_append" {
 		t.Fatalf("expected imap_append path, got %s", createPath)
@@ -267,6 +267,8 @@ func (f *fakeIMAPDraftClient) AppendDraft(raw string) (string, error) {
 	return f.appendUID, nil
 }
 
+func (f *fakeIMAPDraftClient) ExamineDraftDestination() error { return nil }
+
 func (f *fakeIMAPDraftClient) DraftMailboxName() (string, error) {
 	if f.draftMailbox == "" {
 		return "Drafts", nil
@@ -294,16 +296,16 @@ func (f *fakeIMAPDraftClient) Close() error { return nil }
 
 func TestUncertainAppendDoesNotAttemptSMTPFallback(t *testing.T) {
 	primary := &fakeIMAPDraftClient{appendErr: bridge.ErrAppendUncertain}
-	uid, path, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "synthetic@example.com", []string{"recipient@example.com"}, "s", "b", "raw", nil)
-	if err != bridge.ErrAppendUncertain || uid != "" || path != "" {
-		t.Fatalf("uncertain append was replaced by fallback: uid=%q path=%q err=%v", uid, path, err)
+	draft, path, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "synthetic@example.com", []string{"recipient@example.com"}, "s", "b", "raw", nil, nil)
+	if !errors.Is(err, bridge.ErrAppendUncertain) || draft.UID != "" || path != "" {
+		t.Fatalf("uncertain append was replaced by fallback: uid=%q path=%q err=%v", draft.UID, path, err)
 	}
 }
 
 func TestUncertainDraftBatchReportsFailure(t *testing.T) {
 	primary := &fakeIMAPDraftClient{appendErr: bridge.ErrAppendUncertain}
-	_, _, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "synthetic@example.com", nil, "s", "b", "raw", nil)
-	if err != bridge.ErrAppendUncertain {
+	_, _, err := saveDraftWithFallback(primary, config.Default(), &model.State{}, "synthetic@example.com", nil, "s", "b", "raw", nil, nil)
+	if !errors.Is(err, bridge.ErrAppendUncertain) {
 		t.Fatal(err)
 	}
 	failed := batchItemResponse{Index: 0, OK: false, ErrorCode: "imap_draft_create_failed", Error: err.Error()}

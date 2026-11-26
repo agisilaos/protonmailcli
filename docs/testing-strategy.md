@@ -21,6 +21,9 @@ Scope:
 - confirmation policy evaluator
 - idempotency key handling logic
 
+On Unix, a named-pipe fixture checks that `auth login` and `doctor` reject a
+nonregular password file without blocking.
+
 ### 2) Contract tests
 
 Scope:
