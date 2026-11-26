@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
@@ -18,7 +20,12 @@ import (
 	"time"
 )
 
-func draftIMAPServer(t *testing.T, behavior string) (int, *atomic.Int32) {
+type imapTestEndpoint struct {
+	port        int
+	certificate []byte
+}
+
+func draftIMAPServer(t *testing.T, behavior string) (imapTestEndpoint, *atomic.Int32) {
 	t.Helper()
 	cert := httptest.NewTLSServer(nil)
 	tc := cert.TLS.Clone()
@@ -107,17 +114,21 @@ func draftIMAPServer(t *testing.T, behavior string) (int, *atomic.Int32) {
 			}(c)
 		}
 	}()
-	return l.Addr().(*net.TCPAddr).Port, count
+	return imapTestEndpoint{port: l.Addr().(*net.TCPAddr).Port, certificate: tc.Certificates[0].Certificate[0]}, count
 }
-func imapCommandArgs(t *testing.T, port int) []string {
+func imapCommandArgs(t *testing.T, endpoint imapTestEndpoint) []string {
 	t.Setenv("PMAIL_USE_LOCAL_STATE", "0")
 	t.Setenv("PMAIL_SMTP_PASSWORD", "synthetic-only")
 	root := t.TempDir()
 	cfg := config.Default()
 	cfg.Timeout = "2s"
 	cfg.Bridge.Host = "127.0.0.1"
-	cfg.Bridge.IMAPPort = port
+	cfg.Bridge.IMAPPort = endpoint.port
 	cfg.Bridge.Username = "synthetic@example.invalid"
+	cfg.Bridge.TLSCertFile = filepath.Join(root, "trusted-fixture.pem")
+	if err := os.WriteFile(cfg.Bridge.TLSCertFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: endpoint.certificate}), 0600); err != nil {
+		t.Fatal(err)
+	}
 	p := filepath.Join(root, "config.toml")
 	if err := config.Save(p, cfg); err != nil {
 		t.Fatal(err)

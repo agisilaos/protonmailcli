@@ -24,10 +24,15 @@ import (
 )
 
 type IMAPConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
+	Host        string
+	Port        int
+	Username    string
+	Password    string
+	TLSCertFile string
+}
+
+func (cfg IMAPConfig) tlsConfig() (*tls.Config, error) {
+	return bridgeTLSConfig("IMAP", cfg.Host, cfg.TLSCertFile)
 }
 
 type DraftMessage struct {
@@ -72,6 +77,10 @@ func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
 	if err := validateIMAPString(cfg.Password); err != nil {
 		return nil, fmt.Errorf("invalid IMAP password: %w", err)
 	}
+	tlsConfig, err := cfg.tlsConfig()
+	if err != nil {
+		return nil, err
+	}
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
@@ -92,7 +101,7 @@ func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
 		return nil, fmt.Errorf("invalid IMAP greeting")
 	}
 
-	if err := c.startTLS(cfg.Host); err != nil {
+	if err := c.startTLS(tlsConfig); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
@@ -281,11 +290,11 @@ func (c *IMAPClient) SetKeyword(mailbox, uid, keyword string, add bool) error {
 	return c.simple(fmt.Sprintf("UID STORE %s %s (%s)", uid, op, keyword))
 }
 
-func (c *IMAPClient) startTLS(serverName string) error {
+func (c *IMAPClient) startTLS(config *tls.Config) error {
 	if err := c.simple("STARTTLS"); err != nil {
 		return err
 	}
-	tlsConn := tls.Client(c.conn, &tls.Config{ServerName: serverName, InsecureSkipVerify: true})
+	tlsConn := tls.Client(c.conn, config)
 	if err := tlsConn.SetDeadline(time.Now().Add(c.timeout)); err != nil {
 		return err
 	}

@@ -325,10 +325,11 @@ Selected env vars:
 
 Nonempty environment defaults override the config file; explicit output/profile
 flags take precedence. TOML syntax, output modes, and durations are validated.
-SMTP operations honor the timeout. For Bridge certificates outside system trust,
-set `bridge.tls_cert_file` to an explicitly trusted public PEM certificate; TLS
-hostname verification remains enabled. See
-[configuration and SMTP behavior](docs/config-and-smtp-fixes.md).
+SMTP operations honor the timeout. IMAP verifies the server certificate and
+hostname before login, including on loopback connections and send previews.
+For Bridge certificates outside system trust, set `bridge.tls_cert_file` to an
+explicitly trusted public CA/certificate PEM for IMAP and SMTP. See
+[configuration and Bridge transport behavior](docs/config-and-smtp-fixes.md).
 
 ## Output and exit codes
 

@@ -47,7 +47,7 @@ func bridgeClient(cfg config.Config, st *model.State, passwordFileOverride strin
 			timeout = d
 		}
 	}
-	c, err := bridge.DialIMAP(bridge.IMAPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.IMAPPort, Username: username, Password: password}, timeout)
+	c, err := bridge.DialIMAP(bridge.IMAPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.IMAPPort, Username: username, Password: password, TLSCertFile: config.Expand(cfg.Bridge.TLSCertFile)}, timeout)
 	if err != nil {
 		return nil, "", "", cliError{exit: 4, code: "imap_connect_failed", msg: err.Error()}
 	}

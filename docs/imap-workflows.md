@@ -73,3 +73,7 @@ new send receipt.
 
 All SMTP paths, including draft fallback, use the configured operation timeout
 and explicit `bridge.tls_cert_file` trust file when provided.
+IMAP connections use the same trust file and verify the server certificate and
+configured hostname before login, including draft reads performed by send
+previews. Loopback connections require valid certificate trust too; see
+[Bridge transport behavior](config-and-smtp-fixes.md) for PEM configuration.

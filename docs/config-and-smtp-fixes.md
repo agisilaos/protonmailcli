@@ -1,4 +1,4 @@
-# Configuration and SMTP behavior
+# Configuration and Bridge transport behavior
 
 Configuration uses TOML parsing and writing. Inline comments do not change values,
 quoted `#` characters and escaped strings are preserved, and malformed values
@@ -24,14 +24,18 @@ durations fail configuration loading. An empty environment variable leaves its
 configured value unchanged. Environment defaults are applied when configuration
 is loaded; they do not alter defaults persisted by initial setup.
 
-## Trusting a local Bridge SMTP certificate
+## Trusting a Bridge IMAP or SMTP certificate
 
-When the Bridge SMTP certificate is not trusted by the operating system, export
-its public certificate and configure its PEM file explicitly:
+IMAP verifies the server certificate and configured hostname before logging in,
+including connections to localhost or a loopback IP address. IMAP and SMTP use
+the same certificate trust policy. When a Bridge certificate is not trusted by
+the operating system, export its public CA/certificate and configure its PEM file
+explicitly:
 
 ```toml
 [bridge]
 host = "127.0.0.1"
+imap_port = 1143
 smtp_port = 1025
 tls_cert_file = "/absolute/path/to/bridge-cert.pem"
 ```
@@ -39,9 +43,15 @@ tls_cert_file = "/absolute/path/to/bridge-cert.pem"
 Only use the public certificate obtained from the Bridge instance you intend to
 trust. This adds its certificate to normal system trust. Certificate validity and
 hostname verification remain enabled; the configured host must match a name or
-IP address in the certificate. With `tls_cert_file` set, a server that does not
-advertise STARTTLS is rejected. Without this setting, normal system certificate
-trust and automatic SMTP STARTTLS remain in use.
+IP address in the certificate. The PEM file must provide trust for both endpoints
+if their certificates differ. An unreadable or invalid PEM file fails IMAP setup
+before a connection is opened.
+
+IMAP always requires STARTTLS, with TLS 1.2 or newer, before authentication.
+For SMTP, setting `tls_cert_file` requires the server to advertise STARTTLS.
+Without this setting, normal system certificate trust and automatic SMTP STARTTLS
+remain in use. Neither protocol disables certificate verification for loopback
+hosts.
 
 SMTP uses the configured operation timeout for connection establishment, server
 responses, TLS, authentication, and message delivery. The default is 30 seconds.
@@ -59,5 +69,6 @@ failure does not turn that accepted send into a retryable failure. Errors before
 that acknowledgement still return failure; a lost acknowledgement can leave the
 server's acceptance uncertain, so inspect the mailbox before resending.
 
-Tests use loopback SMTP servers that never relay messages. These tests do not
-establish live Bridge certificate configuration or delivery behavior.
+Successful TLS workflow tests use explicitly trusted loopback IMAP and SMTP
+fixtures that never relay messages. These tests do not establish live Bridge
+certificate configuration or delivery behavior.

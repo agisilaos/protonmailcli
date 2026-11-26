@@ -1,12 +1,9 @@
 package bridge
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 	"net/smtp"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -39,20 +36,9 @@ func Send(cfg SMTPConfig, in SendInput) error {
 			return fmt.Errorf("SMTP envelope recipient must not contain CR or LF")
 		}
 	}
-	tlsConfig := &tls.Config{ServerName: cfg.Host, MinVersion: tls.VersionTLS12}
-	if cfg.TLSCertFile != "" {
-		certPEM, err := os.ReadFile(cfg.TLSCertFile)
-		if err != nil {
-			return fmt.Errorf("read SMTP TLS certificate: %w", err)
-		}
-		roots, err := x509.SystemCertPool()
-		if err != nil {
-			return fmt.Errorf("load system certificate roots: %w", err)
-		}
-		if !roots.AppendCertsFromPEM(certPEM) {
-			return fmt.Errorf("SMTP TLS certificate file contains no PEM certificates")
-		}
-		tlsConfig.RootCAs = roots
+	tlsConfig, err := bridgeTLSConfig("SMTP", cfg.Host, cfg.TLSCertFile)
+	if err != nil {
+		return err
 	}
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprint(cfg.Port))
 	headers := []string{

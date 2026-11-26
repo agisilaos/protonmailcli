@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 	"protonmailcli/internal/model"
@@ -37,7 +39,7 @@ func (s *workflowServer) snapshot() ([]string, []string) {
 	defer s.mu.Unlock()
 	return append([]string(nil), s.commands...), append([]string(nil), s.appended...)
 }
-func newWorkflowServer(t *testing.T, s *workflowServer) int {
+func newWorkflowServer(t *testing.T, s *workflowServer) imapTestEndpoint {
 	t.Helper()
 	cert := httptest.NewTLSServer(nil)
 	tc := cert.TLS.Clone()
@@ -144,7 +146,7 @@ func newWorkflowServer(t *testing.T, s *workflowServer) int {
 			}(c)
 		}
 	}()
-	return l.Addr().(*net.TCPAddr).Port
+	return imapTestEndpoint{port: l.Addr().(*net.TCPAddr).Port, certificate: tc.Certificates[0].Certificate[0]}
 }
 func runWorkflow(t *testing.T, args []string, input string) (int, string) {
 	t.Helper()
@@ -279,6 +281,10 @@ func captureWorkflowSMTP(t *testing.T, args []string) func() []string {
 
 func captureWorkflowSMTPWithCompletion(t *testing.T, args []string, acknowledge bool) func() []string {
 	t.Helper()
+	// httptest peers share the fixture certificate trusted by imapCommandArgs.
+	certificate := httptest.NewTLSServer(nil)
+	serverTLS := certificate.TLS.Clone()
+	certificate.Close()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -305,6 +311,7 @@ func captureWorkflowSMTPWithCompletion(t *testing.T, args []string, acknowledge 
 				c.SetDeadline(time.Now().Add(3 * time.Second))
 				fmt.Fprint(c, "220 synthetic\r\n")
 				r := bufio.NewReader(c)
+				tlsStarted := false
 				for {
 					line, e := r.ReadString('\n')
 					if e != nil {
@@ -312,7 +319,18 @@ func captureWorkflowSMTPWithCompletion(t *testing.T, args []string, acknowledge 
 					}
 					switch strings.Fields(line)[0] {
 					case "EHLO":
-						fmt.Fprint(c, "250-synthetic\r\n250 AUTH PLAIN\r\n")
+						if tlsStarted {
+							fmt.Fprint(c, "250-synthetic\r\n250 AUTH PLAIN\r\n")
+						} else {
+							fmt.Fprint(c, "250-synthetic\r\n250 STARTTLS\r\n")
+						}
+					case "STARTTLS":
+						fmt.Fprint(c, "220 ready for TLS\r\n")
+						tlsConn := tls.Server(c, serverTLS)
+						if err := tlsConn.Handshake(); err != nil {
+							return
+						}
+						c, r, tlsStarted = tlsConn, bufio.NewReader(tlsConn), true
 					case "AUTH":
 						fmt.Fprint(c, "235 authenticated\r\n")
 					case "DATA":
@@ -512,6 +530,15 @@ func TestPB14IMAPBatchPassesExplicitTLSTrust(t *testing.T) {
 	args := imapCommandArgs(t, newWorkflowServer(t, s))
 	cfg, err := config.Load(args[2])
 	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := os.ReadFile(cfg.Bridge.TLSCertFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "synthetic-bridge.pem"), certificate, 0600); err != nil {
 		t.Fatal(err)
 	}
 	cfg.Bridge.TLSCertFile = "~/synthetic-bridge.pem"
