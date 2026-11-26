@@ -652,7 +652,8 @@ from a successful search with no matching message (`not_found`).
 
 A failed or short stdout write exits with status 1 when the command otherwise
 succeeded. Existing command error statuses are preserved, with an additional
-diagnostic on stderr. Output can be incomplete: a saved draft or completed
+diagnostic on stderr. This applies on Unix when a pipe reader closes early,
+including after the first line of a report. Output can be incomplete: a saved draft or completed
 operation remains applied. Inspect state before retrying a mutation; the CLI
 does not retry commands or failed writes to recover a missing receipt.
 
