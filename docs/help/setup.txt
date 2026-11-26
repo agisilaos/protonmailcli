@@ -2,9 +2,9 @@ Usage of setup:
   -bridge-host string
     	Bridge host (default "127.0.0.1")
   -bridge-imap-port int
-    	Bridge IMAP port (default 1143)
+    	Bridge IMAP port (1-65535) (default 1143)
   -bridge-smtp-port int
-    	Bridge SMTP port (default 1025)
+    	Bridge SMTP port (1-65535) (default 1025)
   -interactive
     	interactive prompts
   -non-interactive

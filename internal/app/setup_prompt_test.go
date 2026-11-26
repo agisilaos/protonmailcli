@@ -116,3 +116,54 @@ func TestSetupAcceptsBlankAnswersAndFinalAnswerWithoutNewline(t *testing.T) {
 		})
 	}
 }
+
+func TestSetupPortInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name, smtp, imap, badPort string
+		flags                     bool
+		wantSMTP, wantIMAP        int
+	}{
+		{"malformed SMTP", "abc", "31143", "SMTP", false, 0, 0},
+		{"malformed IMAP", "31025", "abc", "IMAP", false, 0, 0},
+		{"numeric prefix", "1025x", "31143", "SMTP", false, 0, 0},
+		{"integer overflow", "31025", "99999999999999999999999999", "IMAP", false, 0, 0},
+		{"zero IMAP", "1025", "0", "IMAP", false, 0, 0},
+		{"above maximum SMTP", "65536", "1143", "SMTP", false, 0, 0},
+		{"blank defaults", "", "", "", false, 1025, 1143},
+		{"explicit decimal and upper boundary", "031025", "65535", "", false, 31025, 65535},
+		{"flag negative SMTP", "-1", "1143", "SMTP", true, 0, 0},
+		{"flag above maximum IMAP", "1025", "65536", "IMAP", true, 0, 0},
+		{"flag integer syntax and boundaries", "0xffff", "0o1", "", true, 65535, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			const before = "[bridge]\nhost = 'existing.invalid'\nsmtp_port = 2500\nimap_port = 1400\n"
+			if err := os.WriteFile(path, []byte(before), 0600); err != nil {
+				t.Fatal(err)
+			}
+			input := strings.Join([]string{"", "", tc.smtp, tc.imap, "fixture@example.invalid", "", ""}, "\n")
+			var out, prompts bytes.Buffer
+			args := []string{"--json", "--config", path, "setup"}
+			if tc.flags {
+				args = append(args, "--non-interactive", "--username", "fixture@example.invalid", "--bridge-smtp-port", tc.smtp, "--bridge-imap-port", tc.imap)
+			} else {
+				args = append(args, "--interactive")
+			}
+			code := Run(args, strings.NewReader(input), &out, &prompts)
+			if tc.badPort != "" {
+				after, err := os.ReadFile(path)
+				if code != 2 || !strings.Contains(out.String(), tc.badPort+" port") || err != nil || string(after) != before {
+					t.Fatalf("invalid %s port: exit=%d output=%s config preserved=%v read error=%v", tc.badPort, code, &out, string(after) == before, err)
+				}
+				if strings.Contains(prompts.String(), "Bridge username") {
+					t.Fatal("setup kept prompting after an invalid port")
+				}
+				return
+			}
+			cfg, err := config.Load(path)
+			if code != 0 || err != nil || cfg.Bridge.SMTPPort != tc.wantSMTP || cfg.Bridge.IMAPPort != tc.wantIMAP {
+				t.Fatalf("valid ports: exit=%d config=%+v read error=%v output=%s", code, cfg.Bridge, err, &out)
+			}
+		})
+	}
+}

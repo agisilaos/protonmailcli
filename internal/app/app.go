@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -325,6 +326,13 @@ Global flags:
   -h, --help  --version`)
 }
 
+func validateSetupPort(protocol string, port int) error {
+	if port < 1 || port > 65535 {
+		return cliError{exit: 2, code: "validation_error", msg: "Bridge " + protocol + " port must be from 1 to 65535"}
+	}
+	return nil
+}
+
 func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 	fs, opts := newSetupFlags()
 	if err := fs.Parse(args); err != nil {
@@ -359,12 +367,21 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 		if v := ask("Bridge host [127.0.0.1]: ", false); v != "" {
 			cfg.Bridge.Host = v
 		}
-		if v := ask("Bridge SMTP port [1025]: ", false); v != "" {
-			fmt.Sscanf(v, "%d", &cfg.Bridge.SMTPPort)
+		askPort := func(protocol string, port *int) {
+			answer := ask(fmt.Sprintf("Bridge %s port [%d]: ", protocol, *port), false)
+			if answer == "" {
+				return
+			}
+			value, err := strconv.Atoi(answer)
+			if err != nil {
+				askErr = cliError{exit: 2, code: "validation_error", msg: "Bridge " + protocol + " port must be a decimal integer from 1 to 65535"}
+				return
+			}
+			askErr = validateSetupPort(protocol, value)
+			*port = value
 		}
-		if v := ask("Bridge IMAP port [1143]: ", false); v != "" {
-			fmt.Sscanf(v, "%d", &cfg.Bridge.IMAPPort)
-		}
+		askPort("SMTP", &cfg.Bridge.SMTPPort)
+		askPort("IMAP", &cfg.Bridge.IMAPPort)
 		if v := ask("Bridge username/email: ", false); v != "" {
 			cfg.Bridge.Username = v
 		}
@@ -375,6 +392,12 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 			return askErr
 		}
 	} else {
+		if err := validateSetupPort("SMTP", opts.smtpPort); err != nil {
+			return err
+		}
+		if err := validateSetupPort("IMAP", opts.imapPort); err != nil {
+			return err
+		}
 		cfg.Bridge.Host = opts.host
 		cfg.Bridge.SMTPPort = opts.smtpPort
 		cfg.Bridge.IMAPPort = opts.imapPort

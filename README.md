@@ -70,8 +70,12 @@ brew install protonmailcli
 
 Setup writes prompts to stderr. Press Enter after each answer or to accept a
 default. Only the final password-file path can end with EOF after a nonempty
-answer. Earlier EOF, a missing final answer, or a prompt or input error exits
-with status 1 and preserves the existing configuration.
+answer. Earlier EOF, a missing final answer, or a prompt or input read failure
+exits with status 1 and preserves the existing configuration.
+
+Both setup modes require SMTP and IMAP ports from 1 to 65535. At a prompt,
+enter a decimal integer or press Enter for the displayed default. An invalid
+port exits with status 2 and preserves the existing configuration.
 
 Interactive `auth login` also writes prompts to stderr. If a prompt cannot be
 delivered, login exits with status 1 before reading an answer or saving login
