@@ -68,6 +68,9 @@ brew install protonmailcli
 ./protonmailcli setup --interactive
 ```
 
+Combining `setup --interactive` with global `--no-input` or setup's
+`--non-interactive` exits 2 before reading input or writing configuration.
+
 Setup writes prompts to stderr. Press Enter after each answer or to accept a
 default. Only the final password-file path can end with EOF after a nonempty
 answer. Earlier EOF, a missing final answer, or a prompt or input read failure

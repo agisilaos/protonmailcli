@@ -226,3 +226,32 @@ func TestSetupStopsReadingAfterSixCompleteAnswers(t *testing.T) {
 		t.Fatalf("setup exit=%d after %d reads: %s", code, answers.reads, &out)
 	}
 }
+
+func TestSetupRejectsConflictingInputModesBeforePrompting(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		globals, setup []string
+	}{
+		{"global no-input", []string{"--no-input"}, []string{"--interactive"}},
+		{"both setup modes", nil, []string{"--non-interactive", "--interactive"}},
+		{"both setup modes reversed", nil, []string{"--interactive", "--non-interactive"}},
+		{"dry run", []string{"--dry-run", "--no-input"}, []string{"--interactive"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := filepath.Join(t.TempDir(), "config.toml")
+			const before = "[defaults]\nprofile = 'original'\n"
+			if err := os.WriteFile(cfg, []byte(before), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := append([]string{"--json", "--config", cfg}, tc.globals...)
+			args = append(args, "setup", "--username", "fixture@example.invalid")
+			var input setupBlankAnswers
+			var out, prompts bytes.Buffer
+			code := Run(append(args, tc.setup...), &input, &out, &prompts)
+			after, err := os.ReadFile(cfg)
+			if err != nil || code != 2 || !strings.Contains(out.String(), "usage_error") || prompts.Len() != 0 || input.reads != 0 || string(after) != before {
+				t.Fatalf("exit=%d output=%s prompts=%q reads=%d config=%q err=%v", code, &out, &prompts, input.reads, after, err)
+			}
+		})
+	}
+}

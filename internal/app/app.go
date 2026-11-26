@@ -352,6 +352,9 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 	if err := fs.Parse(args); err != nil {
 		return cliError{exit: 2, code: "usage_error", msg: err.Error()}
 	}
+	if opts.interactive && (g.noInput || opts.nonInteractive) {
+		return cliError{exit: 2, code: "usage_error", msg: "--interactive conflicts with --no-input and --non-interactive"}
+	}
 	if err := validateSetupPort("SMTP", opts.smtpPort); err != nil {
 		return err
 	}
