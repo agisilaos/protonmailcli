@@ -372,6 +372,8 @@ previews. Loopback connections require valid certificate trust too; see
 
 
 If a completed send receipt is published but its directory sync fails, the CLI
-reports the publication and retains the original key. A matching retry can replay
-the visible receipt. A draft batch that fails mailbox discovery before dispatch
+reports the publication and retains the original key. A matching single-send or
+completed command retry can replay the visible receipt. A failed row checkpoint
+requires reconciling every batch item and skipping confirmed sends. An existing
+command key remains pending, and unkeyed rows have no replay protection. A draft batch that fails mailbox discovery before dispatch
 reports a failed state write if it also cannot save its final result.

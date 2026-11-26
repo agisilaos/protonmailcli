@@ -133,8 +133,11 @@ success. On Unix, state paths resolve their raw parent through the filesystem
 before staging, locking, replacement, or sync. A symlink followed by `..` keeps
 its filesystem meaning. A writer uses the resolved path for its initial load and
 all checkpoints until it releases the lock, even if the original symlink changes.
-A writer keeps its directory open and checks its identity before loading or saving.
-Replacing that directory while a command waits for input aborts its next state operation.
+On Unix a writer keeps its directory open and performs all state reads, staging,
+replacement, cleanup and sync relative to that directory handle. Replacing the
+directory while a command waits for input aborts its next state operation. A
+replacement during a checkpoint cannot redirect that checkpoint to another profile.
+Other platforms retain their native state replacement and writer-lock behavior.
 The final state filename still must satisfy the regular-file policy. Keyed SMTP and draft operations wait for this checkpoint before dispatch. The parent directory must
 be openable for syncing, and its filesystem must support directory sync; an
 unsupported or failed sync is an error rather than a successful checkpoint.

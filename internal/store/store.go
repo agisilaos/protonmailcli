@@ -14,6 +14,7 @@ import (
 type Store struct {
 	path      string
 	directory *os.File
+	root      *os.Root
 }
 
 func New(path string) *Store {
@@ -40,7 +41,7 @@ type Writer struct {
 }
 
 func (w *Writer) Close() error {
-	return errors.Join(w.Closer.Close(), w.directory.Close())
+	return errors.Join(w.Closer.Close(), w.Store.closeDirectory())
 }
 
 // LockWriter covers the entire read-modify-write cycle, including checkpoints.
@@ -50,19 +51,19 @@ func (s *Store) LockWriter() (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	pinned, err := openWriterStore(path)
 	if err != nil {
 		return nil, err
 	}
+	dir := pinned.directory
 	lock, err := lockWriter(path)
 	if err != nil {
-		dir.Close()
+		pinned.closeDirectory()
 		return nil, err
 	}
-	pinned := &Store{path: path, directory: dir}
 	if err := pinned.checkDirectory(); err != nil {
 		lock.Close()
-		dir.Close()
+		pinned.closeDirectory()
 		return nil, err
 	}
 	return &Writer{Store: pinned, Closer: lock, directory: dir}, nil
@@ -112,7 +113,13 @@ func (s *Store) Load() (model.State, error) {
 	if err := s.checkDirectory(); err != nil {
 		return model.State{}, err
 	}
-	file, err := openStateSnapshot(s.path)
+	var file *os.File
+	var err error
+	if s.root != nil {
+		file, err = s.root.Open(filepath.Base(s.path))
+	} else {
+		file, err = openStateSnapshot(s.path)
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return emptyState(), nil
 	}
@@ -157,6 +164,9 @@ func (s *Store) Save(st model.State) error {
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
+	}
+	if s.root != nil {
+		return s.replacePinnedState(b)
 	}
 	return replaceState(path, b)
 }

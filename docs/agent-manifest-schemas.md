@@ -30,9 +30,9 @@ absolute config and state paths, `BATCH_PROFILE` to its profile, and
 Record all four values with the manifest and restore them before a retry.
 
 To check the username, read `data.active` with
-`./protonmailcli --json --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" bridge account list`.
+`./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" bridge account list`.
 If the active account is empty, read `data.username` from
-`./protonmailcli --json --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" auth status`.
+`./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" auth status`.
 Each Bridge batch command below checks the recorded `BATCH_ACCOUNT` again
 before it reads drafts, replays a receipt, or dispatches a row.
 
@@ -61,11 +61,11 @@ Build an item-only send retry manifest from the original results:
 - Leave accepted sends and rows with unresolved delivery out of the manifest.
 
 For draft rows confirmed safe to retry, run
-`./protonmailcli --json --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" draft create-many --file drafts-to-retry.json`.
+`./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" draft create-many --file drafts-to-retry.json`.
 For send rows confirmed unsent, preview the retry manifest with
-`./protonmailcli --json --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" --dry-run message send-many --file sends-to-retry.json`.
+`./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" --dry-run message send-many --file sends-to-retry.json`.
 After reviewing the preview, run
-`./protonmailcli --json --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" message send-many --file sends-to-retry.json`.
+`./protonmailcli --json --no-input --config "${BATCH_CONFIG:?}" --state "${BATCH_STATE:?}" --profile "${BATCH_PROFILE:?}" --expect-account "${BATCH_ACCOUNT:?}" message send-many --file sends-to-retry.json`.
 
 For draft creation failures after dispatch, retain the state and keys and
 reconcile the outcome before retrying. If SMTP fallback was attempted, inspect

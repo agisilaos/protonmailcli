@@ -27,8 +27,15 @@ func TestPublishedSendReceiptRetainsReplayGuidance(t *testing.T) {
 				return nil
 			}}
 			code := a.run(args)
-			if code != 4 || len(sent()) != 1 || !strings.Contains(out.String(), "published") || !strings.Contains(out.String(), "matching retry") {
+			wantHint := "matching retry"
+			if mode == "item" {
+				wantHint = "reconcile every batch item"
+			}
+			if code != 4 || len(sent()) != 1 || !strings.Contains(out.String(), "published") || !strings.Contains(out.String(), wantHint) {
 				t.Fatalf("published receipt misreported: exit=%d sent=%d output=%s", code, len(sent()), out.String())
+			}
+			if mode == "single" && (!strings.Contains(out.String(), "SMTP accepted imap-v2:Drafts:41") || !strings.Contains(out.String(), `"sent":true`)) {
+				t.Fatalf("missing accepted send context: %s", out.String())
 			}
 			code, replay := runWorkflow(t, args, input)
 			if code != 0 || len(sent()) != 1 {
@@ -48,5 +55,38 @@ func TestDraftDiscoveryFailureDoesNotClaimDispatch(t *testing.T) {
 	_, appended := peer.snapshot()
 	if code != 1 || len(appended) != 0 || !strings.Contains(out.String(), "state_save_failed") || strings.Contains(out.String(), "unfinished recovery record") {
 		t.Fatalf("undispatched batch misreported: exit=%d appends=%d out=%s", code, len(appended), out.String())
+	}
+}
+
+func TestPublishedBatchRowRequiresReconciliation(t *testing.T) {
+	for _, commandKey := range []bool{false, true} {
+		t.Run(fmt.Sprint(commandKey), func(t *testing.T) {
+			args, _, sent := sendRecoveryArgs(t, "item")
+			input := `[{"draft_id":"41","confirm_send":"41"},{"draft_id":"41","confirm_send":"41","idempotency_key":"send-key"}]`
+			if commandKey {
+				args = append(args, "--idempotency-key", "batch-key")
+			}
+			disk := store.New(args[4])
+			var out bytes.Buffer
+			a := App{Stdout: &out, Stderr: io.Discard, Stdin: strings.NewReader(input), checkpoint: func(state model.State) error {
+				if err := disk.Save(state); err != nil {
+					return err
+				}
+				if state.Idempotency["send-key"].Status == "complete" {
+					return fmt.Errorf("%w: injected sync", store.ErrCheckpointUncertain)
+				}
+				return nil
+			}}
+			code := a.run(args)
+			if code != 4 || len(sent()) != 2 || !strings.Contains(out.String(), "published") || !strings.Contains(out.String(), "reconcile every batch item") || !strings.Contains(out.String(), "batch item 1") {
+				t.Fatalf("unsafe batch guidance: exit=%d sent=%d out=%s", code, len(sent()), out.String())
+			}
+			if commandKey {
+				code, _ = runWorkflow(t, args, input)
+				if code != 4 || len(sent()) != 2 {
+					t.Fatalf("pending batch replayed: exit=%d sent=%d", code, len(sent()))
+				}
+			}
+		})
 	}
 }

@@ -476,7 +476,12 @@ func draftCreationError(err error) cliError {
 
 func sendCheckpointError(err error, message string) error {
 	if errors.Is(err, store.ErrCheckpointUncertain) {
-		return err
+		var failure cliError
+		if errors.As(err, &failure) {
+			context, _, _ := strings.Cut(message, " but its receipt")
+			failure.msg = context + ". The receipt was published, but its durability could not be confirmed"
+			return errors.Join(failure, err)
+		}
 	}
 	return pendingSendError(message + ": " + err.Error())
 }
@@ -730,7 +735,7 @@ func (a App) cmdMessageIMAP(action string, args []string, g globalOptions, cfg c
 		}{Sent: true, DraftID: imapMessageIDForMailbox(mailbox, uid), SendPath: "smtp", Source: "imap", SentAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := completeSend(st, opts.idempotencyKey, "message.send", payload, resp, resp.DraftID, a.checkpoint); err != nil {
 			failure := sendCheckpointError(err, "SMTP accepted "+resp.DraftID+" but its receipt could not be saved")
-			return nil, false, failure
+			return resp, false, failure
 		}
 		return resp, false, nil
 	case "send-many":
@@ -883,7 +888,14 @@ func (a App) cmdMessageIMAP(action string, args []string, g globalOptions, cfg c
 			results = append(results, result)
 			success++
 			if err := completeSend(st, it.IdempotencyKey, "imap.message.send-item", payload, result, result.DraftID, a.checkpoint); err != nil {
-				failure := sendCheckpointError(err, fmt.Sprintf("SMTP accepted batch item %d (%s) but its receipt could not be saved", i, result.DraftID))
+				failure := pendingSendError(fmt.Sprintf("SMTP accepted batch item %d (%s) but its receipt could not be saved: %v", i, result.DraftID, err))
+				if errors.Is(err, store.ErrCheckpointUncertain) {
+					failure.msg = fmt.Sprintf("Receipt for accepted batch item %d (%s) was published, but its durability could not be confirmed", i, result.DraftID)
+					failure.hint += " Keep the reported results. Skip confirmed sends when recovering any remaining rows."
+					if opts.idempotencyKey != "" {
+						failure.hint += " The command key remains pending."
+					}
+				}
 				return batchResult(), false, failure
 			}
 		}
