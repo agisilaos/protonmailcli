@@ -73,9 +73,12 @@ default. Only the final password-file path can end with EOF after a nonempty
 answer. Earlier EOF, a missing final answer, or a prompt or input read failure
 exits with status 1 and preserves the existing configuration.
 
-Both setup modes require SMTP and IMAP ports from 1 to 65535. At a prompt,
-enter a decimal integer or press Enter for the displayed default. An invalid
-port exits with status 2 and preserves the existing configuration.
+Both setup modes require SMTP and IMAP ports from 1 to 65535. An invalid port
+flag exits with status 2 before any prompts or configuration writes. In
+interactive setup, `--profile`, `--bridge-smtp-port`, and `--bridge-imap-port`
+set the defaults displayed at their prompts. Press Enter to keep a default or
+type a replacement. Port answers must be decimal integers in the same range.
+An invalid answer exits with status 2 and preserves the existing configuration.
 
 Interactive `auth login` also writes prompts to stderr. If a prompt cannot be
 delivered, login exits with status 1 before reading an answer or saving login

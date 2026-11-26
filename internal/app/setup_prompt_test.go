@@ -167,3 +167,52 @@ func TestSetupPortInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestInteractiveSetupRejectsInvalidPortFlagsBeforePrompting(t *testing.T) {
+	for _, tc := range []struct{ flag, value string }{
+		{"--bridge-smtp-port", "65536"},
+		{"--bridge-imap-port", "0"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			const before = "[defaults]\nprofile = 'existing'\n"
+			if err := os.WriteFile(path, []byte(before), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out, prompts bytes.Buffer
+			var answers setupBlankAnswers
+			code := Run([]string{"--json", "--config", path, "setup", "--interactive", tc.flag, tc.value}, &answers, &out, &prompts)
+			after, err := os.ReadFile(path)
+			if code != 2 || !strings.Contains(out.String(), `"code":"validation_error"`) || prompts.Len() != 0 || answers.reads != 0 || err != nil || string(after) != before {
+				t.Fatalf("invalid flag: exit=%d output=%s prompts=%q reads=%d config preserved=%v read error=%v", code, &out, &prompts, answers.reads, string(after) == before, err)
+			}
+		})
+	}
+}
+
+func TestInteractiveSetupShowsAndUsesFlagDefaults(t *testing.T) {
+	t.Setenv("PMAIL_PROFILE", "")
+	for _, tc := range []struct {
+		name, input, wantProfile string
+		wantSMTP, wantIMAP       int
+	}{
+		{"accept defaults", "\n\n\n\n\n\n", "work", 2500, 1400},
+		{"override defaults", "team\n\n3500\n3400\n\n\n", "team", 3500, 3400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			var out, prompts bytes.Buffer
+			code := Run([]string{"--config", path, "setup", "--interactive", "--profile", "work",
+				"--bridge-smtp-port", "2500", "--bridge-imap-port", "1400"}, strings.NewReader(tc.input), &out, &prompts)
+			cfg, err := config.Load(path)
+			if code != 0 || err != nil || cfg.Profile != tc.wantProfile || cfg.Bridge.SMTPPort != tc.wantSMTP || cfg.Bridge.IMAPPort != tc.wantIMAP {
+				t.Errorf("exit=%d output=%s profile=%q SMTP=%d IMAP=%d read error=%v", code, &out, cfg.Profile, cfg.Bridge.SMTPPort, cfg.Bridge.IMAPPort, err)
+			}
+			for _, prompt := range []string{"Profile [work]", "Bridge SMTP port [2500]", "Bridge IMAP port [1400]"} {
+				if !strings.Contains(prompts.String(), prompt) {
+					t.Errorf("missing %q in %s", prompt, &prompts)
+				}
+			}
+		})
+	}
+}

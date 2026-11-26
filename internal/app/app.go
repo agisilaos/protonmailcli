@@ -338,9 +338,17 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 	if err := fs.Parse(args); err != nil {
 		return cliError{exit: 2, code: "usage_error", msg: err.Error()}
 	}
+	if err := validateSetupPort("SMTP", opts.smtpPort); err != nil {
+		return err
+	}
+	if err := validateSetupPort("IMAP", opts.imapPort); err != nil {
+		return err
+	}
 	useInteractive := opts.interactive || (!opts.nonInteractive && !g.noInput && runtimeStdinIsTTY())
 	cfg := config.Default()
 	cfg.Profile = opts.profile
+	cfg.Bridge.SMTPPort = opts.smtpPort
+	cfg.Bridge.IMAPPort = opts.imapPort
 	if useInteractive {
 		r := bufio.NewReader(a.Stdin)
 		prompts := &commandOutput{writer: a.Stderr}
@@ -361,7 +369,7 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 			}
 			return answer
 		}
-		if v := ask("Profile [default]: ", false); v != "" {
+		if v := ask(fmt.Sprintf("Profile [%s]: ", cfg.Profile), false); v != "" {
 			cfg.Profile = v
 		}
 		if v := ask("Bridge host [127.0.0.1]: ", false); v != "" {
@@ -392,15 +400,7 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 			return askErr
 		}
 	} else {
-		if err := validateSetupPort("SMTP", opts.smtpPort); err != nil {
-			return err
-		}
-		if err := validateSetupPort("IMAP", opts.imapPort); err != nil {
-			return err
-		}
 		cfg.Bridge.Host = opts.host
-		cfg.Bridge.SMTPPort = opts.smtpPort
-		cfg.Bridge.IMAPPort = opts.imapPort
 		cfg.Bridge.Username = opts.username
 		cfg.Bridge.PasswordFile = opts.passwordFile
 		if cfg.Bridge.Username == "" {
