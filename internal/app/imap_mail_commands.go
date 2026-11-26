@@ -404,11 +404,11 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 	var c *bridge.IMAPClient
 	var username string
 	var password string
-	ensureClient := func() error {
+	ensureClient := func(passwordFile string) error {
 		if c != nil {
 			return nil
 		}
-		client, user, pass, err := bridgeClient(cfg, st, "")
+		client, user, pass, err := bridgeClient(cfg, st, passwordFile)
 		if err != nil {
 			return err
 		}
@@ -433,7 +433,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err != nil {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: err.Error()}
 		}
-		if err := ensureClient(); err != nil {
+		if err := ensureClient(""); err != nil {
 			return nil, false, err
 		}
 		msgs, err := c.ListMessages(mailbox, "UID "+uid)
@@ -470,7 +470,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err := pendingIdempotencyError(st, opts.idempotencyKey, "message.send"); err != nil {
 			return nil, false, err
 		}
-		if err := ensureClient(); err != nil {
+		if err := ensureClient(opts.passwordFile); err != nil {
 			return nil, false, err
 		}
 		if err := validateDraftIdentity(c, opts.draftID); err != nil {
@@ -493,13 +493,6 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 			return sendPlanResponse{Action: "send", DraftID: imapDraftID(uid), WouldSend: true, DryRun: true, SendPath: "smtp", Source: "imap"}, true, nil
 		}
 		pass := strings.TrimSpace(password)
-		if opts.passwordFile != "" {
-			_, p, err := resolveBridgeCredentials(cfg, st, opts.passwordFile)
-			if err != nil {
-				return nil, false, err
-			}
-			pass = p
-		}
 		if err := reserveSend(st, opts.idempotencyKey, "message.send", payload, checkpoint); err != nil {
 			return nil, false, err
 		}
@@ -543,17 +536,10 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 				return nil, false, err
 			}
 		}
-		if err := ensureClient(); err != nil {
+		if err := ensureClient(opts.passwordFile); err != nil {
 			return nil, false, err
 		}
 		pass := strings.TrimSpace(password)
-		if opts.passwordFile != "" {
-			_, p, err := resolveBridgeCredentials(cfg, st, opts.passwordFile)
-			if err != nil {
-				return nil, false, err
-			}
-			pass = p
-		}
 		if !g.dryRun {
 			if err := reserveSend(st, opts.idempotencyKey, "message.send-many", items, checkpoint); err != nil {
 				return nil, false, err
@@ -652,7 +638,7 @@ func cmdMessageIMAP(action string, args []string, g globalOptions, cfg config.Co
 		if err := pendingIdempotencyError(st, opts.idempotencyKey, "message.follow-up"); err != nil {
 			return nil, false, err
 		}
-		if err := ensureClient(); err != nil {
+		if err := ensureClient(""); err != nil {
 			return nil, false, err
 		}
 		msgs, err := c.ListMessages(mailbox, "UID "+uid)

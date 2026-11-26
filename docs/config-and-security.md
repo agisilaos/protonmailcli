@@ -41,6 +41,11 @@ Bridge credentials are resolved in this order:
 1. `PMAIL_SMTP_PASSWORD` environment variable
 2. password file path from flag/auth/config (`--smtp-password-file`, auth state, or config)
 
+For `message send` and `message send-many`, `--smtp-password-file` supplies the
+password for both the initial IMAP draft read and the SMTP send. It can be the
+only configured password source, including for `--dry-run`. A nonempty
+`PMAIL_SMTP_PASSWORD` still takes precedence over password files.
+
 Username is resolved from the selected Bridge account, then auth state, then
 config. Doctor uses the same precedence.
 
