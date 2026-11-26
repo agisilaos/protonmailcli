@@ -327,6 +327,7 @@ Nonempty environment defaults override the config file; explicit output/profile
 flags take precedence. TOML syntax, output modes, and durations are validated.
 SMTP operations honor the timeout. IMAP verifies the server certificate and
 hostname before login, including on loopback connections and send previews.
+When upgrading from v0.2.2, IMAP now verifies the Bridge certificate before login.
 For Bridge certificates outside system trust, set `bridge.tls_cert_file` to an
 explicitly trusted public CA/certificate PEM for IMAP and SMTP. See
 [configuration and Bridge transport behavior](docs/config-and-smtp-fixes.md).
