@@ -5,6 +5,8 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 )
 
@@ -86,6 +89,13 @@ func TestBridgeE2EDraftCreateSearchSend(t *testing.T) {
 
 func prepareBridgeE2E(t *testing.T, username, password string) (cfgPath, statePath, passPath string) {
 	t.Helper()
+	if strings.TrimSpace(os.Getenv("PMAIL_E2E_REAL_SEND")) != "1" {
+		previous := smtpSendFn
+		t.Cleanup(func() { smtpSendFn = previous })
+		smtpSendFn = func(bridge.SMTPConfig, bridge.SendInput) error {
+			return errors.New("Bridge rejected draft creation by IMAP; SMTP fallback requires PMAIL_E2E_REAL_SEND=1")
+		}
+	}
 	host := envOr("PMAIL_E2E_HOST", "127.0.0.1")
 	imapPort := envIntOr("PMAIL_E2E_IMAP_PORT", 1143)
 	smtpPort := envIntOr("PMAIL_E2E_SMTP_PORT", 1025)
@@ -240,5 +250,40 @@ func TestBridgeE2ESafeSendArguments(t *testing.T) {
 	code, out = c.run("", "search", "messages")
 	if code != 0 || regressionData(t, out)["count"] != float64(0) {
 		t.Fatalf("preview created message: %d %s", code, out)
+	}
+}
+
+func TestBridgeE2EFallbackRequiresExplicitRealSend(t *testing.T) {
+	for _, optIn := range []string{"", "1"} {
+		t.Run("opt-in="+optIn, func(t *testing.T) {
+			t.Setenv("PMAIL_E2E_REAL_SEND", optIn)
+			t.Setenv("PMAIL_USE_LOCAL_STATE", "0")
+			t.Setenv("PMAIL_SMTP_PASSWORD", "")
+			t.Setenv("PMAIL_E2E_HOST", "127.0.0.1")
+			server := &workflowServer{appendFailure: true}
+			endpoint := newWorkflowServer(t, server)
+			t.Setenv("PMAIL_E2E_IMAP_PORT", strconv.Itoa(endpoint.port))
+			t.Setenv("PMAIL_E2E_SMTP_PORT", "1")
+			cert := filepath.Join(t.TempDir(), "fixture.pem")
+			if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: endpoint.certificate}), 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PMAIL_E2E_TLS_CERT_FILE", cert)
+			calls := 0
+			oldSend := smtpSendFn
+			t.Cleanup(func() { smtpSendFn = oldSend })
+			smtpSendFn = func(bridge.SMTPConfig, bridge.SendInput) error {
+				calls++
+				return errors.New("synthetic SMTP rejected")
+			}
+			cfg, state, _ := prepareBridgeE2E(t, "fixture@example.invalid", "synthetic-only")
+			code, out := runWorkflow(t, []string{"--json", "--config", cfg, "--state", state, "draft", "create",
+				"--to", "fixture@example.invalid", "--body", "fixture"}, "")
+			commands, _ := server.snapshot()
+			if code != 4 || !strings.Contains(strings.Join(commands, "\n"), " APPEND ") ||
+				(optIn == "" && (calls != 0 || !strings.Contains(out, "PMAIL_E2E_REAL_SEND"))) || (optIn == "1" && calls != 1) {
+				t.Fatalf("opt-in=%q, exit=%d SMTP calls=%d output=%s", optIn, code, calls, out)
+			}
+		})
 	}
 }

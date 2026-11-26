@@ -81,7 +81,10 @@ uses a certificate outside system trust. The E2E setup saves this path (expandin
 `~/`) in its temporary config for IMAP and SMTP; it does not copy the normal CLI
 config or disable TLS verification. The local
 `TestBridgeE2EExplicitCertificateConfiguration` test covers this setup without
-connecting to Bridge.
+connecting to Bridge. Without `PMAIL_E2E_REAL_SEND=1`, the test creates its
+draft through IMAP and previews the send. If IMAP rejects the draft, the test
+stops before SMTP fallback. The tagged `TestBridgeE2EFallbackRequiresExplicitRealSend`
+test exercises both opt-in settings against a loopback IMAP peer and fake SMTP.
 
 ## Required invariants
 

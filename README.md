@@ -396,8 +396,9 @@ temporary E2E configuration for both IMAP and SMTP. It supports `~/` paths; omit
 it when the Bridge certificate is already trusted by the operating system.
 Certificate and hostname verification remain enabled.
 
-The default send phase previews delivery; a real send requires the separate
-`PMAIL_E2E_REAL_SEND=1` opt-in. Its preview argument construction is also covered
+By default the test creates its draft through IMAP and previews delivery.
+If IMAP rejects draft creation, it stops before SMTP fallback. SMTP delivery,
+including that fallback, requires the separate `PMAIL_E2E_REAL_SEND=1` opt-in. Its preview argument construction is also covered
 without Bridge access by `TestBridgeE2ESafeSendArguments`, and temporary trust
 configuration by `TestBridgeE2EExplicitCertificateConfiguration`, under the
 integration build tag.
