@@ -218,8 +218,10 @@ Exit behavior:
   available mailbox names and IDs. A fresh `--dry-run draft create` reports a
   creation plan with `wouldCreate`. Only a stored draft has a receipt ID.
   A success with no result fields prints `ok`.
-  Failures print the error message and code, followed by any result fields.
-  For example, a failed `doctor` report identifies each endpoint and its check result.
+  A command-level error starts with its message and code. Any diagnostic fields
+  follow, such as the endpoint checks in a failed `doctor` report.
+  When a batch completes with failed items, its result lists each failure in
+  `results[].errorCode` and `results[].error`.
 - `--plain`: stable tab-delimited line output.
 - `--json`: exactly one JSON envelope object.
 

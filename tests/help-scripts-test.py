@@ -123,6 +123,14 @@ class HelpScriptsTests(unittest.TestCase):
         self.assertFalse((self.root / "build.json").exists())
 
 
+class HumanOutputContractTests(unittest.TestCase):
+    def test_spec_identifies_batch_error_fields(self) -> None:
+        spec = (ROOT / "docs/cli-spec.md").read_text()
+        stdout = spec.split("### stdout\n", 1)[1].split("### stderr", 1)[0]
+        for field in ("results[].errorCode", "results[].error"):
+            self.assertIn(f"`{field}`", stdout)
+
+
 class DocumentationFaultTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="proton-docs-contract-")
