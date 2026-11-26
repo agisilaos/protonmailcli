@@ -116,7 +116,7 @@ func (s *Store) Load() (model.State, error) {
 	var file *os.File
 	var err error
 	if s.root != nil {
-		file, err = s.root.Open(filepath.Base(s.path))
+		file, err = s.openPinnedSnapshot()
 	} else {
 		file, err = openStateSnapshot(s.path)
 	}
@@ -157,16 +157,16 @@ func (s *Store) Save(st model.State) error {
 	if err := s.checkDirectory(); err != nil {
 		return err
 	}
-	path, err := prepareStatePath(s.path)
-	if err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
 	}
 	if s.root != nil {
 		return s.replacePinnedState(b)
+	}
+	path, err := prepareStatePath(s.path)
+	if err != nil {
+		return err
 	}
 	return replaceState(path, b)
 }

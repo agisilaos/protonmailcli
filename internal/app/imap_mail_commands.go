@@ -162,7 +162,7 @@ func (a App) cmdDraftIMAP(action string, args []string, g globalOptions, cfg con
 			Source:     "imap",
 		}
 		if err := completeDraft(st, opts.idempotencyKey, "draft.create", payload, resp, nil, "", a.checkpoint); err != nil {
-			return nil, false, err
+			return resp, false, err
 		}
 		return resp, false, nil
 	case "create-many":
@@ -1032,7 +1032,7 @@ func (a App) cmdMessageIMAP(action string, args []string, g globalOptions, cfg c
 			References:      refs,
 		}
 		if err := completeDraft(st, opts.idempotencyKey, "message.follow-up", payload, resp, nil, imapMessageIDForMailbox(mailbox, uid), a.checkpoint); err != nil {
-			return nil, false, err
+			return resp, false, err
 		}
 		return resp, false, nil
 	default:

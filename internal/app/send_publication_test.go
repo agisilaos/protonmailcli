@@ -90,3 +90,27 @@ func TestPublishedBatchRowRequiresReconciliation(t *testing.T) {
 		})
 	}
 }
+
+func TestConfirmedDraftCheckpointFailureKeepsResult(t *testing.T) {
+	for _, follow := range []bool{false, true} {
+		t.Run(fmt.Sprint(follow), func(t *testing.T) {
+			base := imapCommandArgs(t, newWorkflowServer(t, &workflowServer{}))
+			args := append(base, "draft", "create", "--to", "fixture@example.invalid", "--body", "fixture", "--idempotency-key", "receipt")
+			if follow {
+				args = append(base, "message", "follow-up", "--message-id", "41", "--body", "fixture", "--idempotency-key", "receipt")
+			}
+			disk := store.New(base[4])
+			var out bytes.Buffer
+			a := App{Stdout: &out, Stderr: io.Discard, Stdin: strings.NewReader(""), checkpoint: func(state model.State) error {
+				if state.Idempotency["receipt"].Status == "complete" {
+					return fmt.Errorf("lost final checkpoint")
+				}
+				return disk.Save(state)
+			}}
+			code := a.run(args)
+			if code != 4 || !strings.Contains(out.String(), `"draft":{`) || !strings.Contains(out.String(), `"createPath":"imap_append"`) {
+				t.Fatalf("confirmed draft result lost: exit=%d out=%s", code, out.String())
+			}
+		})
+	}
+}

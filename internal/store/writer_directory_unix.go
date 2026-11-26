@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 func openWriterStore(path string) (*Store, error) {
@@ -69,4 +71,22 @@ func (s *Store) replacePinnedState(data []byte) error {
 		return fmt.Errorf("%w: %w", ErrCheckpointUncertain, err)
 	}
 	return nil
+}
+
+func (s *Store) openPinnedSnapshot() (*os.File, error) {
+	fd, err := unix.Openat(int(s.directory.Fd()), filepath.Base(s.path), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: s.path, Err: err}
+	}
+	file := os.NewFile(uintptr(fd), s.path)
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Sys().(*syscall.Stat_t).Nlink != 1 {
+		file.Close()
+		return nil, fmt.Errorf("state target must be a regular file without hard links: %s", s.path)
+	}
+	return file, nil
 }

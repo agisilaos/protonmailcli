@@ -377,3 +377,6 @@ completed command retry can replay the visible receipt. A failed row checkpoint
 requires reconciling every batch item and skipping confirmed sends. An existing
 command key remains pending, and unkeyed rows have no replay protection. A draft batch that fails mailbox discovery before dispatch
 reports a failed state write if it also cannot save its final result.
+
+Confirmed draft creation and follow-up results remain in error data when the final
+receipt checkpoint fails, including the known draft ID and creation path.

@@ -137,6 +137,9 @@ On Unix a writer keeps its directory open and performs all state reads, staging,
 replacement, cleanup and sync relative to that directory handle. Replacing the
 directory while a command waits for input aborts its next state operation. A
 replacement during a checkpoint cannot redirect that checkpoint to another profile.
+Pinned loads open the final entry without following symlinks or blocking on special
+files, and validate the opened descriptor before reading. Pinned saves perform no
+path-based directory provisioning.
 Other platforms retain their native state replacement and writer-lock behavior.
 The final state filename still must satisfy the regular-file policy. Keyed SMTP and draft operations wait for this checkpoint before dispatch. The parent directory must
 be openable for syncing, and its filesystem must support directory sync; an

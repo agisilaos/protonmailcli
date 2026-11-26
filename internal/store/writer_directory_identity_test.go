@@ -77,3 +77,26 @@ func TestPinnedCheckpointUsesHeldDirectoryAfterReplacement(t *testing.T) {
 		t.Fatalf("original directory missing checkpoint: %q %v", actual, err)
 	}
 }
+
+func TestPinnedLoadRejectsChangedFinalEntry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	disk := New(path)
+	if err := disk.Save(emptyState()); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := disk.LockWriter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := os.Rename(path, path+".original"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("state.json.original", path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Load(); err == nil {
+		t.Fatal("pinned writer followed a replaced final symlink")
+	}
+}
