@@ -97,6 +97,8 @@ func TestSetupPreservesConfigWhenInputFails(t *testing.T) {
 }
 
 func TestSetupAcceptsBlankAnswersAndFinalAnswerWithoutNewline(t *testing.T) {
+	// config.Load applies environment overrides after reading the saved TOML.
+	t.Setenv("PMAIL_PROFILE", "")
 	for _, tc := range []struct {
 		name, input, profile, passwordFile string
 	}{
