@@ -217,9 +217,15 @@ Exit behavior:
   shows the draft ID you can pass to `draft get`, and `mailbox list` shows the
   available mailbox names and IDs. A fresh `--dry-run draft create` reports a
   creation plan with `wouldCreate`. Local previews retain `createPath: local_state`.
-  In every output mode, the local draft plan includes the proposed `to`, `subject`,
-  resolved `body` (including file or stdin input), and `tags` for review.
+  In every output mode, the local draft plan retains the proposed `draft.to`,
+  `draft.subject`, resolved `draft.body` (including file or stdin input), and
+  `draft.tags` for review; JSON consumers can still read `.data.draft.to`.
   Only a stored draft has a receipt ID.
+  Fresh local `tag create` and `filter create` previews also return plans with
+  `action`, `wouldCreate`, and `source: local`, without IDs or creation timestamps.
+  Tag plans retain `tag.name` and report `changed: true` for the proposed creation;
+  filter plans retain `filter.name`, `filter.contains`, and `filter.addTag`.
+  A tag that already exists instead retains its saved `tag.id` and reports `changed: false`.
   A success with no result fields prints `ok`.
   A command-level error shows its code on the first line. Recovery commands
   appear on separate lines for copying. Any diagnostic fields

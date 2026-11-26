@@ -27,7 +27,7 @@ func cmdDraft(action string, args []string, g globalOptions, st *model.State) (a
 		if g.dryRun {
 			return map[string]any{
 				"action": "draft.create", "wouldCreate": true, "source": "local", "createPath": "local_state",
-				"to": opts.to, "subject": opts.subject, "body": b, "tags": opts.tags,
+				"draft": map[string]any{"to": opts.to, "subject": opts.subject, "body": b, "tags": opts.tags},
 			}, false, nil
 		}
 		now := time.Now().UTC()

@@ -93,7 +93,8 @@ func TestLocalDraftCreatePreviewReturnsPlan(t *testing.T) {
 	c := newRegressionCLI(t)
 	code, out := c.run("", "--dry-run", "draft", "create", "--to", "preview@example.invalid", "--body", "Preview")
 	data := regressionData(t, out)
-	if code != 0 || data["action"] != "draft.create" || data["wouldCreate"] != true || data["source"] != "local" || data["createPath"] != "local_state" || data["draft"] != nil {
+	draft, ok := data["draft"].(map[string]any)
+	if code != 0 || data["action"] != "draft.create" || data["wouldCreate"] != true || data["source"] != "local" || data["createPath"] != "local_state" || !ok || draft["id"] != nil || draft["createdAt"] != nil {
 		t.Fatalf("expected a creation plan without a draft receipt: exit=%d %s", code, out)
 	}
 	if _, err := os.Stat(c.state); !os.IsNotExist(err) {

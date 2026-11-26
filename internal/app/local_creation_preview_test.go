@@ -38,7 +38,7 @@ func localPreviewData(t *testing.T, c regressionCLI, mode, input string, args ..
 	return data
 }
 
-func TestLocalDraftPreviewPreservesProposedInputs(t *testing.T) {
+func TestLocalDraftPreviewPreservesNestedInputs(t *testing.T) {
 	for _, mode := range []string{"json", "plain", "human"} {
 		for _, source := range []string{"body", "body-file", "stdin"} {
 			t.Run(mode+"/"+source, func(t *testing.T) {
@@ -59,13 +59,20 @@ func TestLocalDraftPreviewPreservesProposedInputs(t *testing.T) {
 					args, input = append(args, "--stdin"), body
 				}
 				plan := localPreviewData(t, c, mode, input, append([]string{"--dry-run"}, args...)...)
+				// Preserve the established consumer path, e.g. jq '.data.draft.to'.
+				proposed, ok := plan["draft"].(map[string]any)
 				if plan["action"] != "draft.create" || plan["wouldCreate"] != true || plan["source"] != "local" || plan["createPath"] != "local_state" ||
-					!reflect.DeepEqual(plan["to"], []any{"first@example.invalid", "second@example.invalid"}) || plan["subject"] != "Proposed subject" || plan["body"] != body || !reflect.DeepEqual(plan["tags"], []any{"review", "finance"}) {
+					!ok || !reflect.DeepEqual(proposed["to"], []any{"first@example.invalid", "second@example.invalid"}) || proposed["subject"] != "Proposed subject" || proposed["body"] != body || !reflect.DeepEqual(proposed["tags"], []any{"review", "finance"}) {
 					t.Fatalf("preview lost proposed inputs: %+v", plan)
 				}
-				for _, key := range []string{"draft", "id", "draftId", "createdAt", "updatedAt"} {
-					if _, exists := plan[key]; exists {
+				for _, key := range []string{"id", "draftId", "createdAt", "updatedAt"} {
+					if _, exists := proposed[key]; exists {
 						t.Fatalf("preview fabricated receipt field %s: %+v", key, plan)
+					}
+				}
+				for _, key := range []string{"to", "subject", "body", "tags"} {
+					if _, exists := plan[key]; exists {
+						t.Fatalf("preview duplicated the nested %s input: %+v", key, plan)
 					}
 				}
 				if _, err := os.Stat(c.state); !os.IsNotExist(err) {
@@ -73,7 +80,7 @@ func TestLocalDraftPreviewPreservesProposedInputs(t *testing.T) {
 				}
 				created := localPreviewData(t, c, mode, input, args...)["draft"].(map[string]any)
 				for _, key := range []string{"to", "subject", "body", "tags"} {
-					if !reflect.DeepEqual(created[key], plan[key]) {
+					if !reflect.DeepEqual(created[key], proposed[key]) {
 						t.Fatalf("creation differs from preview for %s: plan=%+v draft=%+v", key, plan, created)
 					}
 				}

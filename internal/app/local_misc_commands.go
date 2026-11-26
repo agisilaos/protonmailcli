@@ -81,6 +81,12 @@ func cmdTag(action string, args []string, g globalOptions, st *model.State) (any
 		id := st.Tags[opts.name]
 		changed := false
 		if id == "" {
+			if g.dryRun {
+				return map[string]any{
+					"action": "tag.create", "wouldCreate": true, "source": "local",
+					"tag": tagInfo{Name: opts.name}, "changed": true,
+				}, false, nil
+			}
 			id = fmt.Sprintf("t_%d", time.Now().UnixNano())
 			st.Tags[opts.name] = id
 			changed = true
@@ -146,11 +152,15 @@ func cmdFilter(action string, args []string, g globalOptions, st *model.State) (
 		if opts.name == "" || opts.containsQ == "" || opts.addTag == "" {
 			return nil, false, cliError{exit: 2, code: "validation_error", msg: "--name, --contains and --add-tag are required"}
 		}
+		if g.dryRun {
+			return map[string]any{
+				"action": "filter.create", "wouldCreate": true, "source": "local",
+				"filter": map[string]any{"name": opts.name, "contains": opts.containsQ, "addTag": opts.addTag},
+			}, false, nil
+		}
 		id := fmt.Sprintf("f_%d", time.Now().UnixNano())
 		f := model.Filter{ID: id, Name: opts.name, Contains: opts.containsQ, AddTag: opts.addTag, CreatedAt: time.Now().UTC()}
-		if !g.dryRun {
-			st.Filters[id] = f
-		}
+		st.Filters[id] = f
 		return filterCreateResponse{Filter: f}, true, nil
 	case "delete":
 		fs, opts := newLocalFilterDeleteFlags()
