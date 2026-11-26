@@ -163,6 +163,21 @@ func TestHumanDoctorFailureShowsBothEndpoints(t *testing.T) {
 		data.Checks[1].Name != "imap" || data.Checks[1].OK || data.Checks[1].Detail == "" {
 		t.Errorf("incorrect endpoint diagnostics: %+v", data.Checks)
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(append([]string{"--plain"}, args...), strings.NewReader(""), &stdout, &stderr); code != 4 {
+		t.Fatalf("plain doctor exit=%d stdout=%s stderr=%s", code, &stdout, &stderr)
+	}
+	record := strings.TrimSuffix(stdout.String(), "\n")
+	fields := strings.Split(record, "\t")
+	if strings.ContainsAny(record, "\r\n") || len(fields) != 10 || fields[8] != "data" {
+		t.Fatalf("plain doctor lost its final data field: %q", record)
+	}
+	data.Checks = nil
+	if err := json.Unmarshal([]byte(fields[9]), &data); err != nil || len(data.Checks) != 2 ||
+		data.Checks[0].Name != "smtp" || !data.Checks[0].OK || data.Checks[1].Name != "imap" || data.Checks[1].OK {
+		t.Fatalf("plain endpoint diagnostics=%q err=%v", fields[9], err)
+	}
 	// Buffer the summary so the short write occurs while printing the checks.
 	short := &failingOutput{partial: true}
 	sink := bufio.NewWriterSize(short, len(summary)+1)
