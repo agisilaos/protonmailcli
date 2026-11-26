@@ -213,7 +213,9 @@ Exit behavior:
 
 ### stdout
 
-- Human mode: concise text output.
+- Human mode prints the result fields as indented JSON. For example, `draft create`
+  shows the draft ID you can pass to `draft get`, and `mailbox list` shows the
+  available mailbox names and IDs. A success with no result fields prints `ok`.
 - `--plain`: stable tab-delimited line output.
 - `--json`: exactly one JSON envelope object.
 

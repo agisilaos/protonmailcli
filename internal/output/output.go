@@ -83,6 +83,12 @@ func printEnvelope(w io.Writer, mode Mode, env Envelope) error {
 		return err
 	default:
 		if env.OK {
+			if env.Data != nil {
+				enc := json.NewEncoder(w)
+				enc.SetIndent("", "  ")
+				enc.SetEscapeHTML(false)
+				return enc.Encode(env.Data)
+			}
 			_, err := fmt.Fprintln(w, "ok")
 			return err
 		}

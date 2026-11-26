@@ -81,3 +81,39 @@ func TestCommandOutputLatchesShortWrite(t *testing.T) {
 		t.Fatalf("err=%v calls=%d", err, sink.calls)
 	}
 }
+
+func TestDefaultOutputShowsDraftReceiptsAndReads(t *testing.T) {
+	t.Setenv("PMAIL_OUTPUT", "")
+	c := newRegressionCLI(t)
+	run := func(args ...string) string {
+		t.Helper()
+		fullArgs := append([]string{"--config", c.config, "--state", c.state}, args...)
+		var out, stderr bytes.Buffer
+		if exit := Run(fullArgs, strings.NewReader(""), &out, &stderr); exit != 0 || stderr.Len() != 0 {
+			t.Fatalf("%v exit=%d stdout=%q stderr=%q", args, exit, &out, &stderr)
+		}
+		return out.String()
+	}
+
+	const subject = "Budget review"
+	const body = "Please review the budget."
+	const recipient = "reviewer@example.invalid"
+	created := run("draft", "create", "--to", recipient, "--subject", subject, "--body", body)
+	id := latestDraftID(t, c.state)
+	for _, tc := range []struct {
+		command string
+		output  string
+		want    []string
+	}{
+		{"create", created, []string{id}},
+		{"get", run("draft", "get", "--draft-id", id), []string{id, recipient, subject, body}},
+		{"list", run("draft", "list"), []string{id, subject}},
+		{"mailbox list", run("mailbox", "list"), []string{"INBOX", "Drafts", "Sent"}},
+	} {
+		for _, want := range tc.want {
+			if !strings.Contains(tc.output, want) {
+				t.Errorf("%s omitted %q from %q", tc.command, want, tc.output)
+			}
+		}
+	}
+}

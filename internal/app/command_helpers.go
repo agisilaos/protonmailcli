@@ -89,5 +89,5 @@ func renderFlagHelp(fs *flag.FlagSet, g globalOptions, name string, stdout io.Wr
 	if _, err := fmt.Fprintln(stdout, usage); err != nil {
 		return nil, true, err
 	}
-	return map[string]any{"help": name}, true, nil
+	return nil, true, nil
 }
