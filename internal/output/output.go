@@ -82,18 +82,19 @@ func printEnvelope(w io.Writer, mode Mode, env Envelope) error {
 		_, err := fmt.Fprintf(w, "ok\tfalse\terror\t%s\tmessage\t%s\thint\t%s\n", env.Error.Code, strings.ReplaceAll(env.Error.Message, "\t", " "), hint)
 		return err
 	default:
-		if env.OK {
-			if env.Data != nil {
-				enc := json.NewEncoder(w)
-				enc.SetIndent("", "  ")
-				enc.SetEscapeHTML(false)
-				return enc.Encode(env.Data)
+		if !env.OK {
+			_, err := fmt.Fprintf(w, "error: %s (%s)\n", env.Error.Message, env.Error.Code)
+			if err != nil || env.Data == nil {
+				return err
 			}
+		} else if env.Data == nil {
 			_, err := fmt.Fprintln(w, "ok")
 			return err
 		}
-		_, err := fmt.Fprintf(w, "error: %s (%s)\n", env.Error.Message, env.Error.Code)
-		return err
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		enc.SetEscapeHTML(false)
+		return enc.Encode(env.Data)
 	}
 }
 

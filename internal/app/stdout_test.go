@@ -1,13 +1,18 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"protonmailcli/internal/bridge"
+	"protonmailcli/internal/config"
 	"protonmailcli/internal/store"
 )
 
@@ -115,5 +120,54 @@ func TestDefaultOutputShowsDraftReceiptsAndReads(t *testing.T) {
 				t.Errorf("%s omitted %q from %q", tc.command, want, tc.output)
 			}
 		}
+	}
+}
+
+func TestHumanDoctorFailureShowsBothEndpoints(t *testing.T) {
+	t.Setenv("PMAIL_OUTPUT", "")
+	t.Setenv("PMAIL_SMTP_PASSWORD", "fixture")
+	smtp, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer smtp.Close()
+	// The connected client's port stays reserved and does not accept connections.
+	client, err := net.Dial("tcp4", smtp.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	cfg := config.Default()
+	cfg.Bridge.Username = "fixture@example.invalid"
+	cfg.Bridge.SMTPPort = smtp.Addr().(*net.TCPAddr).Port
+	cfg.Bridge.IMAPPort = client.LocalAddr().(*net.TCPAddr).Port
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--config", cfgPath, "--state", filepath.Join(dir, "state.json"), "doctor"}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(args, strings.NewReader(""), &stdout, &stderr); code != 4 {
+		t.Fatalf("exit=%d stdout=%s stderr=%s", code, &stdout, &stderr)
+	}
+	summary, details, _ := strings.Cut(stdout.String(), "\n")
+	if summary != "error: one or more bridge endpoints are unreachable (bridge_unreachable)" {
+		t.Errorf("error summary=%q", summary)
+	}
+	var data struct{ Checks []bridge.HealthStatus }
+	if err := json.Unmarshal([]byte(details), &data); err != nil {
+		t.Errorf("missing diagnostic details on stdout: %q (%v)", details, err)
+	} else if len(data.Checks) != 2 || data.Checks[0].Name != "smtp" || !data.Checks[0].OK ||
+		data.Checks[1].Name != "imap" || data.Checks[1].OK || data.Checks[1].Detail == "" {
+		t.Errorf("incorrect endpoint diagnostics: %+v", data.Checks)
+	}
+	// Buffer the summary so the short write occurs while printing the checks.
+	short := &failingOutput{partial: true}
+	sink := bufio.NewWriterSize(short, len(summary)+1)
+	stderr.Reset()
+	if code := Run(args, strings.NewReader(""), sink, &stderr); code != 4 || !strings.Contains(stderr.String(), "stdout write failed") {
+		t.Fatalf("short diagnostic write: exit=%d stderr=%s", code, &stderr)
 	}
 }
