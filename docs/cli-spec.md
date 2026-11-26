@@ -220,6 +220,7 @@ Exit behavior:
   In every output mode, the local draft plan retains the proposed `draft.to`,
   `draft.subject`, resolved `draft.body` (including file or stdin input), and
   `draft.tags` for review; JSON consumers can still read `.data.draft.to`.
+  An untagged draft omits the optional `draft.tags` field in both preview and creation output.
   Only a stored draft has a receipt ID.
   Fresh local `tag create` and `filter create` previews also return plans with
   `action`, `wouldCreate`, and `source: local`, without IDs or creation timestamps.

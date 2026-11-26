@@ -97,6 +97,9 @@ func TestLocalDraftCreatePreviewReturnsPlan(t *testing.T) {
 	if code != 0 || data["action"] != "draft.create" || data["wouldCreate"] != true || data["source"] != "local" || data["createPath"] != "local_state" || !ok || draft["id"] != nil || draft["createdAt"] != nil {
 		t.Fatalf("expected a creation plan without a draft receipt: exit=%d %s", code, out)
 	}
+	if _, present := draft["tags"]; present {
+		t.Fatalf("untagged draft preview should omit optional tags: %s", out)
+	}
 	if _, err := os.Stat(c.state); !os.IsNotExist(err) {
 		t.Fatalf("preview wrote state: %v", err)
 	}
