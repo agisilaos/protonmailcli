@@ -228,8 +228,9 @@ Exit behavior:
   filter plans retain `filter.name`, `filter.contains`, and `filter.addTag`.
   A tag that already exists instead retains its saved `tag.id` and reports `changed: false`.
   A success with no result fields prints `ok`.
-  A command-level error shows its code on the first line. Recovery commands
-  appear on separate lines for copying. Any diagnostic fields
+  A command-level error shows its code on the first line for both LF- and
+  CRLF-delimited messages. Recovery-command text on subsequent lines is preserved
+  for copying. Any diagnostic fields
   follow, such as the endpoint checks in a failed `doctor` report.
   When a batch completes with failed items, its result lists each failure in
   `results[].errorCode` and `results[].error`.

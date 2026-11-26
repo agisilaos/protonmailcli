@@ -92,6 +92,9 @@ func printEnvelope(w io.Writer, mode Mode, env Envelope) error {
 	default:
 		if !env.OK {
 			summary, details, multiline := strings.Cut(env.Error.Message, "\n")
+			if multiline {
+				summary = strings.TrimSuffix(summary, "\r")
+			}
 			line := fmt.Sprintf("error: %s (%s)", summary, env.Error.Code)
 			if multiline {
 				line += "\n" + details

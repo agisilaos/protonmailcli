@@ -72,11 +72,17 @@ func TestPlainErrorEscapesFieldsInOneRecord(t *testing.T) {
 
 func TestHumanErrorPreservesRecoveryCommandOnItsOwnLine(t *testing.T) {
 	const command = "protonmailcli message get --message-id 'imap:Drafts:41'"
-	var out bytes.Buffer
-	if err := PrintError(&out, ModeHuman, "uncertain", "inspect this draft\n"+command, "", "uncertain", false, "", "", time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if want := "error: inspect this draft (uncertain)\n" + command + "\n"; out.String() != want {
-		t.Fatalf("human recovery message = %q, want %q", out.String(), want)
+	const secondCommand = "protonmailcli draft get --draft-id 'imap:Archive:42'"
+	for _, newline := range []string{"\n", "\r\n"} {
+		t.Run(map[string]string{"\n": "LF", "\r\n": "CRLF"}[newline], func(t *testing.T) {
+			details := command + newline + secondCommand
+			var out bytes.Buffer
+			if err := PrintError(&out, ModeHuman, "uncertain", "inspect this draft"+newline+details, "", "uncertain", false, "", "", time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if want := "error: inspect this draft (uncertain)\n" + details + "\n"; out.String() != want {
+				t.Fatalf("human recovery message = %q, want %q", out.String(), want)
+			}
+		})
 	}
 }
