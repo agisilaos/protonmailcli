@@ -1,0 +1,25 @@
+{
+  "name": "local_draft_create_preview",
+  "command": "protonmailcli draft create --to first@example.invalid --to second@example.invalid --subject weekly-report --tag review --stdin --dry-run --json --no-input",
+  "stdin": "Proposed body from stdin.\nSecond line.\n",
+  "expected": {
+    "exitCode": 0,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "action": "draft.create",
+        "wouldCreate": true,
+        "source": "local",
+        "createPath": "local_state",
+        "draft": {
+          "to": ["first@example.invalid", "second@example.invalid"],
+          "subject": "weekly-report",
+          "body": "Proposed body from stdin.\nSecond line.\n",
+          "tags": ["review"]
+        }
+      }
+    },
+    "stderrContains": ["dry-run", "no changes applied"],
+    "stderrNotContains": ["{\"ok\"", "\"data\""]
+  }
+}

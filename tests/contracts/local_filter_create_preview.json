@@ -1,0 +1,22 @@
+{
+  "name": "local_filter_create_preview",
+  "command": "protonmailcli filter create --name invoices --contains invoice --add-tag finance --dry-run --json --no-input",
+  "expected": {
+    "exitCode": 0,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "action": "filter.create",
+        "wouldCreate": true,
+        "source": "local",
+        "filter": {
+          "name": "invoices",
+          "contains": "invoice",
+          "addTag": "finance"
+        }
+      }
+    },
+    "stderrContains": ["dry-run", "no changes applied"],
+    "stderrNotContains": ["{\"ok\"", "\"data\""]
+  }
+}

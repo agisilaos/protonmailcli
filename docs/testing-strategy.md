@@ -129,6 +129,12 @@ tests/
 go test ./internal/app -run TestContractFixtures -v
 ```
 
+The local draft, tag, and filter creation-preview fixtures check the nested
+proposed properties and plan metadata in the JSON envelope, including a resolved
+stdin draft body. The fixture matcher checks expected fields; the app preview
+tests separately check that previews omit unsaved IDs and timestamps and leave
+state unchanged.
+
 ## Agent contract workflow
 
 For agent-safe releases:

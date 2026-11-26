@@ -1,0 +1,21 @@
+{
+  "name": "local_tag_create_preview",
+  "command": "protonmailcli tag create --name finance --dry-run --json --no-input",
+  "expected": {
+    "exitCode": 0,
+    "stdoutJson": {
+      "ok": true,
+      "data": {
+        "action": "tag.create",
+        "wouldCreate": true,
+        "source": "local",
+        "changed": true,
+        "tag": {
+          "name": "finance"
+        }
+      }
+    },
+    "stderrContains": ["dry-run", "no changes applied"],
+    "stderrNotContains": ["{\"ok\"", "\"data\""]
+  }
+}
