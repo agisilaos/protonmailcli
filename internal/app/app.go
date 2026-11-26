@@ -326,6 +326,20 @@ Global flags:
   -h, --help  --version`)
 }
 
+// bufio.Reader can return a whole line before reporting an error from the same read.
+type setupInputReader struct {
+	reader  io.Reader
+	failure error
+}
+
+func (r *setupInputReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		r.failure = err
+	}
+	return n, err
+}
+
 func validateSetupPort(protocol string, port int) error {
 	if port < 1 || port > 65535 {
 		return cliError{exit: 2, code: "validation_error", msg: "Bridge " + protocol + " port must be from 1 to 65535"}
@@ -350,7 +364,8 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 	cfg.Bridge.SMTPPort = opts.smtpPort
 	cfg.Bridge.IMAPPort = opts.imapPort
 	if useInteractive {
-		r := bufio.NewReader(a.Stdin)
+		input := &setupInputReader{reader: a.Stdin}
+		r := bufio.NewReader(input)
 		prompts := &commandOutput{writer: a.Stderr}
 		var askErr error
 		ask := func(prompt string, final bool) string {
@@ -362,6 +377,9 @@ func (a App) cmdSetup(args []string, g globalOptions, cfgPath string) error {
 				return ""
 			}
 			answer, err := r.ReadString('\n')
+			if input.failure != nil {
+				err = input.failure
+			}
 			answer = strings.TrimSpace(answer)
 			if err != nil && !(final && errors.Is(err, io.EOF) && answer != "") {
 				askErr = fmt.Errorf("read setup input: %w", err)

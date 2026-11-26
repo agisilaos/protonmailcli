@@ -64,10 +64,10 @@ func TestSetupPreservesConfigWhenPromptFails(t *testing.T) {
 	}
 }
 
-type setupInputError struct{}
+type setupInputError string
 
-func (setupInputError) Read(p []byte) (int, error) {
-	return copy(p, "partial answer"), io.ErrUnexpectedEOF
+func (s setupInputError) Read(p []byte) (int, error) {
+	return copy(p, s), io.ErrUnexpectedEOF
 }
 
 func TestSetupPreservesConfigWhenInputFails(t *testing.T) {
@@ -78,7 +78,8 @@ func TestSetupPreservesConfigWhenInputFails(t *testing.T) {
 		{"first answer EOF", strings.NewReader("")},
 		{"final answer EOF", strings.NewReader("replacement\nlocalhost\n1025\n1143\nfixture@example.invalid\n")},
 		{"whitespace at EOF", strings.NewReader(" \t")},
-		{"partial answer with input error", setupInputError{}},
+		{"partial answer with input error", setupInputError("partial answer")},
+		{"complete final answer with input error", io.MultiReader(strings.NewReader("\n\n\n\nfixture@example.invalid\n"), setupInputError("/path/to/fixture.pass\n"))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfgPath := filepath.Join(t.TempDir(), "config.toml")
@@ -214,5 +215,14 @@ func TestInteractiveSetupShowsAndUsesFlagDefaults(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSetupStopsReadingAfterSixCompleteAnswers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	var answers setupBlankAnswers
+	var out bytes.Buffer
+	if code := Run([]string{"--config", path, "setup", "--interactive"}, &answers, &out, io.Discard); code != 0 || answers.reads != 6 {
+		t.Fatalf("setup exit=%d after %d reads: %s", code, answers.reads, &out)
 	}
 }

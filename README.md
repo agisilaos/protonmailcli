@@ -364,6 +364,9 @@ It checks the pinned helper bundle, module metadata, formatting, vet, tests,
 executable contract fixtures, docs/help and the isolated local-state smoke.
 The smoke exercises send with `--dry-run`; it sends no real email.
 
+On Unix, the Go test suite requires `python3` on `PATH` to run the interactive
+setup and login tests in a pseudo-terminal.
+
 ```bash
 go test ./...
 ```
