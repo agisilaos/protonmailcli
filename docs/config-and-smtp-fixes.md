@@ -58,6 +58,8 @@ reconnection use the trust loaded for that command. Certificate file changes
 take effect on the next command.
 
 IMAP always requires STARTTLS, with TLS 1.2 or newer, before authentication.
+If its TLS upgrade fails, IMAP closes the connection without sending further
+protocol commands.
 For SMTP, setting `tls_cert_file` requires the server to advertise STARTTLS.
 Without this setting, normal system certificate trust and automatic SMTP STARTTLS
 remain in use. Neither protocol disables certificate verification for loopback

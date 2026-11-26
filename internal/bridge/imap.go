@@ -108,7 +108,9 @@ func DialIMAP(cfg IMAPConfig, timeout time.Duration) (*IMAPClient, error) {
 	}
 
 	if err := c.startTLS(tlsConfig); err != nil {
-		_ = c.Close()
+		// The TLS upgrade may have failed after the plaintext protocol ended.
+		// Close the socket without writing through the pre-TLS buffered writer.
+		_ = conn.Close()
 		return nil, err
 	}
 	if err := c.login(cfg.Username, cfg.Password); err != nil {

@@ -6,10 +6,12 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -43,6 +45,8 @@ func TestDialIMAPRejectsInvalidServerCertificateBeforeLogin(t *testing.T) {
 			type handshakeResult struct {
 				commands string
 				err      error
+				afterTLS []byte
+				closeErr error
 			}
 			done := make(chan handshakeResult, 1)
 			go func() {
@@ -74,6 +78,8 @@ func TestDialIMAPRejectsInvalidServerCertificateBeforeLogin(t *testing.T) {
 				if result.err == nil {
 					line, _ := bufio.NewReader(tlsConn).ReadString('\n')
 					result.commands += line
+				} else {
+					result.afterTLS, result.closeErr = io.ReadAll(conn)
 				}
 			}()
 
@@ -105,6 +111,10 @@ func TestDialIMAPRejectsInvalidServerCertificateBeforeLogin(t *testing.T) {
 			}
 			if result.err == nil || strings.Contains(strings.ToUpper(result.commands), "LOGIN") || len(strings.Fields(result.commands)) != 2 {
 				t.Fatalf("server must reject TLS after STARTTLS alone: commands=%q error=%v", result.commands, result.err)
+			}
+			// A rejected TLS handshake may close TCP with either EOF or a reset.
+			if len(result.afterTLS) != 0 || (result.closeErr != nil && !errors.Is(result.closeErr, syscall.ECONNRESET)) {
+				t.Fatalf("failed TLS upgrade must close the socket without plaintext commands: remaining=%q error=%v", result.afterTLS, result.closeErr)
 			}
 		})
 	}
