@@ -73,6 +73,7 @@ waiting for their contents. Credential resolution and doctor use the same reader
 
 ## Safety policy
 
+- Redirecting stdin from a pipe, file, or `/dev/null` makes a send non-interactive.
 - Non-interactive `message send` requires `--confirm-send` unless `--force`.
 - `--force` is allowed only when `allow_force_send = true`.
 - Use `--dry-run` in automations before mutating commands.

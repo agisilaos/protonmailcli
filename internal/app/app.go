@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"protonmailcli/internal/bridge"
 	"protonmailcli/internal/config"
 	"protonmailcli/internal/model"
@@ -622,11 +624,7 @@ func coalesce(a, b string) string {
 }
 
 func isTTY(r *os.File) bool {
-	info, err := r.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(r.Fd()))
 }
 
 func bashCompletion() string {

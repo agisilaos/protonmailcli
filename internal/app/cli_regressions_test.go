@@ -296,3 +296,22 @@ func TestDoctorUsesSelectedBridgeAccount(t *testing.T) {
 		t.Fatalf("doctor ignored selected credentials: %d %s", code, out)
 	}
 }
+
+func TestDevNullRequiresSendConfirmation(t *testing.T) {
+	c := newRegressionCLI(t)
+	code, out := c.run("", "draft", "create", "--to", "friend@example.invalid", "--body", "preview")
+	if code != 0 {
+		t.Fatal(out)
+	}
+	id := regressionData(t, out)["draft"].(map[string]any)["id"].(string)
+	in, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	var stdout, stderr bytes.Buffer
+	code = Run([]string{"--json", "--dry-run", "--config", c.config, "--state", c.state, "message", "send", "--draft-id", id}, in, &stdout, &stderr)
+	if code != 7 || !strings.Contains(stdout.String(), `"code":"confirmation_required"`) {
+		t.Fatalf("send from null device returned %d: %s", code, stdout.String())
+	}
+}
