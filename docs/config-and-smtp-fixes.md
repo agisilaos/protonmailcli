@@ -45,7 +45,9 @@ trust. This adds its certificate to normal system trust. Certificate validity an
 hostname verification remain enabled; the configured host must match a name or
 IP address in the certificate. The PEM file must provide trust for both endpoints
 if their certificates differ. An unreadable or invalid PEM file fails IMAP setup
-before a connection is opened.
+before a connection is opened. The CLI reports these local trust configuration
+failures as `config_error` (exit 3, `retryable: false`); correct the configuration
+before retrying.
 
 IMAP always requires STARTTLS, with TLS 1.2 or newer, before authentication.
 For SMTP, setting `tls_cert_file` requires the server to advertise STARTTLS.

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -49,6 +50,9 @@ func bridgeClient(cfg config.Config, st *model.State, passwordFileOverride strin
 	}
 	c, err := bridge.DialIMAP(bridge.IMAPConfig{Host: cfg.Bridge.Host, Port: cfg.Bridge.IMAPPort, Username: username, Password: password, TLSCertFile: config.Expand(cfg.Bridge.TLSCertFile)}, timeout)
 	if err != nil {
+		if errors.Is(err, bridge.ErrTLSConfig) {
+			return nil, "", "", cliError{exit: 3, code: "config_error", msg: err.Error(), hint: "Check bridge.tls_cert_file and local certificate trust"}
+		}
 		return nil, "", "", cliError{exit: 4, code: "imap_connect_failed", msg: err.Error()}
 	}
 	return c, username, password, nil
