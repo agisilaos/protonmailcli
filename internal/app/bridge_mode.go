@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"os"
@@ -60,6 +61,10 @@ func bridgeClientWithPolicy(cfg config.Config, st *model.State, passwordFileOver
 	if err != nil {
 		if errors.Is(err, bridge.ErrTLSConfig) {
 			return nil, "", "", cliError{exit: 3, code: "config_error", msg: err.Error(), hint: "Check bridge.tls_cert_file and local certificate trust"}
+		}
+		var certificateError *tls.CertificateVerificationError
+		if errors.As(err, &certificateError) {
+			return nil, "", "", cliError{exit: 3, code: "config_error", msg: err.Error(), hint: "Check the Bridge certificate's validity, bridge.host hostname, and bridge.tls_cert_file trust"}
 		}
 		return nil, "", "", cliError{exit: 4, code: "imap_connect_failed", msg: err.Error()}
 	}

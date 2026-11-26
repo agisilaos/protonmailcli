@@ -48,7 +48,14 @@ if their certificates differ. Every certificate block in the bundle must be
 complete and parse as an X.509 certificate. An unreadable or invalid PEM file fails IMAP setup
 before a connection is opened. The CLI reports these local trust configuration
 failures as `config_error` (exit 3, `retryable: false`); correct the configuration
-before retrying. The PEM must be a regular file; named pipes and devices are
+before retrying. IMAP certificate verification failures, including an untrusted
+issuer, expired certificate, or hostname mismatch, also return `config_error`
+(exit 3, `retryable: false`). Check the certificate's validity, whether
+`bridge.host` matches its hostname or IP address, and `bridge.tls_cert_file` trust.
+Connection interruptions and other transport failures remain retryable
+`imap_connect_failed` errors (exit 4).
+
+The PEM must be a regular file; named pipes and devices are
 rejected before certificate parsing. Regular PEM bundles have no added size
 limit, and symbolic links to regular files are supported.
 
