@@ -217,6 +217,8 @@ Exit behavior:
   shows the draft ID you can pass to `draft get`, and `mailbox list` shows the
   available mailbox names and IDs. A fresh `--dry-run draft create` reports a
   creation plan with `wouldCreate`. Local previews retain `createPath: local_state`.
+  In every output mode, the local draft plan includes the proposed `to`, `subject`,
+  resolved `body` (including file or stdin input), and `tags` for review.
   Only a stored draft has a receipt ID.
   A success with no result fields prints `ok`.
   A command-level error shows its code on the first line. Recovery commands
