@@ -68,7 +68,14 @@ Current gated E2E entrypoint:
 
 - `go test -tags integration ./internal/app -run TestBridgeE2EDraftCreateSearchSend -v`
 - requires: `PMAIL_E2E_BRIDGE=1`, `PMAIL_E2E_USERNAME`, `PMAIL_E2E_PASSWORD`
-- optional: `PMAIL_E2E_HOST`, `PMAIL_E2E_IMAP_PORT`, `PMAIL_E2E_SMTP_PORT`, `PMAIL_E2E_REAL_SEND=1`
+- optional: `PMAIL_E2E_HOST`, `PMAIL_E2E_IMAP_PORT`, `PMAIL_E2E_SMTP_PORT`, `PMAIL_E2E_TLS_CERT_FILE`, `PMAIL_E2E_REAL_SEND=1`
+
+Set `PMAIL_E2E_TLS_CERT_FILE` to the trusted public CA/certificate PEM when Bridge
+uses a certificate outside system trust. The E2E setup saves this path (expanding
+`~/`) in its temporary config for IMAP and SMTP; it does not copy the normal CLI
+config or disable TLS verification. The local
+`TestBridgeE2EExplicitCertificateConfiguration` test covers this setup without
+connecting to Bridge.
 
 ## Required invariants
 

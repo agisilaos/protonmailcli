@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"protonmailcli/internal/config"
 )
 
 func TestBridgeE2EDraftCreateSearchSend(t *testing.T) {
@@ -21,31 +23,11 @@ func TestBridgeE2EDraftCreateSearchSend(t *testing.T) {
 
 	username := strings.TrimSpace(os.Getenv("PMAIL_E2E_USERNAME"))
 	password := strings.TrimSpace(os.Getenv("PMAIL_E2E_PASSWORD"))
-	host := envOr("PMAIL_E2E_HOST", "127.0.0.1")
-	imapPort := envIntOr("PMAIL_E2E_IMAP_PORT", 1143)
-	smtpPort := envIntOr("PMAIL_E2E_SMTP_PORT", 1025)
 	if username == "" || password == "" {
 		t.Fatal("PMAIL_E2E_USERNAME and PMAIL_E2E_PASSWORD are required")
 	}
 
-	tmp := t.TempDir()
-	cfgPath := filepath.Join(tmp, "config.toml")
-	statePath := filepath.Join(tmp, "state.json")
-	passPath := filepath.Join(tmp, "bridge.pass")
-	if err := os.WriteFile(passPath, []byte(password), 0o600); err != nil {
-		t.Fatalf("write pass file: %v", err)
-	}
-
-	mustRunJSON(t, []string{
-		"--json", "--no-input",
-		"--config", cfgPath, "--state", statePath,
-		"setup", "--non-interactive",
-		"--username", username,
-		"--smtp-password-file", passPath,
-		"--bridge-host", host,
-		"--bridge-imap-port", strconv.Itoa(imapPort),
-		"--bridge-smtp-port", strconv.Itoa(smtpPort),
-	})
+	cfgPath, statePath, passPath := prepareBridgeE2E(t, username, password)
 	mustRunJSON(t, []string{
 		"--json", "--no-input",
 		"--config", cfgPath, "--state", statePath,
@@ -99,6 +81,63 @@ func TestBridgeE2EDraftCreateSearchSend(t *testing.T) {
 		if wouldSend, _ := dig(send, "data", "wouldSend").(bool); !wouldSend {
 			t.Fatalf("expected dry-run send response: %#v", send)
 		}
+	}
+}
+
+func prepareBridgeE2E(t *testing.T, username, password string) (cfgPath, statePath, passPath string) {
+	t.Helper()
+	host := envOr("PMAIL_E2E_HOST", "127.0.0.1")
+	imapPort := envIntOr("PMAIL_E2E_IMAP_PORT", 1143)
+	smtpPort := envIntOr("PMAIL_E2E_SMTP_PORT", 1025)
+	tmp := t.TempDir()
+	cfgPath = filepath.Join(tmp, "config.toml")
+	statePath = filepath.Join(tmp, "state.json")
+	passPath = filepath.Join(tmp, "bridge.pass")
+	if err := os.WriteFile(passPath, []byte(password), 0o600); err != nil {
+		t.Fatalf("write pass file: %v", err)
+	}
+
+	mustRunJSON(t, []string{
+		"--json", "--no-input",
+		"--config", cfgPath, "--state", statePath,
+		"setup", "--non-interactive",
+		"--username", username,
+		"--smtp-password-file", passPath,
+		"--bridge-host", host,
+		"--bridge-imap-port", strconv.Itoa(imapPort),
+		"--bridge-smtp-port", strconv.Itoa(smtpPort),
+	})
+	if certificateFile := strings.TrimSpace(os.Getenv("PMAIL_E2E_TLS_CERT_FILE")); certificateFile != "" {
+		cfg, err := config.Load(cfgPath)
+		if err != nil {
+			t.Fatalf("load E2E configuration: %v", err)
+		}
+		cfg.Bridge.TLSCertFile = config.Expand(certificateFile)
+		if err := config.Save(cfgPath, cfg); err != nil {
+			t.Fatalf("save E2E certificate trust: %v", err)
+		}
+	}
+	return cfgPath, statePath, passPath
+}
+
+func TestBridgeE2EExplicitCertificateConfiguration(t *testing.T) {
+	t.Setenv("PMAIL_USE_LOCAL_STATE", "1")
+	t.Setenv("PMAIL_E2E_HOST", "127.0.0.1")
+	t.Setenv("PMAIL_E2E_IMAP_PORT", "1")
+	t.Setenv("PMAIL_E2E_SMTP_PORT", "1")
+	t.Setenv("HOME", t.TempDir())
+	for _, certificateFile := range []string{"", filepath.Join(t.TempDir(), "bridge.pem"), "~/bridge.pem"} {
+		t.Run(certificateFile, func(t *testing.T) {
+			t.Setenv("PMAIL_E2E_TLS_CERT_FILE", certificateFile)
+			cfgPath, _, _ := prepareBridgeE2E(t, "fixture@example.invalid", "synthetic-only")
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Bridge.TLSCertFile != config.Expand(certificateFile) {
+				t.Fatalf("prepared E2E configuration trust file = %q, want %q", cfg.Bridge.TLSCertFile, config.Expand(certificateFile))
+			}
+		})
 	}
 }
 

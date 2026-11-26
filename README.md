@@ -387,13 +387,20 @@ Run optional real-Bridge integration test (manual/gated):
 PMAIL_E2E_BRIDGE=1 \
 PMAIL_E2E_USERNAME=you@proton.me \
 PMAIL_E2E_PASSWORD='bridge-password' \
+PMAIL_E2E_TLS_CERT_FILE=/absolute/path/to/bridge-cert.pem \
 go test -tags integration ./internal/app -run TestBridgeE2EDraftCreateSearchSend -v
 ```
 
+`PMAIL_E2E_TLS_CERT_FILE` supplies the trusted public CA/certificate PEM to the
+temporary E2E configuration for both IMAP and SMTP. It supports `~/` paths; omit
+it when the Bridge certificate is already trusted by the operating system.
+Certificate and hostname verification remain enabled.
+
 The default send phase previews delivery; a real send requires the separate
 `PMAIL_E2E_REAL_SEND=1` opt-in. Its preview argument construction is also covered
-without Bridge access by `TestBridgeE2ESafeSendArguments` under the integration
-build tag.
+without Bridge access by `TestBridgeE2ESafeSendArguments`, and temporary trust
+configuration by `TestBridgeE2EExplicitCertificateConfiguration`, under the
+integration build tag.
 
 Validate CLI help contracts (recommended before release):
 
