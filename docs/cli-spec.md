@@ -219,11 +219,15 @@ Exit behavior:
   creation plan with `wouldCreate`. Local previews retain `createPath: local_state`.
   Only a stored draft has a receipt ID.
   A success with no result fields prints `ok`.
-  A command-level error starts with its message and code. Any diagnostic fields
+  A command-level error shows its code on the first line. Recovery commands
+  appear on separate lines for copying. Any diagnostic fields
   follow, such as the endpoint checks in a failed `doctor` report.
   When a batch completes with failed items, its result lists each failure in
   `results[].errorCode` and `results[].error`.
-- `--plain`: stable tab-delimited line output.
+- `--plain` prints one tab-delimited line of key/value pairs. Error records
+  include `ok`, `error`, `message`, and `hint`. The error text fields escape
+  backslash, tab, carriage return, and line feed as `\\`, `\t`, `\r`, and
+  `\n`. When a result is available, the final `data` value is compact JSON.
 - `--json`: exactly one JSON envelope object.
 
 ### stderr

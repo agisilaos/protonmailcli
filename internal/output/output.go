@@ -53,6 +53,8 @@ func PrintErrorWithData(w io.Writer, mode Mode, code, msg, hint, category string
 	return printEnvelope(w, mode, env)
 }
 
+var plainTextEscaper = strings.NewReplacer(`\`, `\\`, "\t", `\t`, "\r", `\r`, "\n", `\n`)
+
 func printEnvelope(w io.Writer, mode Mode, env Envelope) error {
 	switch mode {
 	case ModeJSON:
@@ -75,15 +77,26 @@ func printEnvelope(w io.Writer, mode Mode, env Envelope) error {
 			_, err = fmt.Fprintf(w, "ok\ttrue\tdata\t%s\n", string(b))
 			return err
 		}
-		hint := ""
-		if env.Error != nil {
-			hint = strings.ReplaceAll(env.Error.Hint, "\t", " ")
+		dataField := ""
+		if env.Data != nil {
+			b, err := json.Marshal(env.Data)
+			if err != nil {
+				return err
+			}
+			dataField = "\tdata\t" + string(b)
 		}
-		_, err := fmt.Fprintf(w, "ok\tfalse\terror\t%s\tmessage\t%s\thint\t%s\n", env.Error.Code, strings.ReplaceAll(env.Error.Message, "\t", " "), hint)
+		_, err := fmt.Fprintf(w, "ok\tfalse\terror\t%s\tmessage\t%s\thint\t%s%s\n",
+			plainTextEscaper.Replace(env.Error.Code), plainTextEscaper.Replace(env.Error.Message),
+			plainTextEscaper.Replace(env.Error.Hint), dataField)
 		return err
 	default:
 		if !env.OK {
-			_, err := fmt.Fprintf(w, "error: %s (%s)\n", env.Error.Message, env.Error.Code)
+			summary, details, multiline := strings.Cut(env.Error.Message, "\n")
+			line := fmt.Sprintf("error: %s (%s)", summary, env.Error.Code)
+			if multiline {
+				line += "\n" + details
+			}
+			_, err := fmt.Fprintln(w, line)
 			if err != nil || env.Data == nil {
 				return err
 			}

@@ -57,3 +57,15 @@ func TestPrintErrorHumanMode(t *testing.T) {
 		t.Fatalf("unexpected human output: %q", out.String())
 	}
 }
+
+func TestPlainErrorEscapesFieldsInOneRecord(t *testing.T) {
+	var out bytes.Buffer
+	err := PrintError(&out, ModePlain, "invalid", "first\r\nsecond\tthird", "read C:\\notes\nthen retry", "usage", false, "", "", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ok\tfalse\terror\tinvalid\tmessage\t" + `first\r\nsecond\tthird` + "\thint\t" + `read C:\\notes\nthen retry` + "\n"
+	if out.String() != want {
+		t.Fatalf("plain error record = %q, want %q", out.String(), want)
+	}
+}
