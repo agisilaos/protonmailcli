@@ -24,6 +24,9 @@ done
 echo "[docs-check] validating shared docs contract"
 python3 "${ROOT_DIR}/scripts/docs-contract-check.py" --root "${ROOT_DIR}"
 
+echo "[docs-check] docs describe the repository"
+python3 -B "${ROOT_DIR}/scripts/docs-reality-check.py"
+
 echo "[docs-check] help snapshot drift"
 "${ROOT_DIR}/scripts/check-help.sh"
 

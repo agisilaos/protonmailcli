@@ -729,12 +729,137 @@ def end(main_checkout):
     print(f"Ended {session}; the local branch is retained")
 
 
+def is_ancestor(ancestor, descendant, cwd=ROOT):
+    try:
+        git("merge-base", "--is-ancestor", ancestor, descendant, cwd=cwd)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def default_base(main_checkout):
+    """Origin's default branch as the last fetch left it, without touching the network.
+
+    A cleanup command must work offline, so this reads the remote-tracking ref
+    rather than asking the remote. A session that landed after the last fetch
+    therefore reads as unlanded, which holds it back rather than removing it.
+    """
+    try:
+        branch = git("symbolic-ref", "--short", "refs/remotes/origin/HEAD", cwd=main_checkout)
+    except subprocess.CalledProcessError:
+        # A clone made without a remote HEAD, as the script's own fixtures are.
+        # One remote-tracking branch is unambiguous; several are not.
+        candidates = [
+            line for line in git(
+                "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin",
+                cwd=main_checkout,
+            ).splitlines() if line and not line.endswith("/HEAD")
+        ]
+        if len(candidates) != 1:
+            raise SessionError(
+                "cannot tell which branch origin defaults to; run: git remote set-head origin --auto"
+            ) from None
+        branch = candidates[0]
+    return branch, git("rev-parse", branch, cwd=main_checkout)
+
+
+def survey(main_checkout):
+    """One record per session worktree: where it is and whether its work is safe to drop."""
+    records = git("worktree", "list", "--porcelain", "-z", cwd=main_checkout).split("\0")
+    paths = [line[len("worktree "):] for line in records if line.startswith("worktree ")]
+    _, base = default_base(main_checkout)
+    rows = []
+    for path in paths:
+        checkout = Path(path)
+        if checkout == main_checkout:
+            continue
+        if not checkout.is_dir():
+            rows.append({"path": checkout, "state": "missing", "detail": "directory is gone"})
+            continue
+        head = git("rev-parse", "HEAD", cwd=checkout)
+        dirty = len([line for line in git("status", "--porcelain", cwd=checkout).splitlines() if line])
+        activity = git("log", "-1", "--format=%cr", cwd=checkout)
+        landed = is_ancestor(head, base, cwd=checkout)
+        ahead = 0 if landed else len(git("rev-list", f"{base}..HEAD", cwd=checkout).splitlines())
+        if dirty:
+            state, detail = "dirty", f"{dirty} uncommitted path(s)"
+        elif not landed:
+            state, detail = "unlanded", f"{ahead} commit(s) not on the default branch"
+        else:
+            state, detail = "landed", "reached the default branch"
+        rows.append({
+            "path": checkout, "head": head[:9], "state": state,
+            "detail": detail, "activity": activity,
+        })
+    return rows
+
+
+def list_sessions(main_checkout):
+    rows = survey(main_checkout)
+    print(f"{main_checkout}  (main checkout)")
+    if not rows:
+        print("No session worktrees.")
+        return
+    for row in sorted(rows, key=lambda row: row["path"].name):
+        head = row.get("head", "-")
+        activity = row.get("activity", "unknown")
+        print(f"{row['path']}  {head}  {row['state']:<8}  "
+              f"last commit {activity}  ({row['detail']})")
+    held = [row for row in rows if row["state"] in ("dirty", "unlanded")]
+    if held:
+        print(f"\n{len(held)} worktree(s) hold work that is not on the default branch.")
+        print("Review them before removing: session prune explains what it would and would not take.")
+
+
+def prune(main_checkout, apply_changes):
+    """Remove landed session worktrees, archiving every HEAD it touches first.
+
+    Only a clean worktree whose HEAD reached the default branch is removed. A
+    dirty or unlanded one is reported and kept, because removing it drops the
+    only ref holding its commits. Every removal's HEAD is first recorded under
+    refs/archive/worktree/<name>, so the commits survive garbage collection and
+    `git worktree add` can bring one back.
+    """
+    rows = survey(main_checkout)
+    removable = [row for row in rows if row["state"] in ("landed", "missing")]
+    held = [row for row in rows if row["state"] in ("dirty", "unlanded")]
+
+    for row in held:
+        print(f"keep    {row['path'].name}: {row['detail']}")
+    for row in removable:
+        print(f"{'remove ' if apply_changes else 'would  '} {row['path'].name}: {row['detail']}")
+
+    if not removable:
+        print("\nNothing to prune.")
+        return
+    if not apply_changes:
+        print(f"\n{len(removable)} worktree(s) would be removed. Run with --apply to do it.")
+        return
+
+    for row in removable:
+        if row["state"] != "missing":
+            reference = f"refs/archive/worktree/{row['path'].name}"
+            git("update-ref", reference, git("rev-parse", "HEAD", cwd=row["path"]),
+                cwd=main_checkout)
+            print(f"archived {reference}")
+        git("worktree", "remove", "--force", row["path"], cwd=main_checkout)
+    git("worktree", "prune", cwd=main_checkout)
+    print(f"\nRemoved {len(removable)} worktree(s). "
+          f"{len(held)} kept. Archived refs: git for-each-ref refs/archive")
+
+
 def main():
     signal.signal(signal.SIGTERM, terminate_session)
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("start", help="create a sibling worktree from origin's default branch").add_argument("name")
-    commands.add_parser("list", help="list local worktrees")
+    commands.add_parser("list", help="list session worktrees with their state and last activity")
+    commands.add_parser(
+        "prune", help="remove landed session worktrees, archiving each HEAD first",
+    ).add_argument(
+        "--apply", action="store_true", dest="apply_changes",
+        help="carry out the removals instead of proposing them",
+    )
     commands.add_parser("land", help="rebase, review, qualify and push the session").add_argument(
         "--dry-run", action="store_true", help="run the landing checks and preview the push",
     )
@@ -747,15 +872,18 @@ def main():
         if common.name != ".git" or not (main_checkout / ".git").is_dir():
             raise SessionError("sessions require a standard clone with a .git directory")
         if args.command == "list":
-            git("worktree", "list", capture=False)
+            list_sessions(main_checkout)
         elif args.command == "start":
             start(main_checkout, args.name)
         else:
+            # land, end and prune all move worktrees or refs, so they take turns.
             with (common / "protonmailcli-landing.lock").open("a") as lock:
                 print("Waiting for the landing turn", flush=True)
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 if args.command == "land":
                     land(main_checkout, args.dry_run)
+                elif args.command == "prune":
+                    prune(main_checkout, args.apply_changes)
                 else:
                     end(main_checkout)
     except subprocess.CalledProcessError as error:

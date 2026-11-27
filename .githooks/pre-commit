@@ -1,0 +1,31 @@
+#!/bin/sh
+# The second-long checks, on what the commit holds: whitespace, Go formatting and
+# the docs-reality check. The tests and the full gate run at the landing, where
+# scripts/session rehearses the push.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+
+if ! git diff --cached --check; then
+    echo "pre-commit: fix the whitespace above (a trailing space, or a blank line at the end of a file)." >&2
+    exit 1
+fi
+
+# gofmt reads the working tree, so a partially staged file is reported by its
+# current contents. That is the common case and the message says which file.
+staged_go=$(git diff --cached --name-only --diff-filter=ACMR -z \
+    | tr '\0' '\n' | grep '\.go$' || true)
+if [ -n "$staged_go" ]; then
+    unformatted=$(printf '%s\n' "$staged_go" | xargs gofmt -l)
+    if [ -n "$unformatted" ]; then
+        echo "pre-commit: gofmt would change these staged files:" >&2
+        printf '%s\n' "$unformatted" >&2
+        echo "pre-commit: run 'make fmt' and stage the result." >&2
+        exit 1
+    fi
+fi
+
+staged_md=$(git diff --cached --name-only --diff-filter=ACMR -z \
+    | tr '\0' '\n' | grep '\.md$' || true)
+if [ -n "$staged_md" ]; then
+    python3 -B scripts/docs-reality-check.py --staged
+fi

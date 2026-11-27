@@ -1,0 +1,10 @@
+#!/bin/sh
+# A commit message is a subject, a blank line, then the body, so a one-line log
+# shows the subject alone. The repository's convention for the body is in
+# AGENTS.md: What changed, Why, Alternatives considered, Validation.
+set -eu
+second=$(git stripspace --strip-comments < "$1" | sed -n 2p)
+if [ -n "$second" ]; then
+    echo "commit-msg: leave a blank line after the subject." >&2
+    exit 1
+fi

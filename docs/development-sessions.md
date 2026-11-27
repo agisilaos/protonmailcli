@@ -144,3 +144,55 @@ Delete an archive ref once its work is confirmed landed or unwanted:
 ```bash
 git update-ref -d refs/archive/worktree/<name>
 ```
+
+## Hooks
+
+Run the installer once per clone:
+
+```bash
+python3 -B scripts/install-hooks.py
+```
+
+It writes `pre-commit` and `commit-msg` launchers into the clone's shared hooks
+directory, so one run covers the main checkout and every session worktree,
+present and future. Each launcher execs the tracked hook under `.githooks/` in
+whichever worktree the commit is made from, and exits cleanly when that file is
+absent, so a branch cut before the hooks existed still commits.
+
+- `pre-commit` checks staged whitespace, runs `gofmt` over staged Go files and
+  runs the docs-reality check over staged Markdown.
+- `commit-msg` requires a blank line after the subject.
+
+`core.hooksPath` is deliberately left unset. `scripts/session land` resolves the
+repository's own pre-push hook through `git rev-parse --git-path` and rehearses
+it against a disposable transport before the real push; repointing the hooks
+directory would change what that resolves to. The installer refuses to run if
+`core.hooksPath` has been set.
+
+## Pruning sessions
+
+`scripts/session list` shows every session worktree with its short HEAD, its
+state, its last commit date and why it is in that state:
+
+```bash
+scripts/session list
+```
+
+A worktree is `landed` when its HEAD has reached origin's default branch as the
+last fetch left it, `unlanded` when it carries commits that have not, `dirty`
+when it holds uncommitted paths, and `missing` when its directory is gone.
+Because the check is offline, a session that landed after the last fetch reads
+as unlanded, which holds it back rather than removing it.
+
+```bash
+scripts/session prune           # propose
+scripts/session prune --apply   # carry it out
+```
+
+`prune` removes only clean, landed worktrees. Before each removal it records
+that HEAD under `refs/archive/worktree/<name>`, so the commits survive garbage
+collection even though nothing else references them. A dirty or unlanded
+worktree is reported and kept: removing it would drop the only ref holding its
+commits, and whether that work matters is not a decision a cleanup command
+should make. Review those by hand, as [Archived sessions](#archived-sessions)
+describes.

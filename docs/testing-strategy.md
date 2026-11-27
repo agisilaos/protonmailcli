@@ -143,8 +143,14 @@ One required gate runs on pull requests and on pushes to `master`:
 `macos-latest` with the Go toolchain pinned to match `go.mod`. That target
 reaches the same `make verify` path as a local run, so formatting, vet, unit
 and mocked-integration tests, the executable contract fixtures, help and
-session script fixtures, the docs contract, help-snapshot drift and the
-isolated local-state agent smoke run are all enforced by the single gate.
+session script fixtures, the docs contract, the docs-reality check,
+help-snapshot drift and the isolated local-state agent smoke run are all
+enforced by the single gate.
+
+Two hooks run earlier, per commit rather than per push: `pre-commit` checks
+staged whitespace, Go formatting and the docs-reality check, and `commit-msg`
+requires a blank line after the subject. Install them with
+`python3 -B scripts/install-hooks.py`.
 
 Bridge end-to-end tests against a real Bridge are not part of CI. They run
 locally on request, with credentials and certificate trust supplied by the

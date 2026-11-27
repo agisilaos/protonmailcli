@@ -41,9 +41,14 @@ summarizes each one under "Agent skills".
 ## Local verification
 
 - [Development sessions](development-sessions.md) covers new chats, worktrees,
-  direct landing and archived session refs.
+  direct landing, hooks, pruning and archived session refs.
+- `python3 -B scripts/install-hooks.py` installs the pre-commit and commit-msg
+  hooks for the clone. Run it once; every worktree shares them.
 - `make verify` runs the full local gate, including executable contract
   fixtures and the isolated local-state send dry run.
+- `python3 -B scripts/docs-reality-check.py` checks that backticked paths, Make
+  targets and `PMAIL_*` variables in the docs still name something real.
+  `make docs-check` runs it.
 - `scripts/release-config.sh` owns release names, metadata and the pinned bundle fingerprint.
 - `scripts/cli-shared/` contains the local copy of the common process helpers.
 

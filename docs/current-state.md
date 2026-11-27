@@ -125,6 +125,16 @@ See [testing strategy](testing-strategy.md) for layers, invariants and gates.
 `macos-latest` for pull requests and pushes to `master`, reaching the same
 `make verify` path.
 
+Two commit-time hooks run earlier: `pre-commit` checks staged whitespace, Go
+formatting and the docs-reality check, and `commit-msg` requires a blank line
+after the subject. Install them per clone with
+`python3 -B scripts/install-hooks.py`.
+
+`scripts/docs-reality-check.py` fails when a backticked path, Make target or
+`PMAIL_*` variable in the docs names nothing real. `scripts/session list` and
+`scripts/session prune` report and clean up session worktrees, archiving every
+HEAD they remove under `refs/archive/`.
+
 ## Security and commit hygiene
 
 - No credentials are stored in repository files.
