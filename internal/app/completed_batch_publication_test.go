@@ -73,10 +73,22 @@ func TestDraftBatchReportsPublishedCheckpointFailure(t *testing.T) {
 				t.Fatalf("same-key replay did not recover completion: exit=%d out=%s", code, replay)
 			}
 			code, conflict := runWorkflow(t, args, strings.Replace(input, `"one"`, `"changed"`, 1))
-			previousCommands := len(commands)
 			commands, appended = peer.snapshot()
-			if code != 6 || !strings.Contains(conflict, "idempotency_conflict") || len(commands) != previousCommands || len(appended) != wantAppends {
-				t.Fatalf("published key did not bind its original input: exit=%d commands=%v out=%s", code, commands, conflict)
+			// A conflicting payload must be refused from saved state without
+			// opening another IMAP session, so the session count is what this
+			// asserts. Comparing the peer's total command count cannot: the
+			// client sends LOGOUT and closes without waiting for the peer to
+			// record it, so an earlier run's LOGOUT can land between two
+			// snapshots and move the total on its own.
+			wantSessions := 0
+			if fresh {
+				wantSessions = 1
+			}
+			sessions := strings.Count(strings.Join(commands, "\n"), "LOGIN")
+			if code != 6 || !strings.Contains(conflict, "idempotency_conflict") ||
+				sessions != wantSessions || len(appended) != wantAppends {
+				t.Fatalf("published key did not bind its original input: exit=%d sessions=%d appended=%d commands=%v out=%s",
+					code, sessions, len(appended), commands, conflict)
 			}
 		})
 	}
