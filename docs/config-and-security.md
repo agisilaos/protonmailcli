@@ -62,7 +62,7 @@ explicit CLI profile/output flags override those values. `PMAIL_TIMEOUT` must be
 a positive duration and applies to SMTP as well as IMAP. Invalid TOML or defaults
 return `config_error`, while a missing file returns `config_missing`. TOML inline
 comments do not alter boolean safety settings. See
-[configuration and Bridge transport behavior](config-and-smtp-fixes.md) for certificate trust
+[configuration and Bridge transport behavior](config-and-transport.md) for certificate trust
 and accepted-send handling.
 
 Local-state mode simulates single and bulk sends entirely in the local store.

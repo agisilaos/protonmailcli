@@ -349,7 +349,7 @@ hostname before login, including on loopback connections and send previews.
 When upgrading from v0.2.2, IMAP now verifies the Bridge certificate before login.
 For Bridge certificates outside system trust, set `bridge.tls_cert_file` to an
 explicitly trusted public CA/certificate PEM for IMAP and SMTP. See
-[configuration and Bridge transport behavior](docs/config-and-smtp-fixes.md).
+[configuration and Bridge transport behavior](docs/config-and-transport.md).
 
 ## Output and exit codes
 
@@ -757,10 +757,15 @@ See [RELEASING.md](RELEASING.md) for the full runbook and [release recovery](doc
 
 ## Docs
 
-- CLI spec: `docs/cli-spec.md`
-- Config/security: `docs/config-and-security.md`
-- Test strategy: `docs/testing-strategy.md`
-- Current implementation status: `docs/current-state.md`
+Start at the [documentation index](docs/README.md). The most used pages:
+
+- [CLI spec](docs/cli-spec.md) — commands, flags, exit codes and the JSON envelope.
+- [Current implementation status](docs/current-state.md) — what is built and what is not.
+- [Config and security](docs/config-and-security.md) — configuration files and secret handling.
+- [IMAP workflows](docs/imap-workflows.md) — draft, send, follow-up and batch flows.
+- [Local command behavior](docs/local-command-behavior.md) — `PMAIL_USE_LOCAL_STATE` parity.
+- [Test strategy](docs/testing-strategy.md) — test layers, invariants and gates.
+- [Development sessions](docs/development-sessions.md) — worktree sessions and landing.
 
 ## License
 

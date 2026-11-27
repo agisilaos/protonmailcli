@@ -115,26 +115,40 @@ test exercises both opt-in settings against a loopback IMAP peer and fake SMTP.
 14. path telemetry fields (`createPath`, `sendPath`) remain present in contract fixtures.
 15. `mailbox resolve --name <id>` returns canonical mailbox metadata and deterministic match strategy.
 
-## Suggested directory layout
+## Directory layout
+
+Go tests live beside the code they exercise, one package at a time. Only the
+declarative contract fixtures sit under `tests/`.
 
 ```text
-tests/
-  unit/
-  integration/
-  e2e/
-  contracts/
-    local_draft_create_many_partial.json
-    send_requires_confirm_non_tty.json
-    send_dry_run.json
-    mailbox_resolve_id.json
-    output_stream_discipline.json
+internal/app/          command dispatch, batch, recovery and contract tests
+internal/bridge/        IMAP, SMTP and TLS tests against in-process peers
+internal/store/         state persistence, locking and durability tests
+internal/config/        TOML precedence and validation tests
+internal/output/        envelope, stream and exit-code tests
+cmd/protonmailcli/      process-boundary tests (pipes, prompts, terminals)
+tests/contracts/        executable JSON fixtures run by TestContractFixtures
 ```
+
+Integration and end-to-end coverage is selected by environment opt-in rather
+than by directory. Bridge end-to-end tests live in
+`internal/app/bridge_e2e_test.go` and skip unless `PMAIL_E2E_BRIDGE=1`;
+a real send additionally requires `PMAIL_E2E_REAL_SEND=1`, and trusting a
+Bridge certificate requires `PMAIL_E2E_TLS_CERT_FILE`.
 
 ## CI gates
 
-- Gate 1: unit + contract tests (required)
-- Gate 2: integration tests with fake adapter (required)
-- Gate 3: e2e against real Bridge (optional/nightly)
+One required gate runs on pull requests and on pushes to `master`:
+`.github/workflows/release-check.yml` executes `make release-check-ci` on
+`macos-latest` with the Go toolchain pinned to match `go.mod`. That target
+reaches the same `make verify` path as a local run, so formatting, vet, unit
+and mocked-integration tests, the executable contract fixtures, help and
+session script fixtures, the docs contract, help-snapshot drift and the
+isolated local-state agent smoke run are all enforced by the single gate.
+
+Bridge end-to-end tests against a real Bridge are not part of CI. They run
+locally on request, with credentials and certificate trust supplied by the
+operator.
 
 ## Release criteria for v1
 

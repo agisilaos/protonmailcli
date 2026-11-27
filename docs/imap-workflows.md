@@ -368,7 +368,7 @@ and explicit `bridge.tls_cert_file` trust file when provided.
 IMAP connections use the same trust file and verify the server certificate and
 configured hostname before login, including draft reads performed by send
 previews. Loopback connections require valid certificate trust too; see
-[Bridge transport behavior](config-and-smtp-fixes.md) for PEM configuration.
+[Bridge transport behavior](config-and-transport.md) for PEM configuration.
 
 
 If a completed send receipt is published but its directory sync fails, the CLI

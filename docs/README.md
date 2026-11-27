@@ -2,28 +2,37 @@
 
 ## Core
 
-- CLI specification: `cli-spec.md`
-- Current implementation state: `current-state.md`
-- Config and security: `config-and-security.md`
-- Testing strategy: `testing-strategy.md`
+- [CLI specification](cli-spec.md) — commands, flags, exit codes and the JSON envelope.
+- [Current implementation state](current-state.md) — what is built, what is not, and what comes next.
+- [Config and security](config-and-security.md) — configuration files, secret handling and permissions.
+- [Testing strategy](testing-strategy.md) — test layers, invariants and gates.
 
-## Agent and Schema Docs
+## Behavior reference
 
-- Agent manifests and contract schemas: `agent-manifest-schemas.md`
+- [IMAP workflows](imap-workflows.md) — draft, send, follow-up and batch flows over Bridge.
+- [IMAP safety and message decoding](imap-behavior.md) — UID validation, scoped expunge and MIME decoding.
+- [Configuration and Bridge transport behavior](config-and-transport.md) — TOML precedence and certificate trust.
+- [Local command behavior](local-command-behavior.md) — `PMAIL_USE_LOCAL_STATE` parity and preview semantics.
+
+## Agent and schema docs
+
+- [Agent manifests and contract schemas](agent-manifest-schemas.md)
 - JSON schemas: `schemas/`
 
-## Help Snapshots
+## Help snapshots
 
 - Command help snapshots: `help/`
-- `scripts/help-snapshots.txt` retains the nine public help topics.
+- `scripts/help-snapshots.txt` retains the public help topics; it is the single
+  source for which snapshots exist, so add a topic there rather than adding a
+  file by hand.
 - `make update-help` explicitly refreshes stdout/stderr snapshots from a
   temporary binary, cache, config and local state.
 - `make help-script-test` checks stream capture, drift detection and cleanup.
 
 ## Local verification
 
-- [Development sessions](development-sessions.md) covers new chats, worktrees and direct landing.
-
+- [Development sessions](development-sessions.md) covers new chats, worktrees,
+  direct landing and archived session refs.
 - `make verify` runs the full local gate, including executable contract
   fixtures and the isolated local-state send dry run.
 - `scripts/release-config.sh` owns release names, metadata and the pinned bundle fingerprint.
