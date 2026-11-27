@@ -114,3 +114,33 @@ and qualification. Those checks are enforced by the session command. GitHub's
 existing release-check workflow also runs after a push to `master` or `main`.
 Run `make session-script-test` to exercise changes to the session helper
 against disposable local Git remotes.
+
+## Archived sessions
+
+Abandoned session checkouts are removed with `git worktree remove`, but their
+commits are kept under the `refs/archive/` namespace so nothing is lost to
+garbage collection. Two prefixes are used:
+
+- `refs/archive/worktree/<checkout-name>` — the HEAD of a removed session
+  checkout. Uncommitted work found in the checkout was committed first as
+  `archive(session): Capture uncommitted <checkout-name> work`.
+- `refs/archive/branch/<branch-name>` — a deleted local session branch.
+
+These refs stay out of `git branch` and `git log` by default. List and inspect
+them with:
+
+```bash
+git for-each-ref refs/archive
+```
+
+To recover one into a working checkout:
+
+```bash
+git worktree add /tmp/<name> refs/archive/worktree/<name>
+```
+
+Delete an archive ref once its work is confirmed landed or unwanted:
+
+```bash
+git update-ref -d refs/archive/worktree/<name>
+```
