@@ -19,6 +19,15 @@
 - [Agent manifests and contract schemas](agent-manifest-schemas.md)
 - JSON schemas: `schemas/`
 
+## Agent configuration
+
+What the engineering skills read to find this repo's conventions. `AGENTS.md`
+summarizes each one under "Agent skills".
+
+- [Issue tracker](agents/issue-tracker.md) — issues live as GitHub issues, via `gh`.
+- [Triage labels](agents/triage-labels.md) — the five canonical triage roles.
+- [Domain docs](agents/domain.md) — single-context `GLOSSARY.md` and `docs/adr/`.
+
 ## Help snapshots
 
 - Command help snapshots: `help/`

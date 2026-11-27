@@ -18,3 +18,17 @@ For any code change that affects behavior, commands, output, exit codes, parsing
 
 - Prefer `--dry-run` first for mutating commands in automation.
 - Do not send real emails in exploratory or validation runs unless explicitly requested.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `agisilaos/protonmailcli`, read and written with the `gh` CLI. See [issue tracker](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See [triage labels](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and one `docs/adr/` at the root. See [domain docs](docs/agents/domain.md).
